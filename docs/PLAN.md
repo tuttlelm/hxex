@@ -1424,8 +1424,9 @@ Planned, not built:
    class, identities found by **Find** in the tree and the list); a provisional
    two-population analysis per form (choice, tiers, K = 2 comparisons and maps, 2026-11-10).
 31. **The picking window sized from the data, or stray peaks flagged** (owner, 2026-11-11: a
-   candidate to evaluate; direction chosen the same day: a position-based mask, option (c)
-   below, since the noise model is pivotal).
+   candidate to evaluate; a position-based mask, option (c) below, chosen the same day.
+   Evaluated 2026-11-12 (HISTORY 368): the mask is dropped; the direction is now a **profile
+   fit**, see *Evaluation* at the end of this item).
    - *Today.*
      - The window is the constant `[run.picker] resolution_ppm`: ± 50 ppm by default,
        pyHXExpress's value, capped at half the isotope spacing (HISTORY 99-100).
@@ -1482,7 +1483,8 @@ Planned, not built:
      at the wrong m/z inside a bin the envelope legitimately covers, which is where the
      Orbitrap strays above sit (another species 44-50 ppm off in the upper bins of the
      labelled envelope). (b) and (c) test position, so they complement item 156.
-   - *Direction (owner, 2026-11-11): mask by position, option (c).* A flag ((b)) alone is not
+   - *Direction first chosen (owner, 2026-11-11; superseded 2026-11-12, see Evaluation): mask
+     by position, option (c).* A flag ((b)) alone is not
      enough even where the fitted means do not move, because the noise model is pivotal: the
      per-bin noise curve (HISTORY 191, 213, 287) and the K a spectrum takes are judged in the
      weak bins, which is where strays sit and where a ± 50 ppm window reads Orbitrap bins high
@@ -1499,6 +1501,54 @@ Planned, not built:
      change shown side by side before any proposal.
    - *Related:* the owner's open items (an off-position flag; contaminant flags), item 24
      (merged peaks read as 0), HISTORY 156 (strays did not move the fits there).
+   - *Evaluation (2026-11-12, HISTORY 368).*
+     - **The mask, measured.** On full runs it halved the undeuterated controls reading two on
+       every dataset. But yardsticks that do not go through K showed that it deleted the
+       peptide's own weak peaks: up to 39 % of the weakest expected bins of the undeuterated
+       controls on the intact-peptide benchmark, and up to 91 % on the Orbitrap. Charge states
+       agreed no better. Its gains in K were partly fewer weak bins, not truer values.
+     - **Why K is a weak yardstick here (owner).** K depends on a noise model calibrated on
+       today's picks. Controls are not certainly one population. Agreement with the old picker
+       rewards its errors.
+     - **The yardsticks used instead**, independent of K:
+       - Undeuterated controls against natural abundance: their correct bin values are known.
+       - Charge states of one injection: each bin's squared difference over the summed
+         variances of one fixed noise curve, with its charge-dependent counting term.
+     - **Still to run:** odd vs even scans of one elution (precision), and simulated profiles
+       with known answers (real peak shapes, the measured noise curve, strays drawn from the
+       measured off-position peaks). K and calibration are reported last, as consequences.
+     - **The direction now: fit the profile, do not pick from it.** Assumptions the window
+       rule failed on: one apex per bin, the apex is the peptide's, and its height or area is
+       the bin's value. The profile fit (scratch):
+       - one peak per bin at the position the envelope supports, with deuterium and 13C
+         isotopologues weighted by the deuterium distribution;
+       - each run's peak shape, measured from its undeuterated controls (on the Q-TOF, weak
+         peaks are wider and heavier-tailed; on the Orbitrap the shape is Gaussian at every
+         height);
+       - non-negative least squares on the profile, with each bin's value the area of its
+         peak;
+       - free stray peaks at the profile's local maxima at least one peak width from every bin
+         position, so a neighbouring species is not absorbed into a bin.
+     - **The profile fit, measured** (benchmark, spectra the analysis keeps):
+       - intensity beyond the envelope's reach 1.45 → 0.90 % (mask 0.70 %);
+       - the weakest expected bins read 1.71 → 1.31 times their expected height (the window
+         maximum's upward bias);
+       - no more expected bins left empty than today;
+       - charge-state disagreement 3.60 → 2.77.
+       
+       On the Orbitrap, the bins it leaves empty match the positions where the profile itself
+       holds nothing (the reduced-profile cut). Every picker either loses peaks the profile
+       has or fills bins it lacks. Closer strays took the Orbitrap's weak peaks. The pickers'
+       choice between heights and areas (HISTORY 185) disappears.
+     - **Identity is a separate question, upstream.** Spectra whose envelope sits off position
+       as a whole are mostly another species at the chosen retention time (HISTORY 200). On the
+       benchmark, a spectrum at least 6 robust sd from its injection's median offset (the
+       `off_mz` scale) sits more than 1 D from its replicates in 43 of the 64 cases with
+       replicates to compare. The cure belongs in the retention window. A spectrum-level flag
+       for such spectra is proposed, not built.
+     - **Next:** the two remaining yardsticks; then full runs with the profile-fit values (K,
+       calibration, known answer); then a design note. Formats that arrive already picked keep
+       today's route.
 
 ## Risks and open decisions
 

@@ -9325,3 +9325,66 @@ CSVs or mzML if wanted.
     there). The test now reads the span's left edge from the outline it draws. hxex itself never
     reads a span back. Check: tests/test_gui_window_edit.py passes at matplotlib 3.8.0 (the
     job's versions, rebuilt locally) and 3.11.2.
+
+368. **PLAN 31 evaluated: the position mask is dropped; the bin values should come from a fit of
+    the profile (owner, 2026-11-12; scratch only, no hxex change).** A prototype of option (c)
+    (a second pick taking only apexes within a tolerance of the positions the envelope supports,
+    the tolerance and each spectrum's offset limit from the run's own data) was run in full on
+    four datasets: the published tutorial data, the intact-peptide benchmark, the private noisy
+    unimodal dataset (Q-TOF), and MSV000094510's digest (Orbitrap).
+    - **On K-based yardsticks the mask looked good.** Undeuterated controls reading two 3.9 →
+      1.7 %, 7.0 → 2.9 %, 11.2 → 5.9 %, and on the Orbitrap 21.3 % (the project's ± 10 ppm)
+      or 61.4 % (± 50) → 11.3 %. The intensity beyond the envelope's reach halved, the Q-TOF
+      fits barely moved, and item 172 held: the tolerance the run set (16-29 ppm) kept the
+      deuterated peaks. Centring each spectrum's offset limit on its injection instead of the
+      run changed nothing measurable. The known-answer set was neutral (K correct 83.2 % both).
+    - **The owner questioned the yardsticks.** K depends on a noise model calibrated on today's
+      picks, controls are not certainly one population, and agreement with past results rewards
+      the old picker's errors. Two yardsticks independent of K were used instead:
+      - Undeuterated controls against natural abundance (the correct bin values are known).
+      - Charge states of one injection: squared differences over the summed variances of one
+        fixed noise curve with its charge-dependent counting term. The 13C tilt by charge (item
+        186) sets the baseline; 1+ ions are left out.
+    - **On those, the mask deleted the peptide's own weak peaks.** Bins expected at 2-5 /
+      0.5-2 / 0.1-0.5 % of the tallest were left empty in 7 / 19 / 39 % of cases on the
+      benchmark (today 0 / 2 / 6 %), and 47 / 77 / 91 % on the Orbitrap. Charge states agreed
+      no better (benchmark) or worse (noisy, tutorial). Its gains in K were partly fewer weak
+      bins. Both pickers read weak bins high, the more so the weaker (benchmark 1.71 times
+      expected at 0.1-0.5 %): the window maximum's bias of item 153.
+    - **Orbitrap weak peaks.** Peaks expected at 2-20 % of the tallest still read their
+      expected height out to 7-10 ppm, beyond the mask's 4-6 ppm tolerance; past ~10 ppm the
+      picks read 1.7-4 times expected (strays). The apex wanders more as a peak weakens (robust
+      sd 0.3 → 6.7 ppm). The profile itself is empty at 16 / 32 / 42 % of the weak expected
+      positions (the reduced-profile cut, items 298-300): no picker can recover those.
+    - **Envelopes off position as a whole are another question.** Take each spectrum's offset
+      from its injection's median. On the benchmark, from 6 robust sd (20 ppm; the `off_mz`
+      scale) a spectrum usually is not the peptide: 356 spectra, 214 caught by no check today,
+      and 43 of the 64 with replicates sit more than 1 D off them (median 2.0 D). Example:
+      shifted replicates of one sample's 3-12 peptide read 5-6 D against 2-3.6 D. Most of the
+      Orbitrap's extra misses under the mask (135 of 143 outside `off_mz` series) are such
+      spectra. The cause is upstream (the retention window picks another species, item 200);
+      a spectrum-level flag is proposed, not built.
+    - **The profile fit (scratch).** The design:
+      - one peak per bin at the position the envelope supports;
+      - the bin's isotopologue spread widening its peak;
+      - each run's peak shape measured from its undeuterated controls (Q-TOF weak peaks
+        1.05-1.20 times wider, with heavier tails; Orbitrap Gaussian at every height);
+      - non-negative least squares on the profile, with the area of each peak as the bin's
+        value (heights read wide bins low);
+      - free stray peaks at local maxima at least one peak width from every bin position.
+      
+      Results on the benchmark, spectra the analysis keeps:
+      - intensity beyond reach 1.45 → 0.90 %;
+      - the weakest expected bins 1.71 → 1.31 times expected;
+      - bins left empty no more than today;
+      - charge-state disagreement 3.60 → 2.77.
+      
+      Noisy set and tutorial: the same direction. Orbitrap: the bins left empty match where
+      the profile is empty (18 / 35 / 48 % against 16 / 32 / 42 %); ± 10 ppm leaves 35 / 61 /
+      77 % empty, and ± 50 or no strays fill bins the profile lacks. Strays closer than one
+      width took the Orbitrap's weak peaks. About a minute of CPU for the benchmark.
+    - **Next (PLAN 31 Evaluation):** odd vs even scans; simulated profiles with known answers;
+      then full runs (K, calibration, known answer) and a design note.
+    - Scratch scripts, runs, and tables:
+      hxex_private/analysis_examples/envelope_positions (README steps 3-6c); prototype worktree
+      position-mask-proto (not for merging).
