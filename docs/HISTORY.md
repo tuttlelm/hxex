@@ -9478,3 +9478,27 @@ CSVs or mzML if wanted.
     before). Reproduced locally by letting the first drawing end before the wait (the same
     timeout). The test now waits for the panel to show that figure with its data rows and to
     be idle. No change to hxex itself.
+
+372. **The elution tab's two lists are numbered and independent, and their widest level
+    keeps to the sample (2026-11-12).** The owner could not tell which "Compare with" choice
+    went with which "Save window for" choice. Both lists now carry the same numbers (1 this
+    charge state only, 2 every charge state of the peptide, 3 with the replicates, 4 every
+    file), "Compare with" is "Show elution traces for" (it changes only the elution panels, not
+    the spectra), and it gains choice 1, this file's trace alone. Choosing how to save no
+    longer switches the traces drawn: since item 360 it did, and the switch read the traces
+    again from scratch, so changing the save choice redrew the figure (owner: "changing the
+    save window causes a redraw"); the numbers now show the pairs. Each list's tooltip is the
+    selected choice's own text, with its key words in bold (`hxex.gui.tips.rich_tip`,
+    `window_editor.set_choice_tips`, `window_edit.view_tips` and `scope_tips`), shown also on
+    the open list's items; the other elution tooltips were shortened with the owner. Level 4
+    (traces and saves) now covers every file of this sample only, not every sample that reads
+    the peptide (`window_edit.spread_files`): the peptide table goes by sample, and the owner
+    expected a save to stay within it. On the pooled raw project (319 peptide and charge pairs
+    read in more than one condition) the table's retention times differ between conditions by
+    0.05 min at the median, 0.17 min at the 90th percentile, and 0.61 min at most (2 of 319
+    beyond the 30 s trace match), so the earlier level reached other conditions mostly at a
+    correct shift, but it wrote windows into conditions the user had not opened. A file read by
+    several samples still gets the window for each (one injection). Drawing 4 reads fewer files.
+    Tests: tests/test_window_edit.py (the two lists' numbers and texts), tests/
+    test_gui_window_edit.py (choice 1 draws the trace alone; a save choice leaves the traces as
+    they are).

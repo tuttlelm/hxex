@@ -85,7 +85,7 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypat
     assert "un2.mzML" in table.read_text() and "hxex run --overwrite" in messages[-1]
     assert "with overwrite enabled" in messages[-1]
     assert "(every charge state)" in messages[-1] and "for sample S" in messages[-1]
-    assert editor.scope.currentText() == "every charge state of this peptide, in this file"
+    assert editor.scope.currentText() == "2. every charge state of this peptide, in this file"
     row = table.read_text().splitlines()[1].split(",")
     assert row[2] == "0001-0008-VDQIIMAK" and row[3] == ""  # the peptide's row
     assert "rt_elution_windows" in project.read_text()
@@ -151,9 +151,10 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypat
 
 
 def test_compare_with_the_peptides_other_charge_states_in_this_file(qtbot, tmp_path):
-    """Compare with: this peptide's other charge states in this file draws its other charge
-    state behind the selected trace; switched back, its replicates. With Edit window on,
-    choosing how to save switches Compare with to that level's view (one way only)."""
+    """Show elution traces for, choice 2 (every charge state of this peptide, in this file),
+    draws its other charge state behind the selected trace; choice 1 the trace alone; switched
+    back, its replicates. With Edit window on, choosing how to save leaves the traces as they
+    are (it redrew them: owner, 2026-11-12)."""
     from test_elution_windows import _charges_project
 
     path = _charges_project(tmp_path / "charges")
@@ -177,21 +178,21 @@ def test_compare_with_the_peptides_other_charge_states_in_this_file(qtbot, tmp_p
     assert len(shown.traces) == 1 and shown.ions[0].label.endswith("(MS1)")
     assert any(ln.get_gid() and ln.get_gid().startswith("ion:")
                for ln in panel.view.figure.axes[0].lines)
-    assert w.compare.currentText() == "this peptide's other charge states in this file"
+    assert w.compare.currentText() == "2. every charge state of this peptide, in this file"
     w.compare.setCurrentIndex(w.compare.findData("replicates"))
     qtbot.waitUntil(lambda: not panel.drawing and len(w._shown_traces[3].traces) == 2
                     and not w._shown_traces[3].ions, timeout=30000)
     assert w._shown_traces[3].others_label == "its replicates"
+    w.compare.setCurrentIndex(w.compare.findData("ion"))  # view 1: this file's trace alone
+    qtbot.waitUntil(lambda: not panel.drawing and len(w._shown_traces[3].traces) == 1
+                    and not w._shown_traces[3].ions, timeout=30000)
+    w.compare.setCurrentIndex(w.compare.findData("replicates"))
     editor = w.window_editor
     editor.edit.setChecked(True)
-    for level, view in (("peptide", "ions"), ("everywhere", "everywhere"),
-                        ("replicates", "replicates")):
+    for level in ("peptide", "everywhere", "ion"):
         editor.scope.setCurrentIndex(editor.scope.findData(level))
         editor.scope.activated.emit(editor.scope.currentIndex())  # as a user's choice
-        assert w.compare.currentData() == view
-    editor.scope.setCurrentIndex(editor.scope.findData("ion"))
-    editor.scope.activated.emit(editor.scope.currentIndex())
-    assert w.compare.currentData() == "replicates"  # this charge state alone: left as it was
+        assert w.compare.currentData() == "replicates"  # the view stays (no redraw)
     w.compare.setCurrentIndex(w.compare.findData("everywhere"))
     assert editor.scope.currentData() == "ion"  # browsing never changes how it is saved
     editor.edit.setChecked(False)
@@ -235,10 +236,10 @@ def _left_edge(ax, patch):
     return ax.transData.inverted().transform(drawn)[:, 0].min()
 
 def test_the_replicates_are_aligned_while_editing_and_each_file_is_a_row(qtbot, project):  # noqa: F811
-    """Compare with on the replicates while editing: the replicate's trace is moved onto this
-    file's clock by the trace match (owner's choice, 2026-11-11: draft A); Each file's window
-    draws one row per file with the new window shifted into it (draft B); a save at that
-    level uses the same match."""
+    """Show elution traces for on the replicates (3) while editing: the replicate's trace is moved
+    onto this file's clock by the trace match (owner's choice, 2026-11-11: draft A); Each
+    file's window draws one row per file with the new window shifted into it (draft B); a save
+    at that level uses the same match."""
     spectra = _read(project)
     results = _results(spectra)
     w = ResultsWorkspace()
@@ -300,7 +301,7 @@ def test_the_replicates_are_aligned_while_editing_and_each_file_is_a_row(qtbot, 
                           for t in (start - 0.01, end - 0.01))
     panel.spanned.emit(x0, y0 + 0.01, x1, y1 + 0.01)
     assert editor.window() == pytest.approx((start, end), abs=2e-3)
-    # Compare with on this peptide's other ions: no other file, so no rows
+    # view 2, this peptide's other ions: no other file, so no rows
     w.compare.setCurrentIndex(w.compare.findData("ions"))
     qtbot.waitUntil(lambda: not panel.drawing and not editor.each_file.isEnabled(),
                     timeout=30000)

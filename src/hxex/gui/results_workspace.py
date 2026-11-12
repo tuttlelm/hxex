@@ -44,7 +44,8 @@ from .review_panel import ReviewPanel
 from .spectra_list import SpectraList, list_rows
 from .tasks import Latest
 from .tips import tip
-from .window_edit import COMPARE_FOR_LEVEL, compare_words, has_fragments, spread_files
+from .window_edit import has_fragments, ions_legend, spread_files, view_tips, view_words
+from .window_editor import set_choice_tips
 
 log = logging.getLogger(__name__)
 
@@ -323,29 +324,22 @@ class ResultsWorkspace(QWidget):
         self._trace_for = None  # (results, spectrum id) the elution tab shows
         self._shown_traces = None  # (results, spectrum id, data id, traces, title) drawn there
         self.window_editor = None  # the elution tab's window editing (made with its panel)
-        # what the elution tab draws behind the selected trace: this charge state (ion) in the
-        # sample's other files (does this file need a window of its own?) or this peptide's
-        # other charge states (ions) in this file (do they elute together: a window for the
-        # whole peptide, or for this one only?); worded for the project (window_edit
-        # .compare_words)
+        # what the elution tab draws ("Show elution traces for", numbered as the save levels;
+        # owner, 2026-11-12: the two lists are independent): this file's trace alone, this
+        # peptide's other charge states (ions) in this file (do they elute together: a window
+        # for the whole peptide, or for this one only?), or this charge state (ion) in the
+        # sample's other files (does this file need a window of its own?); worded for the
+        # project (window_edit.view_words)
         self.compare = QComboBox()
-        for data, text in compare_words(False).items():
+        for data, text in view_words(False).items():
             self.compare.addItem(text, data)
         self.compare.setCurrentIndex(self.compare.findData("replicates"))
-        self.compare.setToolTip(
-            tip("what is drawn behind this file's trace, one view for each way of saving a "
-                "window. This peptide's other charge states in this file (and its fragment "
-                "channels when fragment ions are read): each scaled to this trace's height; they "
-                "elute together, so one whose peak sits apart has interference at its own m/z "
-                "(save the window for it only). This charge state in its replicates (the "
-                "sample's files at this time point or control), or in every file of the peptide "
-                "(every sample): does this file's peak sit where theirs do? With Edit window on, "
-                "choosing how to save switches to its view"))
+        set_choice_tips(self.compare, view_tips(False))
         self.compare.currentIndexChanged.connect(self._compare_changed)
         self.compare_box = QWidget()
         row = QHBoxLayout(self.compare_box)
         row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(QLabel("Compare with"))
+        row.addWidget(QLabel("Show elution traces for"))
         row.addWidget(self.compare)
         row.addStretch(1)
         self._drawn = None  # (kind, series, time point or spectrum) the figures show
@@ -383,7 +377,6 @@ class ResultsWorkspace(QWidget):
                 panel.add_row(self.compare_box)
                 self.window_editor = WindowEditor(panel, self._trace_context,
                                                   self._draw_plain_trace, self)
-                self.window_editor.level_chosen.connect(self._compare_for_level)
                 if self.window is not None:
                     self.window_editor.message.connect(
                         lambda text: self.window.statusBar().showMessage(text, 15000))
@@ -435,8 +428,9 @@ class ResultsWorkspace(QWidget):
         self.analysis_config = analysis
         source = None if results is None or results.settings is None else \
             results.settings.spectra_source
-        for i, text in enumerate(compare_words(has_fragments(source)).values()):
+        for i, text in enumerate(view_words(has_fragments(source)).values()):
             self.compare.setItemText(i, text)
+        set_choice_tips(self.compare, view_tips(has_fragments(source)))
         if results is not None and left is None:
             left = _left_out_or_none(results, analysis)
         self.left = left
@@ -509,14 +503,6 @@ class ResultsWorkspace(QWidget):
         reader, self._trace_reader = self._trace_reader[1], None
         threading.Thread(target=reader.close, name="close trace files", daemon=True).start()
 
-    def _compare_for_level(self, level: str) -> None:
-        """A save level chosen while editing: Compare with shows its evidence (the peptide's
-        other charge states, its replicates, or every file of it); one way only, so browsing
-        with Compare with never changes how a window is saved."""
-        view = COMPARE_FOR_LEVEL.get(level)
-        if view is not None and self.compare.currentData() != view:
-            self.compare.setCurrentIndex(self.compare.findData(view))
-
     def _compare_changed(self, _index: int) -> None:
         self._trace_for = None  # read again with the other comparison
         self._draw_retention()
@@ -546,8 +532,9 @@ class ResultsWorkspace(QWidget):
 
     def _draw_retention(self) -> None:
         """The retention tab, when it is in view: the selected spectrum's trace in its run
-        (drawn first), then with the files Compare with chooses behind it (its replicates, or
-        every file of the peptide), or the peptide's other ions in this file."""
+        (drawn first), then with what "Show elution traces for" chooses behind it (its
+        replicates, or every file of its sample, or the peptide's other ions in this file;
+        choice 1: nothing)."""
 
         keys = getattr(self, "_tab_keys", ())
         at = self.figures.currentIndex()
@@ -565,7 +552,7 @@ class ResultsWorkspace(QWidget):
         if shown is None or shown[0] is not results or shown[1] != sid:
             # another spectrum: the one before is forgotten, and the editor's work for it
             # dropped, so nothing draws it again while this one's trace is read (the same
-            # spectrum read again, for another Compare with, keeps the window being edited)
+            # spectrum read again, for another view, keeps the window being edited)
             self._shown_traces = None
             if self.window_editor is not None:
                 self.window_editor.forget()
@@ -579,7 +566,7 @@ class ResultsWorkspace(QWidget):
         view = self.compare.currentData()
         fragments = has_fragments(reader)
         others_label = {"replicates": "its replicates",
-                        "everywhere": "the peptide's other files"}.get(view, "")
+                        "everywhere": "the sample's other files"}.get(view, "")
         groups: dict[int, list[str]] = {}  # the files compared, one spectrum each, by series
         if view in ("replicates", "everywhere"):
             from ..io.elution_windows import peptide_label
@@ -609,7 +596,7 @@ class ResultsWorkspace(QWidget):
         def show(traces, suffix: str = "") -> None:
             traces = dataclasses.replace(
                 traces, others_label=others_label or traces.others_label,
-                ions_label=compare_words(fragments)["ions"])
+                ions_label=ions_legend(fragments))
             self._shown_traces = (results, sid, data_id, traces, title + suffix)
             if self.window_editor is not None and self.window_editor.active:
                 self.window_editor.update()
@@ -644,7 +631,7 @@ class ResultsWorkspace(QWidget):
                 return
             show(first, f"; reading {others_label}…")
 
-            def read_all():  # this series' files with this one; other samples' series after
+            def read_all():  # this series' files with this one; the sample's other series after
                 got = reader.traces([sid, *same], data_id, drift_ranges=drift)
                 extra = []
                 for d, ids_ in groups.items():

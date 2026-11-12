@@ -9,7 +9,6 @@ import pytest
 from hxex.config import load_project, read_input
 from hxex.fit import FitConfig
 from hxex.gui.window_edit import (
-    compare_words,
     has_fragments,
     own_windows,
     plan_spread,
@@ -19,9 +18,11 @@ from hxex.gui.window_edit import (
     saved_window,
     saved_words,
     scope_words,
+    spread_files,
     spread_words,
     trace_shift,
     undo_window,
+    view_words,
 )
 from hxex.io.retention_trace import TraceReader
 from hxex.model import Backend
@@ -269,17 +270,47 @@ def test_a_window_spread_to_the_replicates_is_shifted_by_their_elution(project):
                        ions=(key[2],), level="peptide") == []
 
 
+def test_every_file_stays_within_the_sample(project):
+    """Level 4 (every file) reaches the sample's other files only, never another sample's: the
+    peptide table goes by sample (owner, 2026-11-12)."""
+    write_mzml(project.parent / "un3.mzML", lc_run(3, shift=3.0))
+    project.write_text(project.read_text() + """
+[[input.runs]]
+path = "un3.mzML"
+sample = "T"
+role = "undeut"
+""")
+    spectra = _read(project)
+    results = _results(spectra)
+    reader = TraceReader(spectra.source, data_root=project.parent)
+    peptide = f"0001-{N:04d}-{PEPTIDE}"
+
+    def reached(file, sample):
+        i = [k for k, s in enumerate(spectra.spectrum_id) if f":{sample}/{file}/" in s][0]
+        out = spread_files(reader, results, spectra.spectrum_id[i], int(spectra.data_id[i]),
+                           peptide=peptide, ion=_key(spectra, i)[2], level="everywhere")
+        return sorted(sid.split("/")[1] for sid, _d in out)
+
+    assert reached("un1.mzML", "S") == ["un2.mzML"]  # not T's un3
+    assert reached("un3.mzML", "T") == []
+
+
 def test_the_save_choices_are_worded_for_the_project():
     """Charge states for a peptide project, ions when fragments are read; files, not runs."""
     words = scope_words("0001-0008-VDQIIMAK-z3", False)
     assert list(words) == ["ion", "peptide", "replicates", "everywhere"]
-    assert words["ion"] == "this charge state only (z = 3), in this file"
-    assert words["peptide"] == "every charge state of this peptide, in this file"
+    assert words["ion"] == "1. this charge state only (z = 3), in this file"
+    assert words["peptide"] == "2. every charge state of this peptide, in this file"
     assert "replicates (each shifted)" in words["replicates"]
     assert scope_words("0001-0008-VDQIIMAK-c5-pz3-ETD", True)["ion"] == \
-        "this ion only, in this file"
-    assert compare_words(False)["replicates"] == "this charge state in its replicates"
-    assert compare_words(True)["ions"] == "this peptide's other ions in this file"
+        "1. this ion only, in this file"
+    views = view_words(False)
+    assert list(views) == ["ion", "ions", "replicates", "everywhere"]
+    assert views["replicates"] == "3. this charge state, in this file and its replicates"
+    # each view has the number of the save level it goes with
+    assert views["ions"] == words["peptide"]
+    assert [v[0] for v in views.values()] == [w[0] for w in words.values()]
+    assert view_words(True)["ions"] == scope_words("x", True)["peptide"]
     assert not has_fragments({"targets": [{"ms_level": 1}]})
     assert has_fragments({"targets": [{"ms_level": 1}, {"ms_level": 2}]})
     assert not has_fragments(None)

@@ -229,21 +229,27 @@ A replicate read from mzML or Thermo raw files also has an **elution** tab: its 
 trace over retention time, to check that the scans summed sit on the peptide's own elution peak and not on a
 neighbour's. *hxex* opens the spectrum's file again and draws, per scan, the intensity at the
 ion's bins (the tallest point in the picking window of each bin, added up over the bins) over a
-stretch of the run around the scans it summed (shaded). **Compare with** chooses what is drawn
-behind it:
+stretch of the run around the scans it summed (shaded). **Show elution traces for** chooses
+what is drawn with it. Its choices are numbered as the **Save window** choices they go with
+(below), so traces 2 show what you need to judge save choice 2, and so on. Hover over a choice
+to see what it covers.
 
-- **this charge state in its replicates** (the default; **this ion** when you read
-  fragments): the same charge state in the sample's other files at the same time point (or
-  the same control), in grey. A file that eluted earlier or later, or a window that caught
-  another peak, stands out: that file needs a window of its own.
-- **this charge state in every file of the peptide**: the same, in every file of every sample
-  that reads the peptide (its time points, replicates, and controls).
-- **this peptide's other charge states in this file** (**other ions** when you read fragments):
-  the peptide's other charge states and, when you read fragments, its fragment ions, one line
-  per fragment channel (its ions added up), in colour, each scaled to the selected trace's
-  height so that the peaks compare. They come from the same molecules and elute together; one
-  whose peak sits apart from the others has interference at its own m/z. This tells you which
-  choice to make when you save a window (below).
+1. **this charge state only, in this file** (**this ion only** when you read fragments): this
+   file's trace alone.
+2. **every charge state of this peptide, in this file** (**this peptide, its charge states and
+   fragment ions** when you read fragments): the peptide's other charge states and, when you
+   read fragments, its fragment ions, one line per fragment channel (its ions added up), in
+   colour, each scaled to the selected trace's height so that the peaks compare. They come
+   from the same molecules and elute together; one whose peak sits apart from the others has
+   interference at its own m/z and needs a window of its own (save choice 1).
+3. **this charge state, in this file and its replicates** (the default): the same charge state
+   in the sample's other files at the same time point (or the same control), in grey. A file
+   that eluted earlier or later, or a window that caught another peak, stands out: that file
+   needs a window of its own.
+4. **this charge state, in every file of this sample**: the same, in every file of this sample
+   that reads the peptide: its time points, replicates, and controls. Other samples' files are
+   never drawn or saved to, since the peptide table goes by sample. With many files this is the
+   slowest to draw.
 
 For ion-mobility files the trace keeps to the spectrum's drift
 range, and a second panel shows the drift profile of the scans summed, with that range shaded.
@@ -272,7 +278,8 @@ changes. Now and then the run's own fit, which tries more starting points, settl
 K than the preview did. The line above the figure says it is a preview; hover over it to
 see how this preview differs from a run (for example, K chosen without the population test).
 
-While you edit with **Compare with** on the replicates or on every file of the peptide, the
+While you edit with **Show elution traces for** on 3 or 4 (the replicates or every file of this
+sample), the
 other files are drawn on this file's clock instead of where they are: each is moved by the
 same trace match a save at that level uses (below; within the drift range in the boxes) and
 scaled to this trace's height, so the peaks line up under the new window when the match worked.
@@ -290,19 +297,24 @@ files keep their places until the new match is ready.
 **Save window** writes the window as a row of the project's elution-window table. The choice
 beside it says what the row is for:
 
-- **this charge state only (z = 3), in this file** (**this ion only** when you read fragments):
-  for interference at its own m/z, when this one needs a different window from the rest of its
-  peptide. The row names the peptide as well, so it is for this peptide's ion only.
-- **every charge state of this peptide, in this file** (the default; **this peptide, its
-  charge states and fragment ions** when you read fragments): every charge state of the
-  peptide in this file takes the window and, when you read fragments, all its fragment ions
-  (MS2, MS3). They are the same molecules and elute together, so this is usually right.
-  If this charge state (or ion) had a window of its own, it now follows its peptide; the
-  message names any other one of the peptide that keeps a window of its own.
-- **every charge state, in this file and its replicates (each shifted)**: as above, and in the
-  sample's other files at the same time point (or the same control).
-- **every charge state, in every file of the peptide (each shifted)**: as above, in every file
-  of every sample that reads the peptide: its time points, replicates, and controls.
+1. **this charge state only (z = 3), in this file** (**this ion only** when you read fragments):
+   for interference at its own m/z, when this one needs a different window from the rest of its
+   peptide (traces 2 show it). The row names the peptide as well, so it is for this peptide's
+   ion only.
+2. **every charge state of this peptide, in this file** (the default; **this peptide, its
+   charge states and fragment ions** when you read fragments): every charge state of the
+   peptide in this file takes the window and, when you read fragments, all its fragment ions
+   (MS2, MS3). They are the same molecules and elute together, so this is usually right.
+   If this charge state (or ion) had a window of its own, it now follows its peptide; the
+   message names any other one of the peptide that keeps a window of its own.
+3. **every charge state, in this file and its replicates (each shifted)**: as above, and in the
+   sample's other files at the same time point (or the same control).
+4. **every charge state, in every file of this sample (each shifted)**: as above, in every file
+   of this sample that reads the peptide: its time points, replicates, and controls.
+
+The two lists are independent: choosing how to save never changes the traces drawn, and
+choosing the traces never changes how a window is saved. Before saving at a level, look at the
+traces of the same number (for choice 1, at traces 2).
 
 Retention moves a little between injections (a few seconds), so the last two choices do not
 copy the minutes: *hxex* matches each file's trace of this charge state (within the drift

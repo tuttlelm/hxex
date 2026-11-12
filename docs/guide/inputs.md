@@ -958,7 +958,7 @@ half of the peak would shift the labelled spectra but not their reference.
 
 You rarely type this table: the elution tab of the window's Results page writes it (**Edit
 window**, then **Save window**, for one charge state (ion), the whole peptide in one file, its
-replicates, or every file of the peptide; see
+replicates, or every file of the sample; see
 [Results](gui.md#results)), and the first save adds the setting to your project file. A table
 written before peptide rows existed has an `ion` column only; its rows keep their meaning (one
 ion each). `hxex check` says how many windows the table holds and names any row whose sample,

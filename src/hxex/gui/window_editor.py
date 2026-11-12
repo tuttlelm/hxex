@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -32,35 +32,35 @@ from PySide6.QtWidgets import (
 
 from .flow_layout import FlowLayout
 from .tasks import Latest
-from .tips import tip
-from .window_edit import APPLY, scope_words
+from .tips import rich_tip, tip
+from .window_edit import APPLY, scope_tips, scope_words
 
 log = logging.getLogger(__name__)
 
 _WAIT_MS = 400  # a changed box is previewed once it has been left alone this long
 
 
-# what the save choices mean (worded for both kinds of project: the choices' own text follows
-# the project, hxex.gui.window_edit.scope_words)
-SCOPE_TIP = (
-    "What the saved window is for. This charge state (ion) only: for interference at its own "
-    "m/z, in this file. Every charge state, in this file: the whole peptide (and its fragment "
-    "ions, when they are read); the same molecules elute together (Compare with: this peptide's "
-    "other charge states shows whether they do). In this file and its replicates: also the "
-    "sample's other files at this time point (or control). In every file of the peptide: every "
-    "file of every sample that reads it. In other files the window is shifted by that file's "
-    "elution, matched on this charge state's trace; a file whose match is unclear is left for "
-    "you, and you are asked before windows set in a file before are replaced. A changed drift "
-    "range is saved for this charge state only (drift times differ between charge states). A "
-    "file that several samples read gets the window in each (one injection, one window)")
+def set_choice_tips(combo: QComboBox, tips: dict[str, str]) -> None:
+    """Give each choice of ``combo`` its tooltip (``tips`` by the choice's data, bold between
+    ``**``), shown on the open list's items and, for the selected choice, on the box (owner,
+    2026-11-12: one long tooltip for every choice was hard to read)."""
+    for i in range(combo.count()):
+        combo.setItemData(i, rich_tip(tips.get(combo.itemData(i), "")),
+                          Qt.ItemDataRole.ToolTipRole)
+    combo.setToolTip(combo.itemData(combo.currentIndex(), Qt.ItemDataRole.ToolTipRole) or "")
+    if not combo.property("tips_follow"):  # connected once: the box follows the selection
+        combo.setProperty("tips_follow", True)
+        combo.currentIndexChanged.connect(lambda i: combo.setToolTip(
+            combo.itemData(i, Qt.ItemDataRole.ToolTipRole) or ""))
 
 
 @dataclass
 class TraceContext:
     """What the elution tab shows: the ``results`` (from ``results_path``), the selected
     ``spectrum_id`` of series ``data_id``, its ``traces`` (the latest read), the figure's
-    ``title``, the series' ``mz_range``, the trace ``reader``, and what Compare with shows
-    (``compare``: ``replicates`` and ``everywhere`` are the files a spread reaches)."""
+    ``title``, the series' ``mz_range``, the trace ``reader``, and what 'Show elution traces
+    for' shows (``compare``: ``replicates`` and ``everywhere`` are the files a spread reaches,
+    within this sample)."""
 
     results: object
     results_path: Path | None
@@ -90,7 +90,6 @@ class WindowEditor(QObject):
 
     message = Signal(str)
     saved = Signal(str)  # the elution-window table written (its path)
-    level_chosen = Signal(str)  # the user chose how to save (the tab shows its evidence)
 
     def __init__(self, panel, context: Callable[[], TraceContext | None],
                  plain: Callable[[], None], parent=None):
@@ -121,9 +120,8 @@ class WindowEditor(QObject):
         row = FlowLayout(self.bar)
         self.edit = QCheckBox("Edit window")
         self.edit.setToolTip(
-            tip("change the scans this spectrum sums: drag across the trace (or the drift profile) "
-                "or type the times; the spectrum summed over the new window is drawn beside the "
-                "one the results hold"))
+            tip("Change the scans this spectrum sums: drag across the trace or type the times. "
+                "The new spectrum is drawn beside the current one."))
         self.edit.toggled.connect(self._toggled)
         self.start, self.end = self._box("minutes"), self._box("minutes")
         self.start.setToolTip(tip("the window's start (min, the acquisition clock)"))
@@ -137,23 +135,18 @@ class WindowEditor(QObject):
         self.each_k.toggled.connect(lambda _on: self.draw())
         self.each_file = QCheckBox("Each file's window")
         self.each_file.setToolTip(tip(
-            "one row per file Compare with shows (its replicates, or every file of the "
-            "peptide), each on its own clock: the scans it sums now and the new window shifted "
-            "into it by the trace match, as saving at that level would write it; with Compare "
-            "with on the replicates or every file"))
+            "With Show elution traces for on 3 or 4: one row per file, showing the scans it "
+            "sums now and where the new window would go."))
         self.each_file.toggled.connect(lambda _on: self.draw())
         self.scope = QComboBox()
         for data, text in scope_words("", False).items():
             self.scope.addItem(text, data)
-        self.scope.setToolTip(SCOPE_TIP)
-        # the user's own choice only (not the editor's, setting it to a saved window's kind)
-        self.scope.activated.connect(lambda _i: self.level_chosen.emit(self.scope.currentData()))
+        set_choice_tips(self.scope, scope_tips(False))
         self._spread_task = Latest(self)  # the trace match of a window spread to other files
         self.save = QPushButton("Save window")
         self.save.clicked.connect(self._save)
         self.undo = QPushButton("Undo")
-        self.undo.setToolTip(tip("put the elution-window table (and the project file, when the "
-                                 "first save named the table there) back as before the last save"))
+        self.undo.setToolTip(tip("Undo the last save."))
         self.undo.clicked.connect(self._undo)
         self.undo.setEnabled(False)
         # two rows of their own under the figure's buttons (in the buttons' row they made the
@@ -288,6 +281,7 @@ class WindowEditor(QObject):
         words = scope_words(key[2] if key else "", has_fragments(ctx.reader))
         for i in range(self.scope.count()):
             self.scope.setItemText(i, words[self.scope.itemData(i)])
+        set_choice_tips(self.scope, scope_tips(has_fragments(ctx.reader)))
 
     def _set_boxes(self, window, drift) -> None:
         boxes = [(self.start, window[0]), (self.end, window[1])]
@@ -380,7 +374,7 @@ class WindowEditor(QObject):
         self._task.submit(work, done, failed)
 
     def _align(self, ctx: TraceContext) -> None:
-        """Match the files Compare with shows (its replicates, or every file of the peptide)
+        """Match the files the plots show (its replicates, or every file of this sample)
         against this one's trace within the drift range in the boxes, in the background, once
         per spectrum, level and drift range (the window does not change the match); drawn
         when ready (:meth:`draw`) and used by a save at that level."""
@@ -414,7 +408,7 @@ class WindowEditor(QObject):
             level=level, drift=drift, cancel=lambda: self._aligning != key), done, failed)
 
     def _matching(self, ctx: TraceContext) -> bool:
-        """Whether the files Compare with shows are still being matched to this one's trace
+        """Whether the files the plots show are still being matched to this one's trace
         (started if not yet): they are drawn once matched, not first where they are and then
         moved (owner, 2026-11-12: the figure jumped)."""
         self._align(ctx)
@@ -437,10 +431,10 @@ class WindowEditor(QObject):
 
     def draw(self) -> None:
         """The trace with the window being edited, and the spectra now and over it; with
-        Compare with on the replicates or every file, those files aligned on this file's clock
-        by the trace match (owner's choice, 2026-11-11: draft A), or one row per file (Each
-        file's window: draft B). The traces are always those the run summed (their own drift
-        ranges); the match, within the drift range in the boxes, gives only the shifts."""
+        the plots on view 3 or 4 (replicates or every file), those files aligned on this
+        file's clock by the trace match (owner's choice, 2026-11-11: draft A), or one row per
+        file (Each file's window: draft B). The traces are always those the run summed (their
+        own drift ranges); the match, within the drift range in the boxes, gives only the shifts."""
         from ..report.retention import (
             plot_each_file,
             plot_window_edit,
@@ -537,14 +531,10 @@ class WindowEditor(QObject):
                                      "project) to save windows"))
         else:
             self.save.setEnabled(True)
-            self.save.setToolTip(tip("write the window for this file in the project's "
-                                     "elution-window table ([input] rt_elution_windows; made by "
-                                     "the first save), for the whole peptide or this charge "
-                                     "state (ion) only (the choice beside), for every sample "
-                                     "that reads this file; the peptide table is not changed, "
-                                     "and the results change when the project is run again "
-                                     "with overwrite enabled (Run on the Run tab); only the "
-                                     "series whose spectra changed are fitted again"))
+            self.save.setToolTip(tip("Save the new retention times (and drift range, for "
+                                     "ion-mobility files) to the project's elution-window table "
+                                     "([input] rt_elution_windows). The first save asks where "
+                                     "to put the table."))
 
     def _save(self) -> None:
         from .window_edit import (

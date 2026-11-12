@@ -52,6 +52,25 @@ def tip(text: str | None, width: int = TIP_WIDTH) -> str:
     return "\n".join(lines)
 
 
+def rich_tip(text: str | None, width: int = TIP_WIDTH) -> str:
+    """``text`` laid out as :func:`tip`, as rich text, with the words between ``**`` in bold
+    (Qt shows a tooltip that starts with a tag as rich text). Each line is kept whole
+    (``white-space: pre``): Qt word-wraps a rich-text tooltip again at about half these lines'
+    width, which broke each of them in two (owner, 2026-11-12: "the wrapping is a bit weird")."""
+    import html
+    import re
+
+    if not text:
+        return text or ""
+    # wrapped without the markers (they take no room), the bold phrases found again after
+    bold = re.findall(r"\*\*(.+?)\*\*", text)
+    laid = html.escape(tip(text.replace("**", ""), width), quote=False)
+    for phrase in bold:
+        words = [re.escape(html.escape(w, quote=False)) for w in phrase.split()]
+        laid = re.sub(r"\s+".join(words), lambda m: f"<b>{m.group(0)}</b>", laid, count=1)
+    return "<qt><p style='white-space:pre'>" + laid.replace("\n", "<br>") + "</p></qt>"
+
+
 # the tooltip box: (background, text, border) for a light and a dark desktop
 TIP_COLOURS = {False: ("#f8f5ee", "#2a2723", "#cfc6b4"),
                True: ("#2e2b27", "#ece6da", "#5a5348")}

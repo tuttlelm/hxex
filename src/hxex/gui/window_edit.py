@@ -240,37 +240,74 @@ def charge_of(ion: str) -> int | None:
 
 
 def scope_words(ion: str, fragments: bool) -> dict[str, str]:
-    """The window editor's two choices (by their data: ``peptide`` and ``ion``) for the
-    selected ``ion`` (as spectrum ids name it), worded for a project with or without fragment
-    ions."""
+    """The window editor's save choices (by their data: ``ion``, ``peptide``, ``replicates``,
+    ``everywhere``) for the selected ``ion`` (as spectrum ids name it), worded for a project
+    with or without fragment ions and numbered as the elution tab's views of the same reach
+    (:func:`view_words`; owner, 2026-11-12: which view goes with which save was hard to see)."""
     if fragments:
-        return {"ion": "this ion only, in this file",
-                "peptide": "this peptide, its charge states and fragment ions, in this file",
-                "replicates": "this peptide and its ions, in this file and its replicates "
+        return {"ion": "1. this ion only, in this file",
+                "peptide": "2. this peptide, its charge states and fragment ions, in this file",
+                "replicates": "3. this peptide and its ions, in this file and its replicates "
                               "(each shifted)",
-                "everywhere": "this peptide and its ions, in every file of the peptide "
+                "everywhere": "4. this peptide and its ions, in every file of this sample "
                               "(each shifted)"}
     z = charge_of(ion)
-    return {"ion": (f"this charge state only (z = {z}), in this file" if z
-                    else "this charge state only, in this file"),
-            "peptide": "every charge state of this peptide, in this file",
-            "replicates": "every charge state, in this file and its replicates (each shifted)",
-            "everywhere": "every charge state, in every file of the peptide (each shifted)"}
+    return {"ion": (f"1. this charge state only (z = {z}), in this file" if z
+                    else "1. this charge state only, in this file"),
+            "peptide": "2. every charge state of this peptide, in this file",
+            "replicates": "3. every charge state, in this file and its replicates "
+                          "(each shifted)",
+            "everywhere": "4. every charge state, in every file of this sample (each shifted)"}
 
 
-def compare_words(fragments: bool) -> dict[str, str]:
-    """The elution tab's Compare with choices, one for each save level beyond this charge
-    state alone (``ions``: level 2, ``replicates``: 3, ``everywhere``: 4; owner, 2026-11-11),
-    worded as :func:`scope_words`."""
-    one, others = ("this ion", "other ions") if fragments else ("this charge state",
-                                                               "other charge states")
-    return {"ions": f"this peptide's {others} in this file",
-            "replicates": f"{one} in its replicates",
-            "everywhere": f"{one} in every file of the peptide"}
+def view_words(fragments: bool) -> dict[str, str]:
+    """The elution tab's "Show elution traces for" choices, one for each save level and numbered as
+    :func:`scope_words` (``ion``: 1, this file's trace alone; ``ions``: 2, the peptide's
+    other ions in this file; ``replicates``: 3; ``everywhere``: 4). Views 3 and 4 draw this
+    ion in the other files: the trace the save at that level is matched on."""
+    if fragments:
+        return {"ion": "1. this ion only, in this file",
+                "ions": "2. this peptide, its charge states and fragment ions, in this file",
+                "replicates": "3. this ion, in this file and its replicates",
+                "everywhere": "4. this ion, in every file of this sample"}
+    return {"ion": "1. this charge state only, in this file",
+            "ions": "2. every charge state of this peptide, in this file",
+            "replicates": "3. this charge state, in this file and its replicates",
+            "everywhere": "4. this charge state, in every file of this sample"}
 
 
-# the save level each Compare with view shows the evidence for (and the reverse)
-COMPARE_FOR_LEVEL = {"peptide": "ions", "replicates": "replicates", "everywhere": "everywhere"}
+def view_tips(fragments: bool) -> dict[str, str]:
+    """Each "Show elution traces for" choice's tooltip (:func:`view_words`' keys), its key
+    words between ``**`` (bold, :func:`hxex.gui.tips.rich_tip`); owner's wording, 2026-11-12."""
+    one = "ion" if fragments else "charge state"
+    return {"ion": f"**Only this** sample, peptide, {one}, time point, and replicate.",
+            "ions": "**All charge states** of this peptide (and its fragment ions, when read), "
+                    "for this sample, time point, and replicate.",
+            "replicates": f"**All replicates** for this sample, peptide, {one}, and time point "
+                          "(or control).",
+            "everywhere": f"**All traces** for this sample, peptide, and {one}: every time "
+                          "point, replicate, and control (may be slow to draw)."}
+
+
+def scope_tips(fragments: bool) -> dict[str, str]:
+    """Each save choice's tooltip (:func:`scope_words`' keys), as :func:`view_tips`."""
+    one = "ion" if fragments else "charge state"
+    every = ("all charge states and fragment ions" if fragments else "all charge states")
+    return {"ion": f"**Only this** {one}, for this sample, time point, and replicate.",
+            "peptide": f"**{every.capitalize()}** of this peptide, for this sample, time "
+                       "point, and replicate.",
+            "replicates": f"**{every.capitalize()} and replicates** for this sample, peptide, "
+                          "and time point (each replicate's window shifted to follow its own "
+                          "elution).",
+            "everywhere": f"**{every.capitalize()} and files** of this sample and peptide: every "
+                          "time point, replicate, and control (each file's window shifted to "
+                          "follow its own elution)."}
+
+
+def ions_legend(fragments: bool) -> str:
+    """The legend's name for the peptide's other ions drawn behind this one (view 2)."""
+    return ("this peptide's other ions in this file" if fragments
+            else "this peptide's other charge states in this file")
 
 
 def saved_words(saved, *, peptide: str, ion: str, file: str, whole: bool, fragments: bool,
@@ -419,8 +456,10 @@ def trace_shift(ref_times, ref_intensity, times, intensity,
 def spread_files(reader, results, spectrum_id: str, data_id: int, *, peptide: str, ion: str,
                  level: str) -> list[tuple[str, int]]:
     """The other files a window saved at ``level`` (``replicates``: the spectrum's sample's
-    files at its time point or control; ``everywhere``: every file of every sample that reads
-    the charge state ``ion`` of ``peptide``) reaches, as one spectrum (id, series) of ``ion``
+    files at its time point or control; ``everywhere``: every file of the spectrum's sample
+    that reads the charge state ``ion`` of ``peptide``, at every time point and control; owner,
+    2026-11-12: the peptide table goes by sample, so a save never reaches another sample's
+    files) reaches, as one spectrum (id, series) of ``ion``
     per file: from the spectra ``results`` fitted (their ids and series), the edited file left
     out. A file without a spectrum of this charge state is not listed."""
     from ..io.elution_windows import peptide_label
@@ -455,8 +494,9 @@ def spread_files(reader, results, spectrum_id: str, data_id: int, *, peptide: st
         key = Path(str(run.path)).as_posix()
         if key in seen:
             continue
-        if level == "replicates" and not (run.sample == here.sample and run.role == here.role
-                                          and run.time == here.time):
+        if run.sample != here.sample:
+            continue
+        if level == "replicates" and not (run.role == here.role and run.time == here.time):
             continue
         seen.add(key)
         out.append((sid, d))
