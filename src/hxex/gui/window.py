@@ -828,7 +828,7 @@ class MainWindow(QMainWindow):
                 pool.clear()
                 stopped = pool.waitForDone(10000) and stopped
             if stopped:
-                collection().settled()
+                collection().release()
             event.accept()
         else:
             event.ignore()

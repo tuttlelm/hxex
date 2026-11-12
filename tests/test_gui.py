@@ -202,10 +202,12 @@ def test_resting_the_pointer_on_a_mark_shows_its_tooltip(qtbot, render, monkeypa
     assert rect.contains(round(w * 0.625), round(h * 0.8)) and rect.left() >= w * 0.5 - 5
 
 
-def test_garbage_collection_waits_for_the_windows_thread(qtbot):
-    """A reference cycle holding a window object, freed by a collection in a drawing thread,
-    crashed Qt (macOS CI): automatic collection is paused while work runs off the window's
-    thread, and resumes in the window's thread, also after a failure."""
+def test_garbage_is_collected_between_events_in_the_windows_thread(qtbot, monkeypatch):
+    """Automatic collection ran wherever an allocation crossed its threshold: in a drawing
+    thread it freed a window object off the window's thread (a crash, macOS CI), and in the
+    window's thread, inside Qt's disconnect, it freed a widget waiting for the lock Qt held (a
+    deadlock, HISTORY 365). While the window exists, collection runs from a timer in the
+    window's thread, between events, also while work runs off it; closing gives it back."""
     import gc
     import threading
 
@@ -214,36 +216,31 @@ def test_garbage_collection_waits_for_the_windows_thread(qtbot):
     assert gc.isenabled()
     panel = FigurePanel()
     qtbot.addWidget(panel)
+    assert collection().active and not gc.isenabled()
     seen = {}
-    started = threading.Event()
-    go_on = threading.Event()
 
     def work():
         seen["enabled"] = gc.isenabled()
-        started.set()
-        go_on.wait(10)
         fig = Figure()
         fig.add_subplot().plot([0, 1], [1, 0])
         return fig
 
     with qtbot.waitSignal(panel.drawn, timeout=10000):
         panel.draw(work)
-        assert started.wait(10) and not gc.isenabled() and collection().running == 1
-        go_on.set()
-    qtbot.waitUntil(lambda: gc.isenabled(), timeout=5000)
-    assert seen["enabled"] is False and collection().running == 0
+    assert seen["enabled"] is False and not gc.isenabled()
 
-    def broken():
-        raise ValueError("no figure")
+    collected = []
+    collect = gc.collect
+    monkeypatch.setattr(gc, "get_count", lambda: gc.get_threshold())  # every generation due
+    monkeypatch.setattr(gc, "collect", lambda generation=2: (
+        collected.append((generation, threading.current_thread() is threading.main_thread())),
+        collect(generation))[1])
+    qtbot.waitUntil(lambda: bool(collected), timeout=5000)
+    assert collected[0] == (2, True)  # the oldest due, in the window's thread
+    monkeypatch.undo()
 
-    with qtbot.waitSignal(panel.failed, timeout=10000):
-        panel.draw(broken)
-    qtbot.waitUntil(lambda: gc.isenabled(), timeout=5000)
-
-    collection().hold()  # work a cleared pool dropped: the window's close settles it
-    assert not gc.isenabled()
-    collection().settled()
-    assert gc.isenabled() and collection().running == 0
+    collection().release()
+    assert gc.isenabled() and not collection().active
 
 
 def test_a_failed_drawing_is_reported_in_the_panel(qtbot):

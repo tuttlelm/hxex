@@ -76,6 +76,9 @@ def launch(path: str | Path | None = None, argv: Sequence[str] | None = None) ->
     dotnet = QApplication.instance() is None and start_dotnet()  # before Qt (see there)
     app = QApplication.instance() or QApplication(list(argv or sys.argv[:1]))
     app.setApplicationName("hxex")
+    from .tasks import collection
+
+    collection().take_over()  # garbage collected between events only (gui.tasks, HISTORY 365)
     app.setOrganizationName("hxex")
     follow_scheme(app.setWindowIcon)  # the logo for a light or dark desktop
     style_tooltips(app)  # roomier, cream tooltip boxes

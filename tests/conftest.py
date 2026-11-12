@@ -27,6 +27,11 @@ def _drawings_finished():
         from PySide6.QtCore import QThreadPool
 
         QThreadPool.globalInstance().waitForDone(120000)
+        # the window's garbage collection (gui.tasks.collection: off while a window exists,
+        # run from a timer between events): collected and given back between tests, so tests
+        # without a window collect as usual
+        if tasks._COLLECTION is not None:
+            tasks._COLLECTION.release()
 
 
 @pytest.fixture(autouse=True)

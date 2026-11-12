@@ -9272,3 +9272,28 @@ CSVs or mzML if wanted.
     level with an invalid index". The window fits one at a time (`window_edit._FIT_LOCK`) and
     runs hxex in child processes, so only the tests overlapped; tests/conftest.py now waits for
     the global pool after every test, as it waits for the drawing thread (HISTORY 282).
+
+365. **The GUI tests' intermittent hang: Python's garbage collector inside Qt's disconnect
+    (2026-11-12).** CI for f929dfc hung on Linux with Python 3.11 in
+    `test_the_overview_is_the_first_look_and_a_tab_at_every_level`, the test that hung once on
+    Windows (HISTORY 317 note); one local full run had stopped the same way (HISTORY 323 note).
+    The timeout report showed only the main thread, inside Qt at a line that does no Qt work. A
+    loop of every GUI test file on this machine hung on its 14th run (a different test), and gdb
+    gave the native stacks: a Python object freed by reference counting ran a weak reference's
+    callback, PySide disconnected a signal, Qt held its connection lock while PySide asked
+    Python about an override, that allocation crossed the collector's threshold, and the
+    collection freed a combo box whose destructor waited for the same lock (Qt's connection
+    locks are a small pool shared by address, so it needs two objects that share one: hence
+    rare). A deadlock in the window's own thread, possible in the real window too. Automatic
+    collection was already paused while work ran off the window's thread (HISTORY 241, the
+    macOS crash of a collection in a drawing thread). Now, while the window exists (from
+    `hxex gui`'s start, or the first background runner a widget makes), automatic collection is
+    off and the window collects from a timer every 250 ms, between events, where Qt holds no
+    lock: the oldest generation past its threshold, as Python would
+    (`gui.tasks._Collection.take_over`, `collect_due`, `release`; the window's close collects
+    once and gives automatic collection back). Objects without cycles are freed as usual.
+    tests/conftest.py gives it back after every test, so tests without a window collect as
+    usual. Checks: the loop of every GUI test file, which hung on run 14 before, ran 50 times
+    without a hang (84 tests, about 70 s a run; at the earlier rate, 50 clean runs by chance
+    would be about 2.5 %); tests/test_gui.py (collection off while a window exists and during a drawing, a
+    due collection in the window's thread at the oldest generation, given back on release).

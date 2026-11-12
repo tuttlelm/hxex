@@ -5,22 +5,25 @@ figures run in Qt's thread pool and report back to the window through signals.
 :class:`Latest` runs one kind of work at a time from the window's point of view: a newer request
 replaces an older one still running (the older one finishes, and its result is ignored).
 
-Python's garbage collector frees reference cycles in whichever thread happens to trigger it; a
-cycle holding a window object (a widget, a timer) freed in a worker thread crashes Qt (seen on
-macOS: a collection during a drawing). While any work runs off the window's thread, automatic
-collection is therefore paused, and it resumes in the window's thread when the last one ends
-(:class:`_Collection`). Objects without cycles are freed as usual meanwhile."""
+Python's garbage collector frees reference cycles wherever an allocation happens to cross its
+threshold. In a worker thread, a cycle holding a window object (a widget, a timer) freed there
+crashed Qt (seen on macOS: a collection during a drawing). In the window's own thread, inside
+Qt's code, it deadlocked: a weak reference's callback disconnected a signal, Qt held its
+connection lock while asking Python about an override, that allocation started a collection,
+and the collection freed a widget whose destructor waited for the same lock (CI and local
+runs, HISTORY 365). So while the window exists, automatic collection is off, and the window
+collects from a timer, between events, where Qt holds no lock (:class:`_Collection`). Objects
+without cycles are freed as usual meanwhile."""
 
 from __future__ import annotations
 
 import gc
 import logging
-import threading
 import traceback
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
 log = logging.getLogger(__name__)
 
@@ -31,45 +34,48 @@ class _Signals(QObject):
 
 
 class _Collection(QObject):
-    """Automatic garbage collection paused while work runs off the window's thread: :meth:`hold`
-    (in the window's thread, before the work starts) and :attr:`release` (emitted by the work
-    when it ends, received in the window's thread, where collection resumes after the last)."""
+    """Garbage collection in the window's thread, between events: :meth:`take_over` (when the
+    window's first background runner is made) turns automatic collection off and starts a timer
+    that collects as automatic collection would (the oldest generation past its threshold);
+    :meth:`release` (the window closed, every pool stopped) collects once and turns automatic
+    collection back on as it was."""
 
-    release = Signal()
+    INTERVAL_MS = 250
 
     def __init__(self):
         super().__init__()
-        self._lock = threading.Lock()
-        self._running = 0
-        self._was_enabled = True
-        self.release.connect(self._released)
+        self._was_enabled: bool | None = None  # None: not taken over
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.INTERVAL_MS)
+        self._timer.timeout.connect(self.collect_due)
 
-    def hold(self) -> None:
-        with self._lock:
-            if self._running == 0:
-                self._was_enabled = gc.isenabled()
-                gc.disable()
-            self._running += 1
+    def take_over(self) -> None:
+        if self._was_enabled is None:
+            self._was_enabled = gc.isenabled()
+            gc.disable()
+        if not self._timer.isActive():
+            self._timer.start()
 
-    def _released(self) -> None:
-        with self._lock:
-            if self._running == 0:  # after :meth:`settled`: already resumed
+    def collect_due(self) -> None:
+        """The oldest generation whose count passed its threshold, as Python would."""
+        counts, thresholds = gc.get_count(), gc.get_threshold()
+        for generation in (2, 1, 0):
+            if thresholds[generation] and counts[generation] >= thresholds[generation]:
+                gc.collect(generation)
                 return
-            self._running -= 1
-            if self._running == 0 and self._was_enabled:
-                gc.enable()
 
-    def settled(self) -> None:
-        """Every pool has stopped (work waiting in a cleared pool never ends): collection
-        resumes as it was."""
-        with self._lock:
-            if self._running and self._was_enabled:
-                gc.enable()
-            self._running = 0
+    def release(self) -> None:
+        self._timer.stop()
+        if self._was_enabled is None:
+            return
+        gc.collect()
+        if self._was_enabled:
+            gc.enable()
+        self._was_enabled = None
 
     @property
-    def running(self) -> int:
-        return self._running
+    def active(self) -> bool:
+        return self._was_enabled is not None
 
 
 _COLLECTION: _Collection | None = None
@@ -84,25 +90,18 @@ def collection() -> _Collection:
 
 
 class _Job(QRunnable):
-    def __init__(self, ticket: int, work: Callable[[], Any], signals: _Signals,
-                 gate: _Collection):
+    def __init__(self, ticket: int, work: Callable[[], Any], signals: _Signals):
         super().__init__()
-        self.ticket, self.work, self.signals, self.gate = ticket, work, signals, gate
+        self.ticket, self.work, self.signals = ticket, work, signals
 
     def run(self):
         try:
-            try:
-                result = self.work()
-            except Exception as exc:  # noqa: BLE001 - reported to the window, details logged
-                log.debug("background work failed:\n%s", traceback.format_exc())
-                self._emit(self.signals.failed, f"{exc}" or type(exc).__name__)
-                return
-            self._emit(self.signals.done, result)
-        finally:
-            try:
-                self.gate.release.emit()
-            except RuntimeError:  # the application is gone (closed while this ran)
-                pass
+            result = self.work()
+        except Exception as exc:  # noqa: BLE001 - reported to the window, details logged
+            log.debug("background work failed:\n%s", traceback.format_exc())
+            self._emit(self.signals.failed, f"{exc}" or type(exc).__name__)
+            return
+        self._emit(self.signals.done, result)
 
     def _emit(self, signal, value) -> None:
         try:
@@ -137,7 +136,7 @@ class Latest(QObject):
         self._signals = _Signals(self)
         self._signals.done.connect(self._done)
         self._signals.failed.connect(self._failed)
-        self._gate = collection()
+        collection().take_over()
         self.running = False
 
     def submit(self, work: Callable[[], Any], done: Callable[[Any], None],
@@ -145,8 +144,7 @@ class Latest(QObject):
         self._ticket += 1
         self._callbacks = (done, failed)
         self.running = True
-        self._gate.hold()
-        self.pool.start(_Job(self._ticket, work, self._signals, self._gate))
+        self.pool.start(_Job(self._ticket, work, self._signals))
 
     def _done(self, ticket: int, result) -> None:
         if ticket == self._ticket and self._callbacks is not None:
