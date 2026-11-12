@@ -162,6 +162,26 @@ def test_settings_are_checked():
     assert MzmlConfig.from_dict(cfg.to_dict()) == cfg
 
 
+
+def test_suggest_searches_wherever_the_project_lists_the_controls(runs):
+    """A labelled run listed before the undeuterated controls: the controls are still read
+    first and searched (the search once decided at the first run that was not a control, before
+    any was read: no record), and the series keep the numbers of a read without the search."""
+    later = [runs[2], runs[0], runs[1]]
+    listed_later = _read(later, "suggest")
+    off = _read(later, "off")
+    for name in ("spectrum_id", "data_id", "intensity", "rt"):
+        assert np.array_equal(np.asarray(getattr(listed_later, name)),
+                              np.asarray(getattr(off, name))), name
+    record = listed_later.source["retention_search"]
+    first = _read(runs, "suggest").source["retention_search"]
+
+    def verdicts(r):
+        return [{k: v for k, v in row.items() if k != "data_id"} for row in r["series"]]
+
+    assert verdicts(record) == verdicts(first) and len(record["files"]) == 2
+    assert record["series"][0]["verdict"] == "elsewhere"
+
 def test_the_run_flags_rt_found_and_writes_the_suggestions(runs, tmp_path):
     from hxex import load_results
     from hxex.fit import FitConfig

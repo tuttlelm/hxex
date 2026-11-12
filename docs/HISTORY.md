@@ -9233,9 +9233,9 @@ CSVs or mzML if wanted.
     `find_retention_time = "suggest"` the search decides at the first run that is not an
     undeuterated control; controls listed after it were still searched, but nothing used the
     result: they are no longer searched, and their info lines are gone (the record is
-    unchanged). That order dependence is left as it was: a project that lists a labelled run
-    before its undeuterated controls (as the pooled project does) gets no retention search
-    record at all with "suggest" (owner to decide). Measured (reading only, the previous commit
+    unchanged). That order dependence was left as it was here: a project that lists a labelled run
+    before its undeuterated controls (as the pooled project does) got no retention search
+    record at all with "suggest" (fixed by HISTORY 363). Measured (reading only, the previous commit
     against this one): a scratch project of two control files listed by five samples (10 runs)
     read in 23 s instead of 93 s (30 s instead of 93 with the controls listed first, searched
     with "suggest" or "automatic"); the whole 54-run project in 179 s instead of 541 s, peak
@@ -9244,3 +9244,16 @@ CSVs or mzML if wanted.
     run-by-run read, with the shared files opened and their scans decoded as often as when one
     sample lists them) and the scratch comparisons against the previous commit (every field of
     the spectra, bit for bit, and the read record identical in all four).
+
+363. **`find_retention_time = "suggest"` searches wherever the project lists the undeuterated
+    controls (owner, 2026-11-11).** The search decided at the first run that was not an
+    undeuterated control, so a project listing a labelled run first (each sample of the private
+    pooled dataset's raw-file project lists its labelled runs before its controls) was never
+    searched and wrote no `retention_suggestions.csv`. The reader now reads the searched
+    controls first in both modes, as "automatic" already did. "suggest" changes nothing that is
+    read, so its series keep the numbers of a read without the search: the controls' spectra are
+    numbered on their own for the search, and every run's series are numbered in the runs'
+    order once all are read, then the search decides (its log lines come after the reading).
+    "automatic" is unchanged. Check: tests/test_retention_search.py (a labelled run listed first:
+    the same verdicts as with the controls first; spectrum ids, series, intensities and times
+    those of a read without the search).

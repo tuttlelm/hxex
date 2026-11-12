@@ -1539,14 +1539,16 @@ def _read_runs(
     if config.find_fragment_peak:
         common.update(elution_cut=elution_cut)
     # finding retention times from the exact m/z (find_retention_time): the undeuterated
-    # controls are searched while they are open; "automatic" reads them first, so that the
-    # other runs read a series found elsewhere at its found time
+    # controls are read first and searched while they are open, wherever the project lists
+    # them; "automatic" then reads the other runs' series found elsewhere at their found time
+    # and numbers the series in that order, "suggest" numbers them in the runs' order (the
+    # numbers of a read without the search)
     from .retention_search import RetentionSearch, with_rt
 
     search = RetentionSearch.start(config, picker, registry, targets, runs, tie)
     automatic = search is not None and search.mode == "automatic"
     order = list(range(len(runs)))
-    if automatic:
+    if search is not None:
         order.sort(key=lambda n: not search.reads(runs[n]))
     moved: dict[tuple[str, int], float] = {}
     edited = by_key(elution_windows)  # (sample, file, peptide, ion) -> an ion's own window
@@ -1626,14 +1628,14 @@ def _read_runs(
             if n in no_noise_runs:
                 no_noise.append(Path(recorded[n]).name)
 
-    def search_controls(numbers, made, files):
+    def search_controls(numbers, made, files, spectra_of):
         """The retention search over the undeuterated controls ``numbers`` (all searched; their
-        files still open, ``files``), each file's scans read once for all of its runs; what each
-        run found kept in run order."""
+        files still open, ``files``; their numbered spectra, ``spectra_of``), each file's scans
+        read once for all of its runs; what each run found kept in run order."""
         found = {}
         for members in _same_file(numbers, opened):
             found.update(zip(members, search.search_file(
-                files[members[0]], [(runs[n], per_run[n], made[n][1]) for n in members],
+                files[members[0]], [(runs[n], spectra_of[n], made[n][1]) for n in members],
                 cancel), strict=True))
         search.files.extend(found[n] for n in numbers if found[n] is not None)
 
@@ -1656,25 +1658,36 @@ def _read_runs(
                           if of_data.get(int(s.data_id), (None, -1))[1] not in joined
                           or of_data[int(s.data_id)][0] != run.sample] + again
 
-    # the runs read before the retention search decides (the undeuterated controls, first in
-    # "automatic"; with "suggest" the controls before the first other run), then the others:
-    # each part read file by file, its series numbered in run order
+    # the searched undeuterated controls first, then the others: each part read file by
+    # file; "automatic" numbers each part's series in its run order before the next part,
+    # "suggest" all series in the runs' order once everything is read (the search only needs
+    # the controls' spectra grouped by series, so it takes them numbered on their own)
     done = 0
     no_noise_runs: set[int] = set()
-    first = 0 if search is None else next(
-        (k for k, n in enumerate(order) if not search.reads(runs[n])), len(order))
+    first = 0 if search is None else sum(map(search.reads, runs))
     with ExitStack() as kept:
         files: dict[int, object] = {}  # the searched controls' files, open until searched
         made = read(order[:first], kept=kept, files=files)
-        number(order[:first], made)
+        if search is None or automatic:
+            number(order[:first], made)
+            spectra_of = per_run
+        else:
+            spectra_of = {n: [] for n in order[:first]}
+            for n in order[:first]:
+                _number_series(made[n][0], {}, spectra_of[n])
         if search is not None:
-            search_controls(order[:first], made, files)
-    if search is not None:
+            search_controls(order[:first], made, files, spectra_of)
+    if automatic:
         moved = decide()
         if moved:
             reread(moved)
-    made = read(order[first:])
-    number(order[first:], made)
+    rest = read(order[first:])
+    if search is None or automatic:
+        number(order[first:], rest)
+    else:
+        made.update(rest)
+        number(range(len(runs)), made)
+        decide()
     table_rows = [*edited.values(), *edited_peptides.values()]
     unused = [w for w in table_rows if w.key not in used]
     if unused:
