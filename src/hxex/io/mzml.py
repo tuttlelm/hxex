@@ -2375,11 +2375,12 @@ def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[
              if told else "",
              f"; {two} with a second drift peak (flagged drift_unclear)" if two else "")
     if better:
-        log.warning("%d peptide ion(s) have their drift range off their m/z and another drift "
-                    "peak on it (flagged drift_unclear; to use that peak, give its range in the "
-                    "peptide table's drift_start and drift_end): %s", len(better), "; ".join(
-                        f"{k[2]}-{k[3]} {k[0]} {k[4]}+ at {r.start:.3g}-{r.end:.3g} ms, "
-                        f"on its m/z at {r.better[0]:.3g}-{r.better[1]:.3g} ms"
+        log.warning("%d peptide ion(s) are summed over the drift peak on their m/z, not their "
+                    "tallest drift peak, which sits off it (flagged drift_unclear; to use another "
+                    "range, give it in the peptide table's drift_start and drift_end): %s",
+                    len(better), "; ".join(
+                        f"{k[2]}-{k[3]} {k[0]} {k[4]}+ at {r.start:.3g}-{r.end:.3g} ms "
+                        f"(tallest at {r.tallest[0]:.3g}-{r.tallest[1]:.3g} ms)"
                         for k, r in better[:5]) + ("; ..." if len(better) > 5 else ""))
     return ranges, {"position": profiles.position, "offsets": offsets}
 

@@ -25,9 +25,10 @@ another time. ``[input.scans] drift_gate = "auto"`` keeps each peptide ion's own
   (ppm from the prediction): when the chosen range sits off the ion's m/z (beyond
   :data:`OFF_SD` of the run's position scatter, the robust sd over the ions with one drift peak)
   and another drift peak sits on it (within :data:`ON_SD`, closer by :data:`GAP_SD`), that
-  peak's range is named (``better``) and the series is flagged ``drift_unclear``: another ion
-  that drifts at another time and lies a few ppm away (closer than the peaks' width) fills the
-  chosen range (:class:`DriftProfiles`);
+  peak's range is used instead (``better``; the tallest peak's range kept as ``tallest``) and
+  the series is flagged ``drift_unclear``: another ion that drifts at another time and lies a
+  few ppm away (closer than the peaks' width) fills the tallest peak's range
+  (:class:`DriftProfiles`);
 - a peptide table row's own ``drift_start``, ``drift_end`` (ms) take the place of the measured
   range (:func:`hxex.spectra.entry_drift_window`).
 
@@ -36,7 +37,7 @@ without an undeuterated control with signal keeps every drift time, and so does 
 (its drift is not its own: fragments formed after the drift cell take their precursor's).
 The series of such an ion, of one whose profile has a second peak of at least
 :data:`SECOND_PEAK` of the apex outside its range that the isotope spacing does not tell apart,
-and of one with a better drift peak on its m/z, is flagged ``drift_unclear``.
+and of one moved to the drift peak on its m/z, is flagged ``drift_unclear``.
 
 Measured on an intact-peptide dataset of Q-TOF HDMS files (HISTORY 304): HDExaminer's
 gates are 5 drift bins (of 200), the same peptide ion within one bin across files and no shift
@@ -52,7 +53,9 @@ than at 0.1) both datasets gained on every yardstick but the pooled one's fully 
 charge pairs (undeuterated |K = 1 mean| q90 0.096 -> 0.082 and 0.176 -> 0.160 D, labelled
 replicate sd q90 0.190 -> 0.178 and 0.910 -> 0.806, labelled charge pairs > 0.5 D 5.7 -> 5.5 and
 36.1 -> 33.8 %), keeping a median 91 % (benchmark) and 86 % (pooled) of the ion's drift
-intensity.
+intensity. Using the drift peak on the ion's m/z (HISTORY 378) improved every ion the test
+named on the two datasets (5): undeuterated |K = 1 mean| to 0.1 D or less (from up to 8.5),
+off_mz and mz_shift gone, labelled replicate sd lower in 4 of 5.
 """
 
 from __future__ import annotations
@@ -146,8 +149,11 @@ class DriftRange:
     whether the isotope spacing chose it over a second peak (``decided``), the m/z position of
     the range's monoisotopic and M+1 intensity (``offset_ppm``, ppm from the prediction; NaN when
     not measured), the drift peaks of at least :data:`MIN_PEAK` of the apex (``peaks``: drift
-    time, height as a share of the apex, m/z position), and a drift range on the ion's m/z when
-    the chosen one sits off it (``better``: start, end, apex; None otherwise)."""
+    time, height as a share of the apex, m/z position), and, when the tallest peak's range sat
+    off the ion's m/z and another drift peak on it, that peak's range (``better``: start, end,
+    apex; it is then the range used, ``start``, ``end`` and ``apex``) and the tallest peak's
+    (``tallest``: start, end, apex); None otherwise. ``second`` and ``on_share`` stay those of
+    the tallest peak's range."""
 
     start: float
     end: float
@@ -159,6 +165,7 @@ class DriftRange:
     offset_ppm: float = float("nan")
     peaks: tuple = ()
     better: tuple | None = None
+    tallest: tuple | None = None
 
     @property
     def unclear(self) -> bool:
@@ -295,8 +302,9 @@ class DriftProfiles:
 
     def ranges(self, share: float = SHARE) -> dict[tuple, DriftRange]:
         """The range of every peptide ion whose profile has signal (:func:`choose_range`), with
-        the m/z positions of its drift peaks and, where the chosen range sits off the ion's m/z
-        and another drift peak on it, that peak's range (``better``; see the module notes)."""
+        the m/z positions of its drift peaks; where the chosen range sits off the ion's m/z and
+        another drift peak on it, that peak's range is used instead (``better``, ``tallest``;
+        see the module notes)."""
         out = {}
         arrays = {}
         for key, summed in self._profiles.items():
@@ -311,7 +319,7 @@ class DriftProfiles:
             offset = float(cells[inside, 3].sum()) / w if w > 0 else float("nan")
             out[key] = replace(found, n_files=len(self._files[key]), offset_ppm=offset,
                                peaks=tuple((d, round(h, 4), round(o, 2)) for _, d, h, o in peaks))
-            arrays[key] = (drifts, cells[:, 0], peaks)
+            arrays[key] = (drifts, cells, peaks)
         # the run's position scatter: ions with a single drift peak
         single = np.array([r.offset_ppm for r in out.values()
                            if len(r.peaks) == 1 and np.isfinite(r.offset_ppm)])
@@ -323,16 +331,20 @@ class DriftProfiles:
             c = abs(r.offset_ppm - centre)
             if not c > OFF_SD * sd:
                 continue
-            drifts, on, peaks = arrays[key]
+            drifts, cells, peaks = arrays[key]
             others = [(j, abs(o - centre)) for j, d, _, o in peaks
                       if not r.start <= d <= r.end and np.isfinite(o)]
             if not others:
                 continue
             j, b = min(others, key=lambda x: x[1])
             if b <= ON_SD * sd and c - b > GAP_SD * sd:
-                lo, hi = _peak_span(on, j, share)
-                out[key] = replace(r, better=(float(drifts[lo]), float(drifts[hi]),
-                                              float(drifts[j])))
+                lo, hi = _peak_span(cells[:, 0], j, share)
+                w = float(cells[lo:hi + 1, 2].sum())
+                better = (float(drifts[lo]), float(drifts[hi]), float(drifts[j]))
+                out[key] = replace(r, start=better[0], end=better[1], apex=better[2],
+                                   offset_ppm=(float(cells[lo:hi + 1, 3].sum()) / w if w > 0
+                                               else float("nan")),
+                                   better=better, tallest=(r.start, r.end, r.apex))
         self.position = (centre, sd, len(single))
         return out
 
@@ -359,7 +371,8 @@ def drift_record(ranges: Mapping[tuple, DriftRange], unclear: Iterable[int],
                     "decided": r.decided,
                     "offset_ppm": None if not np.isfinite(r.offset_ppm) else round(r.offset_ppm, 2),
                     "peaks": [list(p) for p in r.peaks],
-                    "better": None if r.better is None else list(r.better)}
+                    "better": None if r.better is None else list(r.better),
+                    "tallest": None if r.tallest is None else list(r.tallest)}
                    for k, r in sorted(ranges.items())],
         "unclear": sorted(int(d) for d in unclear),
     }

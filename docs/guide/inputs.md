@@ -1099,15 +1099,18 @@ does (by a fifth of the intensity or more), even when it is the lower of the two
 Another peptide a few ppm away, closer than the width of a peak, that drifts at another time
 is not told apart by its isotope spacing when it has the same charge. So *hxex* also measures
 where each drift peak's intensity sits in m/z: at its monoisotopic and next isotope peak, in
-ppm from where the peptide's should be. When the range chosen sits clearly off the peptide's
-m/z (more than four times the usual scatter of the dataset's single-peak peptides) and another
-drift peak sits on it, the log names the peptide and that drift peak's range, and the series is
-flagged `drift_unclear`. *hxex* keeps the range it chose: check the spectra and, if the other
-peak is the peptide, give its range in `drift_start` and `drift_end`. On a pooled Q-TOF
+ppm from where the peptide's should be. When the tallest drift peak sits clearly off the
+peptide's m/z (more than four times the usual scatter of the dataset's single-peak peptides)
+and another drift peak sits on it, *hxex* uses that other peak's range instead. The log names
+the peptide and both ranges, and the series is flagged `drift_unclear` so that you can check
+its spectra; to use another range, give it in `drift_start` and `drift_end`. On a pooled Q-TOF
 dataset, one peptide of 319 was found this way: its tallest drift peak was another peptide 34
-ppm heavier, and the peptide itself was the smaller drift peak, a quarter as high.
+ppm heavier, and the peptide itself was the smaller drift peak, a quarter as high. On that
+dataset and an intact-peptide one, every peptide moved this way came out better: its
+undeuterated controls read close to 0 D (from up to 8.5 D) and its replicates agreed more
+closely in four of five.
 
-When the range chosen sits off the peptide's m/z and no drift peak sits on it, no drift range
+When the tallest drift peak sits off the peptide's m/z and no drift peak sits on it, no drift range
 would help: the peptide is not among the ions at that retention time, or too weak to be seen.
 The drift test leaves such a series alone; the m/z check of the undeuterated controls flags it
 `off_mz` and the analysis leaves it out (see

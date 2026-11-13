@@ -1087,8 +1087,10 @@ Planned, not built:
      its targets summed over every drift time), and each drift peak >= 10 % of the apex gets
      its m/z position; a chosen range off the ion's m/z (> 4 robust sd of the run's single-peak
      ions) with another drift peak on it (< 2.5 sd, closer by > 3 sd) is flagged
-     `drift_unclear` and that peak's range named in the log and the record (`better`). Flag
-     only: hxex keeps the range it chose (4 cases in 660 ions: too few to justify switching).
+     `drift_unclear` and that peak's range named in the log and the record (`better`).
+     BUILT (owner, 2026-11-13; HISTORY 378): that
+     range is used, the tallest peak's kept in the record (`tallest`), the flag kept; all 5
+     ions named on the two datasets came out better.
      With them the share went from 0.1 to 0.2 (edge bins just above 0.1 widened ranges and
      added other ions' intensity to labelled spectra; 0.2 better on both datasets).
    - *Settings and outputs.* `[input.scans] drift_gate` ("auto", the default; false: every drift
@@ -1096,7 +1098,7 @@ Planned, not built:
      (ms, both or neither) take the place of the range found; spectra and spectra.csv columns
      `drift_start`, `drift_end` (written only when a range was used); the read record's
      `drift_gate` entry lists every range (apex, second peak, files, m/z position, drift peaks,
-     better range), the run's position scatter, the files' profile offsets and the unclear
+     better range and the tallest one it replaced), the run's position scatter, the files' profile offsets and the unclear
      series.
    - *Not done.* `find_peak`'s chromatogram is still summed over every drift time. Gating it
      was measured (HISTORY 311) and not needed: on the benchmark the found peaks scatter more

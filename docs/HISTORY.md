@@ -9661,3 +9661,21 @@ CSVs or mzML if wanted.
     section). Private record: the pooled raw project's
     drift_two_peaks folder (README, scripts, built/). Tests: tests/test_drift_gate.py,
     tests/test_mzml.py.
+
+378. **The drift peak on the ion's m/z used (2026-11-13; docs/PLAN.md Next steps 22).** Owner
+    asked why hxex only named the drift peak on the ion's m/z (HISTORY 376) instead of using it.
+    Tested (scratch) on main 8c8180a, both datasets read twice: as built, and with every ion the
+    m/z test names summed over that peak's range (the pooled project with its peptide table
+    without own drift ranges). All 5 named ions (4 on the intact-peptide benchmark, two of them
+    1+, and the owner's pooled case) came out better: undeuterated |K = 1 mean| 1.96 -> 0.00,
+    8.45 -> 0.09, 0 -> 0, 0 -> 0 (benchmark) and 0.21 -> 0.02 D (pooled; spectra K > 1 15 -> 0 %);
+    labelled replicate sd 0.378 -> 0.059, 2.217 -> 0.263, 0.172 -> 0.027, 0.212 -> 0.075 D
+    (benchmark) and 0.064 -> 0.081 (pooled, 5 groups: the tallest peak's species repeats as well);
+    `off_mz` (which left the pooled ion's 54 spectra out of the analysis) and `mz_shift` gone, and
+    `undeut_high` but for two spectra. None has a second charge state (no charge check). BUILT
+    (owner agreed): `DriftProfiles.ranges` uses the better range (start, end, apex, and its own
+    m/z position `offset_ppm`); `tallest` keeps the replaced range (record field `tallest`);
+    `second`, `on_share` stay the tallest range's; the series stays flagged `drift_unclear`; the
+    log names both ranges. A peptide table's own `drift_start`, `drift_end` still take the place
+    of the range found. Private record: the pooled raw project's drift_two_peaks folder (README
+    "Using the better drift peak", better/). Tests: tests/test_drift_gate.py.

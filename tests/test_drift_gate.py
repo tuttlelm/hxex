@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The drift gate's m/z position test (hxex.io.drift_gate): a chosen drift range off the ion's
-m/z with another drift peak on it is named and flagged; profiles measured at a file's offset."""
+"""The drift gate's m/z position test (hxex.io.drift_gate): a tallest drift peak off the ion's
+m/z with another drift peak on it gives way to that peak, flagged; profiles measured at a file's
+offset."""
 
 from types import SimpleNamespace
 
@@ -48,15 +49,17 @@ def _run(chosen_ppm: float, other_ppm: float, other_height: float = 0.3):
     return profiles, profiles.ranges()
 
 
-def test_a_drift_peak_on_the_ions_mz_is_named_when_the_chosen_one_sits_off_it():
+def test_the_drift_peak_on_the_ions_mz_is_used_when_the_tallest_sits_off_it():
     profiles, ranges = _run(chosen_ppm=34.0, other_ppm=3.0)
     r = ranges[("ION", "", 1, 11, 3)]
-    assert r.apex == pytest.approx(DRIFTS[7])
+    assert r.tallest is not None and r.tallest[2] == pytest.approx(DRIFTS[7])
     assert r.second < 0.5  # below the isotope test: seen only through the m/z
-    assert r.offset_ppm == pytest.approx(34.0, abs=2)
     assert r.better is not None and r.better[2] == pytest.approx(DRIFTS[3])
-    assert r.better[0] <= DRIFTS[3] <= r.better[1] < DRIFTS[7]  # its own span, not the apex's
-    assert r.unclear
+    # the range used is the peak on the ion's m/z, its own span, not the tallest peak's
+    assert (r.start, r.end, r.apex) == pytest.approx(r.better)
+    assert r.start <= DRIFTS[3] <= r.end < DRIFTS[7]
+    assert r.offset_ppm == pytest.approx(3.0, abs=2)  # the position of the range used
+    assert r.unclear  # still flagged
     centre, sd, n = profiles.position
     assert centre == pytest.approx(3.0, abs=1.5) and 1.0 <= sd < 4 and n == MIN_POSITION_IONS + 5
     # the single-peak ions are left alone
@@ -64,6 +67,8 @@ def test_a_drift_peak_on_the_ions_mz_is_named_when_the_chosen_one_sits_off_it():
     rec = drift_record(ranges, [7], profiles.position, {"un.mzML": 31.4})
     entry = next(e for e in rec["ranges"] if e["peptide"] == "ION")
     assert entry["better"][2] == pytest.approx(DRIFTS[3]) and len(entry["peaks"]) == 2
+    assert entry["apex"] == pytest.approx(DRIFTS[3])
+    assert entry["tallest"][2] == pytest.approx(DRIFTS[7])
     assert rec["position"]["ions"] == MIN_POSITION_IONS + 5
     assert rec["profile_offsets"] == {"un.mzML": 31.4}
 
@@ -71,6 +76,7 @@ def test_a_drift_peak_on_the_ions_mz_is_named_when_the_chosen_one_sits_off_it():
 def test_no_better_range_when_the_chosen_peak_is_on_its_mz_or_no_peak_is():
     _, ranges = _run(chosen_ppm=3.0, other_ppm=34.0)  # the other drift peak is the other ion
     assert ranges[("ION", "", 1, 11, 3)].better is None
+    assert ranges[("ION", "", 1, 11, 3)].apex == pytest.approx(DRIFTS[7])  # the tallest kept
     assert not ranges[("ION", "", 1, 11, 3)].unclear
     _, ranges = _run(chosen_ppm=40.0, other_ppm=30.0)  # nothing on its m/z: off_mz's case
     assert ranges[("ION", "", 1, 11, 3)].better is None
