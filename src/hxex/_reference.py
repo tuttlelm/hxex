@@ -64,10 +64,12 @@ _CONDITIONS = {
 }
 
 _DESCRIPTIONS: dict[str, str] = {
-    ".preset": "how much work hxex run and hxex analyse do, in one setting: "
-               + "; ".join(f'"{n}": {t}' for n, t in presets.SUMMARIES.items())
-               + " (unset: every setting at its default). A setting written in the file wins "
-               "over the preset's; hxex check lists both ([Presets](presets.md))",
+    # the description on its line, then one line per preset (owner, 2026-11-13)
+    ".preset": "how much work hxex run and hxex analyse do, in one setting (unset: every "
+               "setting at its default or as written in the file); a setting written in the "
+               "file wins over the "
+               "preset's, and hxex check lists both ([Presets](presets.md)):\n"
+               + "\n".join(f'"{n}": {t}' for n, t in presets.SUMMARIES.items()),
     ".project": "the project's name (text without a colon, `:`); prefixes every spectrum id",
     ".threads": "CPU threads for the command (unset: every physical core, right for most "
                 "computers, a laptop included); fewer leave cores free for other work, and on "
@@ -669,7 +671,8 @@ def missing() -> list[str]:
 
 
 def _cell(text: str) -> str:
-    return text.replace("|", "\\|").replace("\n", " ")
+    """A description in a table cell: its line breaks kept (``<br>``)."""
+    return text.replace("|", "\\|").replace("\n", "<br>")
 
 
 def _anchor(table: Table) -> str:

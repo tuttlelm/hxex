@@ -66,7 +66,7 @@ def _choices() -> dict[str, tuple[str, ...]]:
             "preset": (NO_PRESET, *names())}
 
 
-NO_PRESET = "(none: the defaults)"  # the preset list's first item
+NO_PRESET = "(none: the defaults or user specified values)"  # the preset list's first item
 
 
 def _shown(value) -> str:
