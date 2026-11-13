@@ -164,7 +164,10 @@ def test_a_path_setting_shows_where_it_points(editor, project, tmp_path):
     assert editor.rows["input.data_dir"].where.text() == f"→ {tmp_path / 'SpecExport'}"
     assert editor.rows["input.retention_times"].where.isHidden()  # unset
     assert full_location("true", tmp_path) is None
-    assert full_location('"/abs/x.csv"', tmp_path) == Path("/abs/x.csv")
+    # a full location as written, on every system ("/abs/x.csv" has no drive on Windows,
+    # where hxex reads it on the project's drive, as full_location does)
+    elsewhere = tmp_path.parent / "abs" / "x.csv"
+    assert full_location(f'"{elsewhere.as_posix()}"', tmp_path) == elsewhere
     assert full_location("~/x", None) == Path.home() / "x"
     assert full_location("x", None) is None  # no project file to count from
 
