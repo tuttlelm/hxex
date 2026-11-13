@@ -199,6 +199,10 @@ class ResultsWorkspace(QWidget):
         self.tree.itemExpanded.connect(self._expanded)
         self.tree.currentItemChanged.connect(lambda item, _previous: self._selected(
             item, again=False))
+        # right-click: export a series for HX-Express, or the data behind its figures
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._tree_menu)
+        self.export_folder: Path | None = None  # the folder the last export went to
         self.review = ReviewPanel(self)
         self.review.decided.connect(self._reviewed)
         self.review.step.connect(self.step_spectrum)
@@ -1079,6 +1083,79 @@ class ResultsWorkspace(QWidget):
                 self._show_left_out(leaf, spectrum.left_out)
             self._sum_children(child)
             item.addChild(child)
+
+    # --- exporting -------------------------------------------------------------------------
+
+    def export_targets(self, item: QTreeWidgetItem) -> dict[str, list]:
+        """What a right-click on ``item`` exports (docs/PLAN.md Next steps 32): for HX-Express,
+        the series (a peptide: each of its charges shown); for the plot data, the series, the
+        time point's spectra, or the spectrum."""
+        from .export_dialog import HXEXPRESS, PLOT_DATA, Target
+
+        kind, payload = item.data(0, KIND), item.data(0, PAYLOAD)
+        if kind == "peptide":
+            series = [s for s in payload.series if self._shown(payload, s)]
+            whole = [Target(s.data_id) for s in series]
+            return {HXEXPRESS: whole, PLOT_DATA: whole}
+        data_id = payload[1].data_id
+        if kind == "series":
+            return {HXEXPRESS: [Target(data_id)], PLOT_DATA: [Target(data_id)]}
+        point = payload[2]
+        if kind == "point":
+            some = Target(data_id, [s.spectrum_id for s in point.spectra], point.label)
+        else:
+            spectrum = payload[3]
+            some = Target(data_id, [spectrum.spectrum_id], f"{point.label} rep {spectrum.rep}")
+        return {HXEXPRESS: [Target(data_id)], PLOT_DATA: [some]}
+
+    def export_menu(self, item: QTreeWidgetItem):
+        """The right-click menu of ``item``: ``(menu, {action: (kind, targets)})``."""
+        from PySide6.QtWidgets import QMenu
+
+        from .export_dialog import HXEXPRESS, PLOT_DATA
+
+        kind = item.data(0, KIND)
+        targets = self.export_targets(item)
+        n = len(targets[HXEXPRESS])
+        menu = QMenu(self)
+        hx = menu.addAction(
+            f"Export its {n} charge states for HX-Express…" if kind == "peptide" and n > 1
+            else "Export for HX-Express…" if kind in ("peptide", "series")
+            else "Export the series for HX-Express…")
+        hx.setToolTip(tip("one spreadsheet per peptide and charge, with every time point and "
+                          "replicate, as HX-Express reads it"))
+        what = {"point": "this time point's ", "spectrum": "this spectrum's "}.get(kind, "")
+        plot = menu.addAction(f"Export {what}plot data…")
+        plot.setToolTip(tip("CSV files with what the figures draw: picked values, fits, "
+                            "populations, raw spectra, and the table rows"))
+        menu.setToolTipsVisible(True)
+        return menu, {hx: (HXEXPRESS, targets[HXEXPRESS]), plot: (PLOT_DATA, targets[PLOT_DATA])}
+
+    def _tree_menu(self, pos) -> None:
+        item = self.tree.itemAt(pos)
+        if item is None or self.results is None:
+            return
+        menu, actions = self.export_menu(item)
+        chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
+        if chosen in actions:
+            self.open_export(*actions[chosen])
+
+    def default_export_folder(self) -> Path:
+        """The last export's folder, else ``hxex_exports`` beside the results (not inside the
+        bundle, whose folders later runs replace)."""
+        if self.export_folder is not None:
+            return self.export_folder
+        path = getattr(self, "results_path", None)
+        return (Path(path).parent if path is not None else Path.cwd()) / "hxex_exports"
+
+    def open_export(self, kind: str, targets: list):
+        """The export dialog for ``targets`` (returned once closed, for the tests)."""
+        from .export_dialog import ExportDialog
+
+        dialog = ExportDialog(self.results, kind, targets, self.default_export_folder(), self)
+        if dialog.exec() and dialog.written:
+            self.export_folder = Path(dialog.folder.text().strip()).expanduser()
+        return dialog
 
     # --- selection -------------------------------------------------------------------------
 

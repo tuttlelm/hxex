@@ -427,6 +427,16 @@ written), anything else as text in the sample, residues, sequence, or charge (`W
 results through the project file applies your review table and exclusion rules, as `hxex
 report hxex.toml` does.
 
+### Exporting a series
+
+Right-click a peptide, a charge, a time point, or a replicate in the tree to export it:
+**Export for HX-Express** writes the series (on a peptide's row, each of its charges) as an
+HX-Express spreadsheet, and **Export plot data** writes the data behind its figures as CSV
+files (on a time point or a replicate, only that part). A dialog asks for the folder, an
+optional prefix and suffix for the names, and the options; it lists the names it will write
+and asks before replacing anything. What each export holds is in
+[Outputs](outputs.md#exporting-one-series).
+
 ## Reviewing spectra
 
 The **Review** panel under the tree records your decision on what is selected: one spectrum,

@@ -14,7 +14,9 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
-from ..spectra import PeptideEntry, Spectrum, time_point
+import numpy as np
+
+from ..spectra import FULLDEUT, UNDEUT, PeptideEntry, Spectrum, time_point
 from ._common import clean_spectrum, not_text_error, open_text, to_number
 from .entries import filter_entries, sort_entries
 from .errors import ReadError
@@ -262,3 +264,98 @@ def _without_notes(mz_col: list, in_col: list, path: Path, label: str) -> tuple[
     log.debug("%s, label %r: the text from row %d down is ignored (a note below the data)",
               path.name, label, first + 2)
     return mz_col[:first], in_col[:first]
+
+
+# --- writing -------------------------------------------------------------------------------
+
+HXEXPRESS_TEXT = "hxex"  # the free-text field of the file names hxex writes, for a peptide
+
+
+# the units of the labels hxex writes, largest first: each time in the largest that keeps it a
+# whole number (HX-Express reads ms, sec, min, and h, owner)
+_LABEL_UNITS = (("h", 1 / 3600), ("min", 1 / 60), ("sec", 1.0), ("ms", 1000.0))
+
+
+def hxexpress_time_label(seconds: float, rep: int = 1) -> str:
+    """The HX-Express column label of a labelled spectrum at ``seconds``, replicate ``rep``
+    (from 1), in the largest unit that keeps the time a whole number (``20 h``, ``30 min``,
+    ``90 sec``, ``500 ms``): HX-Express marks replicates by the digits after the point, so a
+    fraction (``1.5 min``) would read as a replicate of 1 min. The first replicate is the plain
+    time (``30 min``); the next ones carry the marker (``30.01 min``, ``30.02 min``), which
+    :func:`parse_hxexpress_label` reads back as the same time. At time 0 every replicate is
+    ``0 sec`` (below 1 the digits after the point are a fraction, not a marker; replicates are
+    counted from left to right). Raises ValueError for a time that is negative, not finite, or
+    not a whole number of milliseconds."""
+    t = float(seconds)
+    if not math.isfinite(t) or t < 0:
+        raise ValueError(f"cannot write the time {seconds!r} s as an HX-Express label")
+    if rep < 1:
+        raise ValueError(f"replicates are numbered from 1, got {rep}")
+    if t == 0:
+        return "0 sec"
+    found = [(unit, round(t * factor)) for unit, factor in _LABEL_UNITS
+             if round(t * factor) >= 1 and abs(t * factor - round(t * factor)) < 1e-6]
+    if not found:
+        raise ValueError(f"{t:g} s is not a whole number of milliseconds: HX-Express labels "
+                         "mark replicates with the digits after the point")
+    unit, whole = found[0]
+    if whole == 0 or rep == 1:
+        return f"{whole} {unit}"
+    return f"{whole}.{rep - 1:02d} {unit}"
+
+
+def hxexpress_control_label(role: str, rep: int = 1) -> str:
+    """``undeut`` / ``TD`` for the first undeuterated / fully deuterated control, ``undeut2``,
+    ``TD2`` and on for the next (any label starting with those words is the control)."""
+    word = {UNDEUT: "undeut", FULLDEUT: "TD"}.get(role)
+    if word is None:
+        raise ValueError(f"not a control role: {role!r}")
+    return word if rep <= 1 else f"{word}{rep}"
+
+
+def hxexpress_filename(sample: str, start: int, end: int, sequence: str, charge: int,
+                       text: str = HXEXPRESS_TEXT) -> str:
+    """``SAMPLE_START-END-SEQUENCE-zCHARGE-TEXT.xlsx``, the name
+    :func:`parse_hxexpress_filename` reads. The fields must not contain ``-`` (it separates
+    them) nor a path separator; ``sequence`` is one-letter residues (capital letters only)."""
+    for name, value in (("sample", sample), ("text", text)):
+        if not value or "-" in value or "/" in value or "\\" in value:
+            raise ValueError(f"the {name} {value!r} cannot be written in an HX-Express file name "
+                             "(empty, or holds '-' or a path separator)")
+    if not sequence or not (sequence.isascii() and sequence.isalpha() and sequence.isupper()):
+        raise ValueError(f"the sequence {sequence!r} is not one-letter residues (capital letters)")
+    if int(start) < 0 or int(end) < int(start):
+        raise ValueError(f"residues {start}-{end} are not a range")
+    return f"{sample}_{int(start)}-{int(end)}-{sequence}-z{int(charge)}-{text}.xlsx"
+
+
+def write_hxexpress_file(path: str | Path,
+                         columns: Sequence[tuple[str, Sequence[float], Sequence[float]]]) -> Path:
+    """Write one HX-Express spreadsheet: ``columns`` holds ``(label, mz, intensity)`` for each
+    spectrum, in the order they are written. Row 1 holds each label above its m/z column (the
+    intensity column's cell is empty); the values start in row 2, and a shorter spectrum
+    leaves its cells below empty. :func:`read_hxexpress_file` reads it back."""
+    from openpyxl import Workbook
+
+    path = Path(path)
+    if path.suffix.lower() != ".xlsx":
+        raise ValueError(f"{path}: an HX-Express spreadsheet is written as .xlsx")
+    data = []
+    for label, mz, intensity in columns:
+        mz = np.asarray(mz, dtype=float)
+        intensity = np.asarray(intensity, dtype=float)
+        if mz.shape != intensity.shape or mz.ndim != 1:
+            raise ValueError(f"label {label!r}: m/z and intensity differ in shape")
+        data.append((str(label), mz, intensity))
+    if not data:
+        raise ValueError(f"{path}: no spectra to write")
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet()
+    ws.append([cell for label, _, _ in data for cell in (label, None)])
+    for r in range(max(len(mz) for _, mz, _ in data)):
+        row: list = []
+        for _, mz, intensity in data:
+            row += ([float(mz[r]), float(intensity[r])] if r < len(mz) else [None, None])
+        ws.append(row)
+    wb.save(path)
+    return path

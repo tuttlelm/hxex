@@ -18,9 +18,13 @@ from .entries import (
 )
 from .errors import ReadError
 from .hxexpress import (
+    hxexpress_control_label,
+    hxexpress_filename,
+    hxexpress_time_label,
     parse_hxexpress_filename,
     read_hxexpress_file,
     scan_hxexpress,
+    write_hxexpress_file,
 )
 from .identity import directory_identity
 from .mzml import (
@@ -125,6 +129,9 @@ __all__ = [
     "CandidateMatch",
     "ReadError",
     "filter_entries",
+    "hxexpress_control_label",
+    "hxexpress_filename",
+    "hxexpress_time_label",
     "parse_hxexpress_filename",
     "parse_hxexpress_label",
     "parse_specexport_filename",
@@ -149,6 +156,7 @@ __all__ = [
     "folder_name_disagreements",
     "scan",
     "scan_hxexpress",
+    "write_hxexpress_file",
     "scan_specexport",
     "scan_specexport_pooled",
     "pooled_layout",

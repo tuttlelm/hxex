@@ -9502,3 +9502,34 @@ CSVs or mzML if wanted.
     Tests: tests/test_window_edit.py (the two lists' numbers and texts), tests/
     test_gui_window_edit.py (choice 1 draws the trace alone; a save choice leaves the traces as
     they are).
+
+373. **A series exported as an HX-Express spreadsheet, or as the data behind its figures
+    (2026-11-12; docs/PLAN.md Next steps 32).** Users coming from HX-Express assemble its
+    one-sheet-per-peptide-and-charge spreadsheets by hand from SpecExport files (owner).
+    `hxex.report.export_hxexpress` writes a series as that sheet (`hxex.io.hxexpress`
+    `write_hxexpress_file`, `hxexpress_time_label`, `hxexpress_control_label`,
+    `hxexpress_filename`): the **raw** spectra by default (owner: what users expect),
+    the picked sticks as an option; every replicate, the controls' too, with an option for the
+    first of each (pyHXExpress's `removeUNTDreps`); undeuterated, times ascending, fully
+    deuterated. The earlier specification in this file ("Later goals", picked sticks only) is
+    superseded. Labels: each time in the largest unit that keeps it whole (`20 h`, `30 min`,
+    `90 sec`, `500 ms`; owner: HX-Express reads ms, sec, min, and h; pyHXExpress wrote seconds
+    only), since the digits after the point mark replicates (`1.5 min` reads as a replicate of
+    1 min); the first replicate plain (`30 min`), the next ones with HX-Express's marker
+    (`30.01 min`); pyHXExpress writes `.00` on the first, which hxex's reader warns about as a
+    marker without its plain time; at time 0 every replicate is `0 sec`. With
+    `time_scale = "order"` each point takes its rank in seconds as a dummy time (owner), logged
+    point by point. Rejected spectra are left out (owner: a user can accept one again). File
+    name `SAMPLE_START-END-SEQUENCE-zCHARGE-hxex.xlsx`, the name hxex's reader reads, with the
+    one-letter sequence (owner: HX-Express takes modifications by manual entry); `-` in a
+    sample is written `_` with a warning; a fragment ion's type replaces `hxex` (`c_1`).
+    `hxex.report.write_plot_data` writes CSV only (owner): `bins.csv` (one row per spectrum, K,
+    and bin: picked value, fit, band, residual, each population's curve and band; unscaled),
+    `raw.csv`, the spectra's rows of `spectra.csv`, `components.csv`, and `uptake.csv`, and
+    `about.csv`; the K in effect by default, every fitted K as an option (owner). A series, a
+    time point, or one spectrum. Both take a user prefix and suffix and replace nothing unless
+    told to (owner); the window's dialog (`hxex.gui.export_dialog`, a right-click in the
+    Results tree) lists the names and asks before replacing. Tests: tests/test_export.py (the
+    spreadsheet read back by hxex's reader gives the same spectra, labels, roles, and
+    replicates; the plot data equal what `spectrum_data` draws), tests/test_gui_export.py. Not
+    checked: HX-Express itself opening the files (no copy here); the owner to try one.

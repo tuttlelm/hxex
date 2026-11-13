@@ -28,6 +28,14 @@ from .coverage import (
     plot_redundancy_resolution,
 )
 from .curves import component_curves
+from .export import (
+    ExportError,
+    export_hxexpress,
+    hxexpress_name,
+    plot_data,
+    plot_data_folder,
+    write_plot_data,
+)
 from .figures import (
     PlotConfig,
     figure_stems,
@@ -117,6 +125,12 @@ __all__ = [
     "coverage_figure",
     "plot_coverage",
     "plot_redundancy_resolution",
+    "ExportError",
+    "export_hxexpress",
+    "hxexpress_name",
+    "plot_data",
+    "plot_data_folder",
+    "write_plot_data",
     "PlotConfig",
     "Reference",
     "Results",

@@ -1550,7 +1550,9 @@ Planned, not built:
        today's route.
 
 32. **Exporting a series: HX-Express spreadsheets and the data behind the figures** (owner,
-   2026-11-12; designed, not built). The largest unit is one series (a peptide or ion at one
+   2026-11-12; BUILT the same day, HISTORY 373: `hxex.report.export`,
+   `hxex.io.hxexpress` writers, the Results tree's right-click; a user prefix and suffix for
+   the names, and nothing replaced without asking, owner). The largest unit is one series (a peptide or ion at one
    charge in one sample, as in the Results tree: its time points, replicates, and controls).
    Two exports:
    - *HX-Express spreadsheet* (`.xlsx`). Many users come from HX-Express (an Excel macro
@@ -1596,8 +1598,8 @@ Planned, not built:
      - `about.csv`: hxex version and commit, the bundle, the peak measure (heights or areas),
        whether the values are back-exchange corrected, which K was written.
      A time point or a single spectrum is the same export with fewer rows.
-   - *Where:* Python functions first (`hxex.io.write_hxexpress`, a plot-data writer in
-     `hxex.report`), then the window: a right-click in the Results tree, "Export for
+   - *Where:* Python functions first (`hxex.report.export_hxexpress` on
+     `hxex.io.write_hxexpress_file`; `hxex.report.write_plot_data`), then the window: a right-click in the Results tree, "Export for
      HX-Express…" on a series, "Export plot data…" on a series, a time point, or a spectrum.
      No command-line form for now (the series is the unit); a bundle-wide HX-Express export
      can follow if users ask.

@@ -83,6 +83,22 @@ and the `role` column saying which control it is (`undeut` or `fulldeut`).
 does). `hxex.write_analysis(results, hxex.AnalysisConfig(reference="WT"), "analysis")` writes
 what `hxex analyse` writes.
 
+One series can be exported as an HX-Express spreadsheet, or as the CSV files behind its
+figures ([Outputs](outputs.md#exporting-one-series) says what they hold):
+
+```python
+from hxex.report import export_hxexpress, plot_data, plot_data_folder, write_plot_data
+
+export_hxexpress(results, d, "exports")                     # raw spectra, every replicate
+export_hxexpress(results, d, "exports", spectra="picked", controls="first", suffix="sticks")
+write_plot_data(results, "exports/" + plot_data_folder(results, d), data_id=d, ks="all")
+tables = plot_data(results, data_id=d)       # the same tables in memory: tables["bins"], ...
+```
+
+Both refuse to replace what is there unless given `overwrite=True`. `write_plot_data` and
+`plot_data` also take `spectrum_ids=[...]` instead of `data_id`, for a time point or one
+spectrum.
+
 ## Reviewing spectra
 
 A bundle's review layer records, per spectrum, a status (`accepted` or `rejected`), a chosen K

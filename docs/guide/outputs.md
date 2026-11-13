@@ -721,6 +721,52 @@ results and replaces them with the results, and never reads them back; editing t
 nothing. File paths are written as `record_paths` in `[input]` says: with `record_paths =
 "name"`, only file names appear, which is useful when you send results to someone.
 
+## Exporting one series
+
+The window can write one series (a peptide at one charge in one sample, with its time points,
+replicates, and controls) in two other forms. Right-click the series in the **Results** tree
+(see [The *hxex* window](gui.md#exporting-a-series)):
+
+- **Export for HX-Express** writes the spreadsheet HX-Express reads: one sheet with every time
+  point and replicate of the peptide at that charge, an m/z column and an intensity column per
+  spectrum, under a label in the first row. It replaces putting that sheet together by hand
+  from SpecExport files. The spectra are the raw spectra as read (HX-Express picks its own
+  peaks), or, if you choose, the picked sticks *hxex* fitted (each deuterium bin's m/z and
+  value). The labels are `undeut` and `TD` for the controls (`undeut2`, `TD2`, and so on for
+  their replicates; you can keep only the first of each), and each time in the largest unit
+  that keeps it a whole number (`20 h`, `30 min`, `90 sec`, `500 ms`), with the second and
+  later replicates of a time marked as HX-Express marks them: `30 min`, `30.01 min`,
+  `30.02 min`. Results whose points have no real times (`[input] time_scale =
+  "order"`) get dummy times, each point's place in the order in seconds (`1 sec`, `2 sec`, and
+  so on); the messages list which point became which time. Rejected spectra are left out
+  (accept one again to include it). The file is named as *hxex* reads HX-Express files,
+  `SAMPLE_START-END-SEQUENCE-zCHARGE-hxex.xlsx`, with the sequence in one-letter form:
+  modifications and terminal groups are not in the name, so enter them in HX-Express. On a
+  peptide's row, the same writes one file for each of its charges.
+- **Export plot data** writes CSV files with what the series' figures draw, so you can draw
+  them in your own style. Right-click a time point or a replicate to export only that part.
+  The folder holds:
+
+  | File | What it holds |
+  |---|---|
+  | `bins.csv` | one row per spectrum and deuterium bin: the spectrum (sample, peptide, charge, time, replicate, review status), the number of populations of the fit (`k`; `K` is the one in effect, and `selected` says whether they agree), the bin, its m/z, the picked value (`picked`), the whole fit (`fit`) with its error band (`fit_band_low`, `fit_band_high`; empty without a bootstrap), the residual (picked minus fit), and each population's curve (`population_1`, `population_2`, ...) with its band |
+  | `raw.csv` | every point of each raw spectrum (left out when the results do not hold the raw spectra) |
+  | `spectra.csv`, `components.csv`, `uptake.csv` | these spectra's rows of the run's tables: the deuterium values, populations, and errors the uptake and populations pages draw |
+  | `about.csv` | the *hxex* version, the run, whether the bins hold peak heights or areas, whether the values are corrected for back-exchange, and which fits were written |
+
+  The values are as measured (not scaled to the tallest peak). By default `bins.csv` holds
+  each spectrum's fit at the number of populations in effect; choose **every fitted K** to
+  have them all.
+
+Both ask for a folder (by default `hxex_exports` beside the results) and take an optional
+prefix and suffix for the names. For HX-Express the suffix goes at the end of the name
+(`...-hxex_SUFFIX.xlsx`) and the prefix before the sample, so *hxex* reads it as part of the
+sample's name if the file is read back; neither may hold `-`, which separates the fields of an
+HX-Express file name (use `_`). A plot-data folder takes any prefix and suffix a folder name
+can hold.
+The window shows the names before writing, and asks before replacing a file or folder that is
+already there.
+
 ## Sharing results
 
 To send your results to someone, zip the results folder (`results`) in the usual way: on
