@@ -171,11 +171,10 @@ Later goals:
 - A loader for pyHXExpress's own outputs (`alldeutdata`, `allrawdata`, `data_fits`,
   `fitparamsAll`, `metadf`), so older results can be plotted with the new plotting.
 - **HX-Express output** (`hxex.io`): a writer for the HX-Express format, as in pyHXExpress's
-  `export_to_hxexpress`, but writing the **peak-picked** spectra (a `BinnedSet`) rather than the
-  raw ones, under the file name that `read_hxexpress_file` and `scan_hxexpress` read
-  (pyHXExpress writes a name its own reader does not expect), so a round trip works and is
-  tested. The full specification (layout, labels, `removeUNTDreps`) is in `docs/HISTORY.md`
-  under this heading. Writing the fitted results in pyHXExpress's CSV layouts (`data_fits`,
+  `export_to_hxexpress`, under the file name that `read_hxexpress_file` and `scan_hxexpress`
+  read (pyHXExpress writes a name its own reader does not expect), so a round trip works and is
+  tested. The first specification is in `docs/HISTORY.md` under this heading; it is superseded
+  by Next steps 32 (owner, 2026-11-12: **raw** spectra by default, picked sticks as an option). Writing the fitted results in pyHXExpress's CSV layouts (`data_fits`,
   `fitparamsAll`) is a separate item that goes with the loader above.
 
 ## Excluding spectra
@@ -1549,6 +1548,59 @@ Planned, not built:
      - **Next:** the two remaining yardsticks; then full runs with the profile-fit values (K,
        calibration, known answer); then a design note. Formats that arrive already picked keep
        today's route.
+
+32. **Exporting a series: HX-Express spreadsheets and the data behind the figures** (owner,
+   2026-11-12; designed, not built). The largest unit is one series (a peptide or ion at one
+   charge in one sample, as in the Results tree: its time points, replicates, and controls).
+   Two exports:
+   - *HX-Express spreadsheet* (`.xlsx`). Many users come from HX-Express (an Excel macro
+     that reads one sheet per peptide and charge holding every time point and replicate) and
+     today assemble those sheets by hand from SpecExport files. One file per series, the
+     layout `hxex.io.hxexpress` reads: row 1 one label per spectrum over an (m/z, intensity)
+     column pair, columns ordered undeuterated, times ascending, fully deuterated.
+     - **Spectra:** the **raw** spectra by default (what users expect; HX-Express does its own
+       picking within the user's m/z limits); the picked sticks (predicted m/z, bin value) as
+       an option. A bundle without its raw spectra is refused for the raw export, naming the
+       series and offering the sticks.
+     - **Labels:** `undeut`, `TD` (one per replicate, all replicates written; an option keeps
+       only the first of each control, pyHXExpress's `removeUNTDreps`). Times as HX-Express
+       writes them, replicates marked by the digits after the point: the first replicate plain
+       (`30 sec`), the next `30.01 sec`, `30.02 sec` (pyHXExpress writes `30.00 sec` for the
+       first, which our reader reports as a replicate marker without its plain time). A time
+       that is not a whole number of seconds is written in `ms` (HX-Express reads `ms`,
+       owner); a time not whole in `ms` either is refused. With `time_scale = "order"` (no
+       real times) each point gets a dummy time, its rank in seconds (`1 sec`, `2 sec`, ...,
+       owner), and the log lists which point became which time.
+     - **Spectra left out:** those a review rejected and those an exclusion rule names
+       (`[[input.exclude]]`, `[[review.exclude]]`); a user who wants one back changes its
+       review status. Everything else is written, flagged or not.
+     - **File name:** `SAMPLE_START-END-SEQUENCE-zCHARGE-TEXT.xlsx`, the sequence in plain
+       one-letter (FASTA) form: modifications and terminal groups are not written (HX-Express
+       takes them by manual table entry; users on this route know what the peptide carries).
+       `-` in the sample name is written `_`, with a warning naming both. `TEXT` is `hxex`, or
+       the ion type for a fragment ion series.
+     - Reading the file back with `read_hxexpress_file` gives the same spectra and labels
+       (the round-trip test).
+   - *Plot data* (CSV only, owner). Everything needed to redraw the series' figures in one's
+     own style, in a folder named after the series:
+     - `bins.csv`: one row per spectrum and deuterium bin: identity (sample, range, charge,
+       time, rep, role, spectrum id), `k`, bin, m/z, picked value, fit total, each population's
+       curve (`population_1` ... up to the largest K written; blank where a spectrum has fewer),
+       bootstrap band low and high (blank without a bootstrap at that K), residual. Unscaled
+       (normalising is a drawing option). The **selected K** by default; an option writes
+       every fitted K (rows per K, as the window's "fits at each K" view).
+     - `raw.csv`: spectrum id, m/z, intensity (raw points do not sit on the bins).
+     - The series' rows of `spectra.csv`, `components.csv`, and `uptake.csv`, the same columns
+       as the run's tables (D values corrected and uncorrected, populations, errors, flags):
+       what the uptake and populations pages draw.
+     - `about.csv`: hxex version and commit, the bundle, the peak measure (heights or areas),
+       whether the values are back-exchange corrected, which K was written.
+     A time point or a single spectrum is the same export with fewer rows.
+   - *Where:* Python functions first (`hxex.io.write_hxexpress`, a plot-data writer in
+     `hxex.report`), then the window: a right-click in the Results tree, "Export for
+     HX-Express…" on a series, "Export plot data…" on a series, a time point, or a spectrum.
+     No command-line form for now (the series is the unit); a bundle-wide HX-Express export
+     can follow if users ask.
 
 ## Risks and open decisions
 
