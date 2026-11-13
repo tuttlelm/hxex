@@ -234,6 +234,16 @@ def test_a_list_of_tables_is_edited_entry_by_entry(scan_editor):
     grid.item(2, keys.index("path")).setText("D_5min.mzML")
     assert _data(path)["input"]["runs"][2] == {"path": "D_5min.mzML"}
     assert "sample" in editor.problem.text()  # what the new run still needs
+    # moved down and back up: the file's order changes and the entry stays selected
+    grid.setCurrentCell(0, keys.index("rep"))
+    editor.list_editor.move(1)
+    assert [r["path"] for r in _data(path)["input"]["runs"]][:2] == [
+        "D_60s_01.mzML", "UN_01.mzML"]
+    grid = editor.list_editor.grid
+    assert grid.currentRow() == 1 and grid.currentColumn() == keys.index("rep")
+    editor.list_editor.move(-1)
+    assert _data(path)["input"]["runs"][0]["path"] == "UN_01.mzML"
+    grid = editor.list_editor.grid
     grid.setCurrentCell(0, 0)
     editor.list_editor.remove_selected()
     assert [r["path"] for r in _data(path)["input"]["runs"]] == ["D_60s_01.mzML", "D_5min.mzML"]

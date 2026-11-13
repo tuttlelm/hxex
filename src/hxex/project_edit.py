@@ -608,6 +608,37 @@ def remove_entry(path: str | Path, table: str, index: int, unfinished: bool = Fa
     return said
 
 
+def move_entry(path: str | Path, table: str, index: int, step: int,
+               unfinished: bool = False) -> str:
+    """Move the entry ``index`` (from 0) of the list of tables ``table`` one place up
+    (``step`` -1) or down (1): its heading and settings change places with the neighbouring
+    entry's, the lines between them (blank lines, comments) staying where they are. The order
+    is the order the outputs follow (the regions of ``[[analysis.regions]]``, say)."""
+    _list_table(table)
+    if step not in (-1, 1):
+        raise ProjectError("an entry moves one place: step -1 (up) or 1 (down)")
+    path = Path(path)
+    text, bom = _read(path)
+    _analysis_only(path, text)
+    lines = text.splitlines(keepends=True)
+    blocks = _blocks(lines, table)
+    other = index + step
+    if not 0 <= index < len(blocks) or not 0 <= other < len(blocks):
+        raise ProjectError(f"[[{table}]] entry {index + 1} cannot move "
+                           f"{'up' if step < 0 else 'down'} (it has {len(blocks)})")
+    (s1, e1), (s2, e2) = sorted((blocks[index], blocks[other]))
+    newline = "\r\n" if "\r\n" in text else "\n"
+    first, second = lines[s1:e1], lines[s2:e2]
+    for part in (first, second):  # the last entry of a file may lack its line end
+        if part and not part[-1].endswith(("\n", "\r")):
+            part[-1] += newline
+    lines[s1:e2] = second + lines[e1:s2] + first
+    said = f"[[{table}]] entry {index + 1} moved {'up' if step < 0 else 'down'}"
+    _write_checked(path, text, "".join(lines), bom, f"{said}: refused",
+                   () if unfinished else None)
+    return said
+
+
 def _unset_meaning(text: str, setting: str) -> str:
     """What a setting left out of the project file ``text`` takes: its default, or its preset's
     value (``preset "quick": 2``)."""

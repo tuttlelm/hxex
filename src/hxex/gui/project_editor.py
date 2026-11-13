@@ -804,7 +804,7 @@ class ProjectEditor(QWidget):
 
     def run(self, change, *args) -> None:
         """Make a change to a list of tables (:mod:`hxex.project_edit`'s ``set_entry``,
-        ``add_entry`` or ``remove_entry``) and show the result."""
+        ``add_entry``, ``remove_entry`` or ``move_entry``) and show the result."""
         from ..config import ProjectError
 
         if self.path is None:
@@ -919,6 +919,13 @@ class ListEditor(QWidget):
         add.clicked.connect(self.add)
         self.remove = QPushButton("Remove the selected entry")
         self.remove.clicked.connect(self.remove_selected)
+        # the order is the outputs' (the regions' bars and table, say; owner, 2026-11-13)
+        self.up = QPushButton("↑")
+        self.up.setToolTip(tip("move the selected entry up: the outputs follow this order"))
+        self.up.clicked.connect(lambda: self.move(-1))
+        self.down = QPushButton("↓")
+        self.down.setToolTip(tip("move the selected entry down: the outputs follow this order"))
+        self.down.clicked.connect(lambda: self.move(1))
         self.browse = QPushButton("Browse for the selected cell…")
         self.browse.setToolTip(tip("a file or folder for a cell of a path column"))
         self.browse.clicked.connect(self._browse)
@@ -926,7 +933,7 @@ class ListEditor(QWidget):
         copy = QPushButton("Copy the table")
         copy.setToolTip(tip("every entry, with the column names, as a spreadsheet pastes it"))
         copy.clicked.connect(self.copy_table)
-        for b in (add, self.remove, self.browse, copy):
+        for b in (add, self.remove, self.up, self.down, self.browse, copy):
             buttons.addWidget(b)
         buttons.addStretch()
         about = QFormLayout()
@@ -966,6 +973,8 @@ class ListEditor(QWidget):
         self.grid.blockSignals(False)
         self.grid.resizeColumnsToContents()
         self.remove.setEnabled(bool(entries))
+        for b in (self.up, self.down):
+            b.setEnabled(len(entries) > 1)
 
     # --- copying ---------------------------------------------------------------------------
 
@@ -1038,6 +1047,18 @@ class ListEditor(QWidget):
         row = self.grid.currentRow()
         if row >= 0:
             self.owner.run(remove_entry, self.table.name, row)
+
+    def move(self, step: int) -> None:
+        """The selected entry one place up (``step`` -1) or down (1), in the project file; it
+        stays selected."""
+        from ..project_edit import move_entry
+
+        row, column = self.grid.currentRow(), max(self.grid.currentColumn(), 0)
+        if row < 0 or not 0 <= row + step < self.grid.rowCount():
+            return
+        self.owner.run(move_entry, self.table.name, row, step)
+        if self.grid.rowCount() > row + step:
+            self.grid.setCurrentCell(row + step, column)
 
     def _browse(self) -> None:
         row, column = self.grid.currentRow(), self.grid.currentColumn()

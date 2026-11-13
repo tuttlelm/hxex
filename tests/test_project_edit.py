@@ -273,6 +273,36 @@ def test_entries_are_added_and_removed(scan_project):
         add_entry(scan_project, "input", {})
 
 
+def test_an_entry_moves_up_and_down_keeping_the_lines_between(tmp_path):
+    """The outputs follow the order of [[analysis.regions]] (owner, 2026-11-13: the regions
+    could not be reordered): an entry changes places with its neighbour, its own comments with
+    it, the lines between them where they were."""
+    from hxex.project_edit import list_entries, move_entry
+
+    path = tmp_path / "hxex.toml"
+    path.write_text(
+        'project = "p"\n[input]\nformat = "specexport"\ndata_dir = "SpecExport"\n'
+        "\n[[analysis.regions]]\nname = \"A\"\nstart = 1\nend = 10  # first\n"
+        "\n# between A and B\n[[analysis.regions]]\nname = \"B\"\nstart = 20\nend = 30\n"
+        "\n[[analysis.regions]]\nname = \"C\"\nstart = 40\nend = 50", encoding="utf-8")
+    (tmp_path / "SpecExport").mkdir()
+
+    def names():
+        return [e["name"] for e in list_entries(path.read_text(), "analysis.regions")]
+
+    move_entry(path, "analysis.regions", 0, 1)
+    assert names() == ["B", "A", "C"]
+    text = path.read_text()
+    assert "end = 10  # first" in text  # its comment went with it
+    assert text.index("# between A and B") < text.index('name = "A"')  # the gap stayed
+    move_entry(path, "analysis.regions", 2, -1)  # the last entry (no line end) moves up
+    assert names() == ["B", "C", "A"]
+    with pytest.raises(ProjectError, match="cannot move up"):
+        move_entry(path, "analysis.regions", 0, -1)
+    with pytest.raises(ProjectError, match="cannot move down"):
+        move_entry(path, "analysis.regions", 2, 1)
+
+
 def test_a_refused_replacement_is_tried_again_and_written_in_place_at_last(project,
                                                                             monkeypatch):
     """Windows refuses to replace a file another program briefly has open (a virus scanner, an

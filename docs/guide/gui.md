@@ -97,7 +97,9 @@ every setting at its default, as `hxex init` does.
   `[[review.exclude]]`, regions and sites) is a table with one row per entry and one column per
   setting, each column's description below it. Type in a cell and press Enter to write it;
   empty a cell to switch that setting off. **Add an entry** and **Remove the selected entry**
-  add and remove rows; **Browse for the selected cell** fills a cell with a file's name. Each
+  add and remove rows, and **↑** and **↓** move the selected entry up or down: the outputs
+  follow this order (the regions in `regions.csv` and the region figures, say). **Browse for
+  the selected cell** fills a cell with a file's name. Each
   entry is changed in its own lines, so comments elsewhere in the file stay. Ctrl+C copies the
   selected cells (all of them, after Ctrl+A, with the column names first), and **Copy the
   table** (also on the right-click menu) copies every entry with the column names, ready to
