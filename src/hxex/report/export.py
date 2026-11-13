@@ -30,7 +30,7 @@ from ..io.times import format_time
 from ..spectra import FULLDEUT, UNDEUT, point_order_key
 from .results import Results
 from .series import _control_row, _fragment_of, _reps, series_rows
-from .spectrum import _fit_data, _picked, peak_measure
+from .spectrum import _charge_of, _fit_data, _picked, _recorded, peak_measure
 from .tables import components_table, spectra_table, uptake_table, write_csv
 
 log = logging.getLogger(__name__)
@@ -260,6 +260,22 @@ def _rows_of(results: Results, data_id: int | None, spectrum_ids: Sequence[str] 
     return np.array(rows, dtype=np.int64)
 
 
+def _bin_windows(results: Results, sid: str, picked, source) -> dict[float, tuple]:
+    """Each picked bin's window as ``{bin: (centre m/z, half-width)}``: the window the spectrum
+    figure shades (the predicted m/z, moved where the bundle moved it). Empty when the results
+    hold no picked m/z; the half-width is NaN when the picker settings are unknown."""
+    if picked is None or picked[0] is None:
+        return {}
+    centre = np.asarray(picked[0], float)
+    half = np.full(len(centre), np.nan)
+    cfg = results.settings.picker if results.settings is not None else None
+    if cfg is not None:
+        half = np.asarray(cfg.half_width(centre, _charge_of(sid, results, None),
+                                         **_recorded(sid, results, source)), float)
+    return {float(b): (float(c), float(h))
+            for b, c, h in zip(np.asarray(picked[1], float), centre, half, strict=True)}
+
+
 def _bins_table(results: Results, rows: np.ndarray, ks: str) -> dict[str, np.ndarray]:
     """One row per spectrum, K, and deuterium bin: what a spectrum panel draws."""
     fit = results.fit
@@ -271,10 +287,15 @@ def _bins_table(results: Results, rows: np.ndarray, ks: str) -> dict[str, np.nda
     fitted = sorted(int(k) for k in fit.k_values)
     blocks: list[dict] = []
     k_top = 0
+    cfg = results.settings.picker if results.settings is not None else None
+    source = results.spectra
+    if source is None and cfg is not None and cfg.uses_recorded and results.loader is not None:
+        source = results.loader([str(fit.spectrum_id[i]) for i in rows])  # recorded R
     for i in rows:
         sid = str(fit.spectrum_id[i])
         chosen = int(effective[i])
         picked = _picked(sid, results, None)
+        windows = _bin_windows(results, sid, picked, source)
         for k in ([chosen] if ks == "selected" else fitted):
             try:
                 d = _fit_data(results, sid, k, None)
@@ -282,10 +303,10 @@ def _bins_table(results: Results, rows: np.ndarray, ks: str) -> dict[str, np.nda
                 continue
             k_top = max(k_top, k)
             blocks.append({"i": int(i), "sid": sid, "k": k, "selected": k == chosen, "d": d,
-                           "picked": picked})
+                           "picked": picked, "windows": windows})
     names = ["spectrum_id", "data_id", "sample", "peptide_range", "peptide", "charge", "time",
              "time_label", "role", "rep", "review_status", "K", "k", "selected", "bin", "mz",
-             "picked", "fit", "fit_band_low", "fit_band_high", "residual"]
+             "mz_low", "mz_high", "picked", "fit", "fit_band_low", "fit_band_high", "residual"]
     for r in range(1, k_top + 1):
         names += [f"population_{r}", f"population_{r}_band_low", f"population_{r}_band_high"]
     cols: dict[str, list] = {n: [] for n in names}
@@ -310,8 +331,11 @@ def _bins_table(results: Results, rows: np.ndarray, ks: str) -> dict[str, np.nda
             cols[name] += [value] * n
         cols["bin"] += bins.tolist()
         picked = blk["picked"]
-        mz = d.get("mz")
-        cols["mz"] += (np.full(n, np.nan) if mz is None else np.asarray(mz, float)).tolist()
+        window = np.array([blk["windows"].get(float(x), (np.nan, np.nan)) for x in bins],
+                          dtype=float).reshape(n, 2)
+        cols["mz"] += window[:, 0].tolist()
+        cols["mz_low"] += (window[:, 0] - window[:, 1]).tolist()
+        cols["mz_high"] += (window[:, 0] + window[:, 1]).tolist()
         observed = (np.full(n, np.nan) if picked is None or len(picked[2]) != n
                     else np.asarray(picked[2], float))
         cols["picked"] += observed.tolist()
@@ -368,11 +392,13 @@ def plot_data(results: Results, *, data_id: int | None = None,
     (``spectrum_ids``: a time point, or one spectrum), as tables of columns:
 
     - ``bins``: one row per spectrum, K, and deuterium bin: the spectrum's identity, ``K`` (in
-      effect) and ``k`` (of the row; ``selected`` when they agree), ``bin``, ``mz``, ``picked``
-      (the bin's value), ``fit`` (the whole fit) with ``fit_band_low``/``high`` (the bootstrap
-      band; empty without one), ``residual`` (picked minus fit), and ``population_<r>`` (each
-      population's curve, ascending mean) with its band. Unscaled. ``ks``: ``selected`` (the
-      K in effect) or ``all`` (every fitted K);
+      effect) and ``k`` (of the row; ``selected`` when they agree), ``bin``, ``mz`` (the bin's
+      window centre: its predicted m/z), ``mz_low``/``mz_high`` (the picking window's edges,
+      as the figure shades it: select the ``raw`` points of the same ``spectrum_id`` between
+      them), ``picked`` (the bin's value), ``fit`` (the whole fit) with
+      ``fit_band_low``/``high`` (the bootstrap band; empty without one), ``residual`` (picked
+      minus fit), and ``population_<r>`` (each population's curve, ascending mean) with its
+      band. Unscaled. ``ks``: ``selected`` (the K in effect) or ``all`` (every fitted K);
     - ``raw``: one row per point of each raw spectrum (left out when the results hold none);
     - ``spectra``, ``components``, ``uptake``: the rows of ``spectra.csv``, ``components.csv``,
       and ``uptake.csv`` for these spectra (uptake: their series at their points), as the run's

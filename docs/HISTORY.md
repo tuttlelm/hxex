@@ -9552,4 +9552,9 @@ CSVs or mzML if wanted.
     their own first, changed the same day: owner), and the window's **Export data** button
     (beside **Save figure**) replaces the right-click in the Results tree (owner: easy to miss);
     both are in item 373's text. Tests: tests/test_export.py, tests/test_gui_export.py,
-    tests/test_report.py (stems), tests/test_catalogue.py.
+    tests/test_report.py (stems), tests/test_catalogue.py. The `mz` column of `_bins.csv` was
+    empty in every export (owner, 2026-11-13: no way to match bins to `_raw.csv`): it read the
+    m/z from the fit's data, which never holds it (the figure takes it from the picked table).
+    It now holds each bin's window centre, with `mz_low` and `mz_high`, the edges of the
+    picking window the figure shades, so the raw points of each bin can be selected; the test
+    compares all three with what the figure draws.

@@ -205,7 +205,18 @@ def test_plot_data_holds_what_the_spectrum_figure_draws(results):
             np.testing.assert_allclose(bins[f"population_{r + 1}"][mine],
                                        drawn["fit"]["components"][r])
         np.testing.assert_allclose(bins["fit_band_low"][mine], drawn["fit"]["band"][0])
+        # the m/z and the window's edges are the ones the figure shades, so the raw points of
+        # each bin can be selected from raw.csv (the owner found mz empty)
+        window = drawn["picked"]["window"]
+        np.testing.assert_allclose(bins["mz"][mine], drawn["picked"]["mz"])
+        np.testing.assert_allclose(bins["mz_low"][mine], drawn["picked"]["mz"] - window)
+        np.testing.assert_allclose(bins["mz_high"][mine], drawn["picked"]["mz"] + window)
+        assert (bins["mz_low"][mine] < bins["mz"][mine]).all()
         raw = tables["raw"]["spectrum_id"] == sid
+        mz = tables["raw"]["mz"][raw]
+        inside = [((mz >= lo) & (mz <= hi)).sum()
+                  for lo, hi in zip(bins["mz_low"][mine], bins["mz_high"][mine], strict=True)]
+        assert sum(inside) > 0
         np.testing.assert_allclose(tables["raw"]["intensity"][raw], drawn["raw"]["intensity"])
     assert set(tables["uptake"]["data_id"]) == {0}
 
