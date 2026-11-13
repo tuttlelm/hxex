@@ -11,7 +11,7 @@ import pytest
 
 from hxex import cli
 from hxex.config import ProjectError, load_project, project_from, read_input
-from hxex.exclusions import Exclusion, matches, read_exclusions
+from hxex.exclusions import Exclusion, exclusion_mask, matches, read_exclusions
 from hxex.io import open_bundle
 from test_cli import mzml_project  # noqa: I001
 
@@ -163,3 +163,26 @@ def test_review_csv_lists_the_review_and_the_rules(tmp_path):
     assert cli.main(["-q", "report", str(tmp_path / "out"), "--tables", str(tables),
                      "--overwrite"]) == 0
     assert not (tables / "review.csv").exists()
+
+
+def test_a_rule_for_a_sample_the_project_does_not_read_is_not_a_mistake(caplog):
+    """Projects split by sample from one data folder share their rules (owner, 2026-11-13): a
+    rule naming a sample outside [input] samples matches nothing by design, an information
+    line; one naming a sample that is read, or none, and matching nothing stays a warning."""
+    from types import SimpleNamespace
+
+    index = SimpleNamespace(spectrum_id=np.array(["p:WT/a.csv"]), sample=np.array(["WT"]),
+                            charge=np.array([2]))
+    rules = [Exclusion(sample="R120G", note="other project"), Exclusion(sample="WT", charge=9)]
+    with caplog.at_level(logging.INFO, logger="hxex.exclusions"):
+        mask, counts = exclusion_mask(rules, index, where="input.exclude",
+                                      read_samples=["WT"])
+    assert counts == [0, 0] and not mask.any()
+    levels = {r.getMessage().split(" (")[0]: r.levelno for r in caplog.records}
+    assert levels["[[input.exclude]] #1"] == logging.INFO
+    assert "names sample R120G, which this project does not read" in caplog.text
+    assert levels["[[input.exclude]] #2"] == logging.WARNING
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="hxex.exclusions"):  # every sample read
+        exclusion_mask(rules[:1], index, where="input.exclude")
+    assert caplog.records[0].levelno == logging.WARNING

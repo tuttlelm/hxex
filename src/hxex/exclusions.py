@@ -235,10 +235,26 @@ def matches(rule: Exclusion, index, reader: str | None = None) -> np.ndarray:
     return keep
 
 
+def unread_sample(rule: Exclusion, read_samples: Sequence[str] | None) -> bool:
+    """Whether ``rule`` names a sample the read left out (``read_samples``: ``[input]
+    samples``; None: every sample read). Such a rule matches nothing by design, not by mistake
+    (owner, 2026-11-13: projects split by sample from one data folder share their rules)."""
+    return (rule.sample is not None and read_samples is not None
+            and rule.sample not in set(read_samples))
+
+
+def unread_text(where: str, i: int, rule: Exclusion) -> str:
+    """The information line for a rule naming a sample the project does not read."""
+    return (f"[[{where}]] #{i} ({rule.describe()}) names sample {rule.sample}, which this "
+            "project does not read ([input] samples): it applies to no spectrum here")
+
+
 def exclusion_mask(rules: Sequence[Exclusion], index, reader: str | None = None,
-                   where: str = "exclude") -> tuple[np.ndarray, list[int]]:
+                   where: str = "exclude", read_samples: Sequence[str] | None = None
+                   ) -> tuple[np.ndarray, list[int]]:
     """The spectra any of ``rules`` excludes, and the count of each rule (one log line per
-    rule; a rule that matches nothing is a warning)."""
+    rule; a rule that matches nothing is a warning, unless it names a sample outside
+    ``read_samples``, the read's ``[input] samples``: then an information line)."""
     mask = np.zeros(len(index.spectrum_id), dtype=bool)
     counts = []
     for i, rule in enumerate(rules, start=1):
@@ -247,6 +263,8 @@ def exclusion_mask(rules: Sequence[Exclusion], index, reader: str | None = None,
         if hit.any():
             log.info("[[%s]] #%d (%s): %d spectra left out", where, i, rule.describe(),
                      int(hit.sum()))
+        elif unread_sample(rule, read_samples):
+            log.info("%s", unread_text(where, i, rule))
         else:
             log.warning("[[%s]] #%d (%s) matches no spectrum: check its values", where, i,
                         rule.describe())
@@ -283,8 +301,11 @@ def exclude_from_results(results, rules: Sequence[Exclusion]):
     for i, rule in enumerate(rules, start=1):
         hit = matches(rule, index, reader) & fitted
         if not hit.any():
-            log.warning("[[review.exclude]] #%d (%s) matches no fitted spectrum: check its "
-                        "values", i, rule.describe())
+            if unread_sample(rule, (source or {}).get("samples")):
+                log.info("%s", unread_text("review.exclude", i, rule))
+            else:
+                log.warning("[[review.exclude]] #%d (%s) matches no fitted spectrum: check "
+                            "its values", i, rule.describe())
             continue
         log.info("[[review.exclude]] #%d (%s): %d spectra left out", i, rule.describe(),
                  int(hit.sum()))

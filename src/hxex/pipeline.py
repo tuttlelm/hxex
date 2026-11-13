@@ -1368,7 +1368,9 @@ def run(
         from .exclusions import exclusion_mask, exclusion_record
 
         reader = (data.source or {}).get("reader") if isinstance(data, SpectrumSet) else None
-        mask, counts = exclusion_mask(exclude, data, reader, "input.exclude")
+        read = (data.source or {}) if isinstance(data, SpectrumSet) else {}
+        mask, counts = exclusion_mask(exclude, data, reader, "input.exclude",
+                                      read_samples=read.get("samples"))
         excluded = exclusion_record(exclude, counts, np.asarray(data.spectrum_id)[mask])
         if mask.all():
             raise ValueError("[[input.exclude]] leaves no spectrum to fit")

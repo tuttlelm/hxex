@@ -121,6 +121,13 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
         rows, message = _pooled_rows(inputs)
         return rows, annotations, message
     found: dict[str, tuple[tuple[str, ...], int]] = {}
+    # only the samples the project reads (owner, 2026-11-13: projects split by sample from one
+    # data folder); a FASTA is named by its sample, in any case, as the reader pairs them
+    wanted = (None if inputs is None or not inputs.samples
+              else {str(s).lower() for s in inputs.samples})
+
+    def read(name: str) -> bool:
+        return wanted is None or name.lower() in wanted
     if config is not None and config.fasta is not None:
         try:
             made = config.sequences(project.parent)
@@ -131,7 +138,7 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
                 if isinstance(value, dict):  # a run's samples
                     for sample, seq in value.items():
                         found[f"{name}:{sample}"] = (residues_of(seq), getattr(seq, "first", 1))
-                else:
+                elif read(name):
                     found[name] = (residues_of(value), getattr(value, "first", 1))
         else:
             found["every sample"] = (residues_of(made), getattr(made, "first", 1))
@@ -142,7 +149,8 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
             folder = folder if folder.is_absolute() else project.parent / folder
             if folder.is_dir():
                 for path in sorted(p for p in folder.iterdir()
-                                   if p.suffix.lower() == ".fasta" and p.is_file()):
+                                   if p.suffix.lower() == ".fasta" and p.is_file()
+                                   and read(p.stem)):
                     try:
                         seq, first = read_fasta_numbered(path)
                     except Exception as exc:  # noqa: BLE001 - one file: said, the rest shown
@@ -156,7 +164,8 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
                                      "bundle (the file is shown; rerun to read the peptides "
                                      "against it)")
     if not found and stored:  # the files gone: the run's copies
-        found = {name: (residues_of(seq), first) for name, (seq, first, _) in stored.items()}
+        found = {name: (residues_of(seq), first) for name, (seq, first, _) in stored.items()
+                 if read(name)}
         notes.append("The FASTA files are not found: the sequences the run stored in its bundle "
                      "are shown.")
     if not found:

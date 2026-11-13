@@ -46,7 +46,7 @@ composition it adds). `hxex check` reports any peptide it cannot read, with the 
 
 **Filters.** The folder formats can read only some of the data:
 
-- `samples = ["WT", "mutant"]`: only these samples.
+- `samples = ["WT", "mutant"]`: only these samples. The rest of *hxex* follows it too: the window's Sequence tab and `hxex check` show only these samples, and an exclusion rule for another sample applies to nothing here without being a mistake (see [Excluding spectra](excluding-spectra.md#checking-your-rules)), so several projects can read one data folder, each with its own samples.
 - `peptide_ranges = ["1-10", "45-60"]`: only these peptides, by their residues. `"1-10"` and
   `"0001-0010"` mean the same peptide, from residue 1 to residue 10.
 - `peptide_region = [1, 50]`: only the peptides that lie wholly within residues 1 to 50.

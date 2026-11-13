@@ -543,7 +543,6 @@ def _pooled_identity_lines(project, entries) -> list[str]:
 def cmd_check(args) -> int:
     """Print what the project would read, then every problem found (each a line; the exit
     status says whether there were any)."""
-    import dataclasses
 
     from .config import (
         FOLDER_FORMATS,
@@ -581,11 +580,12 @@ def cmd_check(args) -> int:
         if not inp.data_dir.is_dir():
             problems.append(f"input.data_dir {inp.data_dir}: no such directory")
         if len(problems) == before:
-            # as the read takes them: a peptide table's rows filtered by samples,
-            # peptide_ranges and peptide_region (scan filters by itself)
+            # as the read takes them: only [input] samples (their warnings and refusals, not
+            # those of samples the project does not read: owner, 2026-11-13), a peptide
+            # table's rows filtered by samples, peptide_ranges and peptide_region (scan
+            # filters by itself)
             try:
-                found = folder_entries(project if not inp.samples else dataclasses.replace(
-                    project, input=dataclasses.replace(inp, samples=None)))
+                found = folder_entries(project)
             except ReadError as exc:  # the FASTA against the folder names, a repeated row
                 problems.append(str(exc))
         if len(problems) == before:
@@ -602,11 +602,13 @@ def cmd_check(args) -> int:
                 _say(f"  {s or '(no sample)'}: {n}" + _control_file_text(roles, s))
             if roles is None:
                 _say(f"{'controls':14s} the column labels of each sheet mark them (undeut, TD)")
-            have = sorted({e.sample for e in found if e.sample})
-            for s in inp.samples or ():
-                if s not in have:  # a misspelt sample is otherwise silently absent
+            have = {e.sample for e in found if e.sample}
+            missing = [s for s in inp.samples or () if s not in have]
+            if missing:  # a misspelt sample is otherwise silently absent: name every sample
+                every = ", ".join(_every_sample(project)) or "none"
+                for s in missing:
                     problems.append(f"[input] samples: no sample {s!r} in {inp.data_dir} "
-                                    f"(samples found: {', '.join(have) or 'none'})")
+                                    f"(samples found: {every})")
             if not entries:
                 problems.append(f"no spectra of format {inp.format} in {inp.data_dir}"
                                 + _format_hint(project))
@@ -614,9 +616,12 @@ def cmd_check(args) -> int:
                                                or project.analysis.fasta is None):
                 from .io.specexport import _fasta_files
 
+                wanted = {s.lower() for s in inp.samples} if inp.samples else None
                 _say(f"{'sequences':14s} "
                      + _fasta_note(inp.data_dir, ({"file": p.name}
-                                                  for p in _fasta_files(inp.data_dir))))
+                                                  for p in _fasta_files(inp.data_dir)
+                                                  if wanted is None
+                                                  or p.stem.lower() in wanted)))
             if inp.format == "pooled":
                 problems += _pooled_identity_lines(project, entries)
             problems += _check_peptides(project, entries)
@@ -822,7 +827,7 @@ def _check_exclusions(project, index, reader: str) -> list[str]:
     import dataclasses
 
     from .controls import ControlConfig, apply_control_roles
-    from .exclusions import matches, why_nothing
+    from .exclusions import matches, unread_sample, unread_text, why_nothing
 
     controls = project.run.controls
     if isinstance(controls, ControlConfig) and (controls.undeut_at is not None
@@ -847,6 +852,9 @@ def _check_exclusions(project, index, reader: str) -> list[str]:
             text = f"[[{where}]] #{i} ({rule.describe()})"
             if n:
                 _say(f"{'matched':14s} {text}: {n} of {len(index)} spectra")
+                continue
+            if unread_sample(rule, project.input.samples):  # shared with a project that does
+                _say(f"{'not read':14s} {unread_text(where, i, rule)}")
                 continue
             why = why_nothing(rule, index, reader) or (
                 "each key matches some spectrum, but no spectrum matches them all")
@@ -1764,6 +1772,35 @@ def _same_folder(a: Path, b: Path) -> bool:
         return Path(a).resolve() == Path(b).resolve()
     except OSError:
         return Path(a) == Path(b)
+
+
+def _every_sample(project) -> list[str]:
+    """Every sample of a folder format's data folder, whatever ``[input] samples`` says, for
+    the message naming a sample that is not there. SpecExport: the folders with their FASTA
+    beside them, as the reader pairs them (another sample's refusal does not hide them); the
+    other formats: read without their warnings (about samples the project does not read),
+    none when the folder does not read."""
+    import dataclasses
+
+    from .config import folder_entries
+
+    inp = project.input
+    if inp.format == "specexport":
+        from .io.specexport import _fasta_files
+
+        dirs = {p.name for p in inp.data_dir.iterdir() if p.is_dir()}
+        return sorted({p.stem for p in _fasta_files(inp.data_dir)} & dirs)
+    whole = dataclasses.replace(project, input=dataclasses.replace(project.input, samples=None))
+    hxex_log = logging.getLogger("hxex")
+    level = hxex_log.level
+    hxex_log.setLevel(logging.CRITICAL)
+    try:
+        found = folder_entries(whole)
+    except Exception:  # noqa: BLE001 - only a list of names for a message
+        return []
+    finally:
+        hxex_log.setLevel(level)
+    return sorted({e.sample for e in found if e.sample})
 
 
 def _fasta_note(folder, sequences) -> str:

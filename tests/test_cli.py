@@ -1934,6 +1934,37 @@ def test_commands_name_the_right_step_and_never_show_a_traceback(tmp_path, capsy
     assert "--progress-every: must be 0 or more" in err
 
 
+def test_check_says_nothing_of_samples_the_project_does_not_read(tmp_path, capsys, caplog):
+    """With [input] samples, hxex check reads as the run does (owner, 2026-11-13): another
+    sample's FASTA, warnings and refusals are not the project's; a misspelt sample still lists
+    every sample found."""
+    data = tmp_path / "d"
+    for sample in ("WT", "M1"):
+        (data / sample / f"0001-0010-{PEPTIDE}").mkdir(parents=True)
+        for name in ("Non-D-1-z2.csv", "Full-D-1-z2.csv", "60s-1-z2.csv"):
+            (data / sample / f"0001-0010-{PEPTIDE}" / name).write_text("")
+    (data / "WT.fasta").write_text(f">WT\n{PEPTIDE}\n")
+    (data / "M1.fasta").write_text(">M1\nMKPLAHGDKEWW\n")  # does not match M1's folders
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+                    'samples = ["WT"]\n[output]\nbundle = "out"\n')
+    cli.main(["check", str(path)])
+    out, err = capsys.readouterr()
+    assert "M1" not in out + err + caplog.text
+    assert "WT.fasta" in out
+    path.write_text(path.read_text().replace('["WT"]', '["WT", "m1x"]'))
+    cli.main(["check", str(path)])
+    err = capsys.readouterr().err
+    assert "no sample 'm1x'" in err and "(samples found: M1, WT)" in err
+    # a rule shared with a project that reads another sample: said, not a problem
+    path.write_text(path.read_text().replace('["WT", "m1x"]', '["WT"]')
+                    + '[[review.exclude]]\nsample = "M1"\n')
+    cli.main(["check", str(path)])
+    out, err = capsys.readouterr()
+    assert "names sample M1, which this project does not read" in out
+    assert "matches no spectrum" not in err
+
+
 def test_check_names_a_sample_that_is_not_there_and_hints_at_the_format(tmp_path, capsys):
     """[input] samples naming no folder is a problem (not a silent absence); a folder format
     that finds nothing says which format's layout the folder has."""

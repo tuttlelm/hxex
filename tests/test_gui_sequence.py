@@ -96,6 +96,26 @@ def test_the_sequences_a_run_stored_stand_in_for_missing_files(tmp_path):
     assert "the sequences the run stored in its bundle are shown" in message
 
 
+def test_only_the_samples_the_project_reads(tmp_path):
+    """[input] samples limits the view (owner, 2026-11-13: projects split by sample from one
+    data folder): the FASTA files beside the folders, matched in any case as the reader
+    pairs them, and the per-sample [analysis.fasta] table."""
+    data = tmp_path / "SpecExport"
+    data.mkdir()
+    (data / "WT.fasta").write_text(">WT/3-12\nMKPLAAGDKE\n", encoding="utf-8")
+    (data / "M1.fasta").write_text(">M1/3-12\nMKPLAHGDKE\n", encoding="utf-8")
+    (data / "M2.FASTA").write_text(">M2/3-12\nMKPLAWGDKE\n", encoding="utf-8")
+    path = tmp_path / "hxex.toml"
+    head = 'project = "seq"\n\n[input]\nformat = "specexport"\ndata_dir = "SpecExport"\n'
+    path.write_text(head, encoding="utf-8")
+    assert sorted(s for r in project_sequences(path)[0] for s in r.samples) == ["M1", "M2", "WT"]
+    path.write_text(head + 'samples = ["WT", "m2"]\n', encoding="utf-8")
+    assert sorted(s for r in project_sequences(path)[0] for s in r.samples) == ["M2", "WT"]
+    path.write_text(head + 'samples = ["WT"]\n\n[analysis.fasta]\nWT = "SpecExport/WT.fasta"\n'
+                    'M1 = "SpecExport/M1.fasta"\n', encoding="utf-8")
+    assert [r.samples for r in project_sequences(path)[0]] == [["WT"]]
+
+
 def test_coverage_runs_under_each_samples_sequence(tmp_path):
     """With results open, each sample's coverage runs under its row (owner, 2026-11-05): a block
     as high as the peptides covering a residue, a dot where none does; a click lists them; a

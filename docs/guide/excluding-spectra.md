@@ -114,6 +114,15 @@ from the data:
 peptide range '1-24' (peptide ranges: 1-9, 1-11, 1-13, 1-23, 2-23, ...)
 ```
 
+A rule for a sample the project does not read (one outside `[input] samples`) is not a
+mistake: projects split by sample from one data folder can share their rules. The check says
+so on a `not read` line instead of failing, and the run and the analysis say it as information,
+not as a warning:
+
+```
+not read       [[review.exclude]] #1 (sample R120G, rep 3) names sample R120G, which this project does not read ([input] samples): it applies to no spectrum here
+```
+
 `[[review.exclude]]` rules are counted among the spectra the `[[input.exclude]]` rules leave.
 When the run or the analysis applies the rules, *hxex* reports the counts again (a rule that
 matches nothing there is a warning). A project that reads stored spectra (`--spectra`) is not
