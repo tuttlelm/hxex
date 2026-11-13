@@ -125,7 +125,7 @@ def test_draws_are_consistent_with_the_summaries(small):
     # the components keep the order of the original fit: no label swapping between draws
     fit_means = res.fits[2].means[:, None, :]
     assert np.all(np.abs(mean[:, :, :2] - fit_means) < 1.0)
-    assert b.draws is not None and BootstrapConfig().keep_draws is False
+    assert b.draws is not None and BootstrapConfig().keep_draws is True  # owner, 2026-11-13
 
 
 def test_the_average_error_is_the_scatter_of_each_draws_weighted_mean(small):
@@ -142,7 +142,8 @@ def test_the_average_error_is_the_scatter_of_each_draws_weighted_mean(small):
 
 def test_without_draws_and_without_the_band():
     meas, res, _ = fitted([BIMODAL])
-    b = bootstrap(meas, res, BootstrapConfig(**{**BOOT.to_dict(), "curve_band": False}))
+    b = bootstrap(meas, res, BootstrapConfig(**{**BOOT.to_dict(), "curve_band": False,
+                                                "keep_draws": False}))
     assert b.draws is None and np.all(np.isnan(b.curve_lo)) and b.n_success[0] == 10
 
 

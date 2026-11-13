@@ -27,8 +27,10 @@ from hxex.report.export import (
     plain_sequence,
     plot_data,
     plot_data_name,
+    plot_tables,
     write_plot_data,
 )
+from hxex.report.series import population_data
 from test_run import PEPTIDE, boot_config, config, raw_spectra
 
 
@@ -219,6 +221,38 @@ def test_plot_data_holds_what_the_spectrum_figure_draws(results):
         assert sum(inside) > 0
         np.testing.assert_allclose(tables["raw"]["intensity"][raw], drawn["raw"]["intensity"])
     assert set(tables["uptake"]["data_id"]) == {0}
+
+
+def test_the_bootstrap_cloud_is_written_when_the_resamples_were_kept(results, tmp_path):
+    """``components_bootstrap`` holds the points the populations page draws behind each
+    population (owner, 2026-11-13: named to go with components.csv), only when the run kept
+    the resamples (``keep_draws``)."""
+    assert "components_bootstrap" not in plot_data(results, data_id=0)
+    assert "components_bootstrap" not in plot_tables(results)
+    about = dict(zip(*plot_data(results, data_id=0)["about"].values(), strict=True))
+    assert about["bootstrap_resamples"].startswith("not kept")
+    raw = raw_spectra(n_series=1)
+    kept = Results.from_run(run(raw, config(bootstrap=boot_config(keep_draws=True))),
+                            spectra=raw)
+    assert "components_bootstrap" in plot_tables(kept)
+    tables = plot_data(kept, data_id=0)
+    cloud, parts = tables["components_bootstrap"], tables["components"]
+    fit = kept.fit
+    for i in np.flatnonzero(fit.data_id == 0):
+        sid = str(fit.spectrum_id[i])
+        drawn = population_data(kept, sid)  # what the populations page draws
+        for rank in range(1, drawn["k"] + 1):
+            mine = (cloud["spectrum_id"] == sid) & (cloud["rank"] == rank)
+            values = cloud["mean_corrected"] if drawn["corrected"] else cloud["mean"]
+            np.testing.assert_allclose(values[mine], drawn["draws"][:, rank - 1, 0])
+            np.testing.assert_allclose(cloud["population"][mine], drawn["draws"][:, rank - 1, 1])
+            # the rank is the one components.csv gives the population
+            row = (parts["spectrum_id"] == sid) & (parts["rank"] == rank)
+            assert row.sum() == 1
+            assert (cloud["K"][mine] == parts["K"][row][0]).all()
+    assert len(set(cloud["resample"])) > 1
+    paths = write_plot_data(kept, tmp_path, data_id=0)
+    assert any(p.name.endswith("_components_bootstrap.csv") for p in paths)
 
 
 def test_every_fitted_k_and_a_time_point_alone(results):

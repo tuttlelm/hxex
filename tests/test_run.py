@@ -18,7 +18,14 @@ from hxex.model import Backend
 from hxex.noise import NoiseConfig
 from hxex.picking import PickerConfig, pick_spectra, plan_bins
 from hxex.picking.screen import SCREEN_SCORES
-from hxex.pipeline import RunConfig, chunk_bytes, plan_chunks, resume_bootstrap, run
+from hxex.pipeline import (
+    NothingToResume,
+    RunConfig,
+    chunk_bytes,
+    plan_chunks,
+    resume_bootstrap,
+    run,
+)
 from hxex.quality import QualityConfig
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 from test_bundle import envelope, natural
@@ -429,6 +436,37 @@ def test_the_fits_are_written_before_the_bootstrap_and_resumed(tmp_path, whole, 
     assert list(done.dropped_reason) == list(res.dropped_reason) and done.kept.all()
     with pytest.raises(ValueError, match="no bootstrap is pending"):
         resume_bootstrap(out)
+
+
+def test_a_bootstrap_made_without_its_resamples_is_kept(tmp_path):
+    """keep_draws only says what is stored (owner, 2026-11-13, when it became the default): a
+    bundle bootstrapped without the resamples keeps its bootstrap, and what is added to it later
+    keeps them; the joined bootstraps pad the missing draws as not kept."""
+    from hxex.bootstrap import added_settings, same_values
+
+    old, new = boot_config(keep_draws=False), boot_config()
+    assert new.keep_draws and same_values(old, new)
+    assert not same_values(old, BootstrapConfig(n_boot=4))
+    assert added_settings(old, new) == new
+    raw = raw_spectra(n_series=1)
+    res = run(raw, config(bootstrap=old), out=tmp_path / "b")
+    assert res.bootstrap.draws is None
+    with pytest.raises(NothingToResume):  # nothing to make again
+        resume_bootstrap(tmp_path / "b", bootstrap=new)
+    done = resume_bootstrap(tmp_path / "b", bootstrap=boot_config(ks=(2,)))
+    with open_bundle(tmp_path / "b") as b:
+        kept, fixed = b.bootstrap(), b.bootstrap(2)
+    np.testing.assert_array_equal(kept.mean_se, res.bootstrap.mean_se)  # not made again
+    assert kept.draws is None and fixed.draws is not None
+    assert done.bootstrap_by_k[2].draws is not None
+    # a bootstrap with draws joined to one without: the missing ones are not kept
+    rows = np.arange(len(kept))
+    half, rest = rows[: len(rows) // 2], rows[len(rows) // 2:]
+    joined = BootstrapResult.merge([fixed.select(half), kept.select(rest)], [half, rest])
+    assert joined.config.keep_draws and joined.draws.ok[half].any()
+    assert not joined.draws.ok[rest].any() and np.isnan(joined.draws.A[rest]).all()
+    assert joined.draws.A.shape[2] == fixed.draws.A.shape[2]
+    np.testing.assert_array_equal(joined.mean_se[rest], kept.mean_se[rest])
 
 
 def test_a_finished_run_and_a_run_without_bootstrap_have_nothing_pending(tmp_path):

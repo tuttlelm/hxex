@@ -9558,3 +9558,27 @@ CSVs or mzML if wanted.
     It now holds each bin's window centre, with `mz_low` and `mz_high`, the edges of the
     picking window the figure shades, so the raw points of each bin can be selected; the test
     compares all three with what the figure draws.
+
+375. **The bootstrap's resamples are kept by default, and a series' plot data has them as
+    `_components_bootstrap.csv` (owner, 2026-11-13).** The owner had not seen the cloud of
+    pale points the populations page draws behind each population: it is drawn only from
+    kept resamples, and `[run.bootstrap] keep_draws` was off by default (example made from a
+    copy of the tutorial: hxex_private/analysis_examples/population_draws). Keeping them costs
+    no fitting time, only storage: the tutorial's bundle (3,874 spectra, 20 resamples, a
+    bootstrap at K = 1 and 2 as well) grows from 72.5 to 80.2 MB (+11 %). `keep_draws` is now
+    true by default and counts only as what is stored, never as a change of settings
+    (`bootstrap.same_values`): `hxex resume` and a run reusing fits keep a bootstrap made
+    without its resamples (owner's choice over making every older bootstrap again), what they
+    add keeps them, and joining the two pads the missing resamples as not kept
+    (`BootstrapResult.merge`, which also pads the population columns where the parts' K
+    differ). So older bundles show no cloud until refitted (`hxex run --overwrite --refit`).
+    The export (item 373) writes `_components_bootstrap.csv` beside `_components.csv`: one row
+    per spectrum, population (`rank` as in `_components.csv`), and resample, with `mean`,
+    `mean_corrected`, and `population`, the values the cloud draws; left out when the results
+    kept none, which `_about.csv` says. The export window now counts only the files it writes
+    (`report.export.plot_tables`; it said six when the raw spectra were not there), and the
+    guide's table gives each file its own row, naming the figure and the columns it draws
+    (the owner found the link from `_components.csv` to the populations page unclear). Tests:
+    tests/test_export.py (the table equals what the figure draws), tests/test_run.py (a
+    bootstrap without resamples kept by resume, joined with one that has them),
+    tests/test_bootstrap.py.

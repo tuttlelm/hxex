@@ -29,12 +29,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..report.export import (
-    PLOT_TABLES,
     ExportError,
     export_hxexpress,
     hxexpress_name,
     plot_data_files,
     plot_data_name,
+    plot_tables,
     write_plot_data,
 )
 from .tips import tip
@@ -162,10 +162,11 @@ class ExportDialog(QDialog):
         if self.kind == HXEXPRESS:
             text = f"Writes {len(names)} file{'s' * (len(names) != 1)}: {listed}"
         else:
-            ends = ", ".join(f"_{t}.csv" for t in PLOT_TABLES)
-            text = (f"Writes {len(PLOT_TABLES)} CSV files named {listed} followed by {ends}"
+            tables = plot_tables(self.results)
+            ends = ", ".join(f"_{t}.csv" for t in tables)
+            text = (f"Writes {len(tables)} CSV files named {listed} followed by {ends}"
                     if len(names) == 1 else
-                    f"Writes {len(PLOT_TABLES)} CSV files for each of {len(names)} names: "
+                    f"Writes {len(tables)} CSV files for each of {len(names)} names: "
                     f"{listed}, each followed by {ends}")
         self.names.setText(text)
 

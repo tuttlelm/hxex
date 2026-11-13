@@ -1869,7 +1869,10 @@ _COMMENTS: dict[str, str] = {
     "run.bootstrap.polish_steps": "Levenberg-Marquardt iterations per refit (0: none)",
     "run.bootstrap.grad_clip": "as in [run.fit]",
     "run.bootstrap.seed": "seed of the resampling and the restarts",
-    "run.bootstrap.keep_draws": "keep every resample's fit in the bundle",
+    "run.bootstrap.keep_draws": "keep every resample's fit in the bundle (the cloud of "
+                                "points on the populations page; about a tenth more bundle); "
+                                "changing it never makes a bootstrap again: results made "
+                                "without them keep their bootstrap",
     "run.bootstrap.curve_band": "also the band of the total uptake curve",
     "run.bootstrap.set_k": "with the population test, also bootstrap each spectrum at the K "
                            "its set's values come from (the set's number of populations, and "

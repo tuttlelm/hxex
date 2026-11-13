@@ -56,8 +56,10 @@ class BootstrapConfig:
       ``lr_adam`` to ``lr_adam_end``; ``polish_steps`` Levenberg-Marquardt iterations;
       ``grad_clip`` as in :class:`hxex.fit.FitConfig`; ``seed`` of the resampling and the
       restarts.
-    - ``keep_draws``: keep the individual fits of the selected K (``A``, ``n`` and ``p`` of
-      every successful resample) in the bundle.
+    - ``keep_draws``: keep the individual fits (``A``, ``n`` and ``p`` of every successful
+      resample) in the bundle: the cloud of points the populations page draws (default true,
+      owner 2026-11-13; about a tenth more bundle). It only says what is stored, so it never
+      counts as a change of settings (:func:`same_values`).
     - ``curve_band``: also compute the band of the total uptake curve.
     - ``ks``: at which K a run bootstraps (:func:`hxex.pipeline.run`; :func:`bootstrap` itself
       always uses the selected K): ``'selected'`` (each measurement at its own selected K),
@@ -85,7 +87,7 @@ class BootstrapConfig:
     polish_steps: int = 40
     grad_clip: str = "per_measurement"
     seed: int = 42
-    keep_draws: bool = False
+    keep_draws: bool = True
     curve_band: bool = True
     ks: str | tuple[int, ...] = "selected"
     set_k: bool = True
@@ -190,10 +192,8 @@ class BootstrapResult:
             raise ValueError("each part needs one row position per measurement")
         if not np.array_equal(np.sort(positions), np.arange(len(positions))):
             raise ValueError("the rows of the parts must cover every measurement exactly once")
-        if any(p.config != parts[0].config for p in parts):
+        if any(not same_values(p.config, parts[0].config) for p in parts):
             raise ValueError("the parts were made with different settings")
-        if len({p.draws is None for p in parts}) != 1:
-            raise ValueError("only some of the parts have draws")
         order = np.argsort(positions)
 
         def cat(name: str) -> np.ndarray:
@@ -210,19 +210,15 @@ class BootstrapResult:
             lo.append(parts[j].curve_lo[a:b])
             hi.append(parts[j].curve_hi[a:b])
             offsets.append(offsets[-1] + (b - a))
-        draws = None
-        if parts[0].draws is not None:
-            draws = BootstrapDraws(*(
-                np.concatenate([getattr(p.draws, name) for p in parts])[order]
-                for name in ("A", "n", "p", "ok")
-            ))
+        draws = _merged_draws(parts, order)
         comp = _splice_components(parts, where)
         names = ("selected_K", "n_success", "A_se", "n_se", "p_se", "mean_se", "population_se",
                  "A_ci", "n_ci", "p_ci", "mean_ci", "population_ci")
         average = (cat("average_se") if all(p.average_se is not None for p in parts)
                    else None)
+        config = dataclasses.replace(parts[0].config, keep_draws=draws is not None)
         return cls(
-            config=parts[0].config, **{name: cat(name) for name in names},
+            config=config, **{name: cat(name) for name in names},
             curve_lo=np.concatenate(lo), curve_hi=np.concatenate(hi),
             curve_offsets=np.asarray(offsets, dtype=np.int64), draws=draws, **comp,
             average_se=average,
@@ -653,6 +649,40 @@ def _empty_like(part: BootstrapResult, n: int, k: int) -> BootstrapResult:
     )
 
 
+def same_values(a: BootstrapConfig, b: BootstrapConfig) -> bool:
+    """Whether bootstraps made with ``a`` and ``b`` hold the same values: every setting but
+    ``keep_draws``, which only says whether the resamples are stored (owner, 2026-11-13: a
+    bootstrap made without them is kept, not made again)."""
+    return (dataclasses.replace(a, keep_draws=True)
+            == dataclasses.replace(b, keep_draws=True))
+
+
+def _merged_draws(parts: Sequence[BootstrapResult], order: np.ndarray
+                  ) -> BootstrapDraws | None:
+    """The draws of :meth:`BootstrapResult.merge`'s parts in ``order``; None when no part
+    kept them. A part without draws (made before they were kept) has none for its
+    measurements (``ok`` false), and the populations of every part fill the widest's (the
+    parts' selected K may differ)."""
+    have = [p.draws for p in parts if p.draws is not None]
+    if not have:
+        return None
+    n_boot = have[0].ok.shape[1]
+    width = max(d.A.shape[2] for d in have)
+
+    def piece(part: BootstrapResult, name: str) -> np.ndarray:
+        if part.draws is None:
+            return (np.zeros((len(part), n_boot), dtype=bool) if name == "ok"
+                    else np.full((len(part), n_boot, width), np.nan))
+        values = getattr(part.draws, name)
+        if name != "ok" and values.shape[2] < width:
+            pad = np.full((*values.shape[:2], width - values.shape[2]), np.nan)
+            values = np.concatenate([values, pad], axis=2)
+        return values
+
+    return BootstrapDraws(*(np.concatenate([piece(p, name) for p in parts])[order]
+                            for name in ("A", "n", "p", "ok")))
+
+
 def fixed_ks(config: BootstrapConfig, fitted: Sequence[int]) -> tuple[int, ...]:
     """The K values at which ``config`` bootstraps every measurement (``ks``), among those
     ``fitted``: none for ``'selected'``, every fitted K for ``'all'``."""
@@ -668,9 +698,10 @@ def added_settings(held: BootstrapConfig, new: BootstrapConfig) -> BootstrapConf
     or None when ``new`` needs it made again. When they differ only in ``ks`` and ``set_k``
     nothing already made changes (each measurement is seeded from its own id): the bootstrap
     is kept and only what is missing is added, ``ks`` the union of both (a fixed-K bootstrap is
-    never dropped) and ``set_k`` as ``new``. Any other difference (the resamples, the refits)
-    changes the values: None."""
-    if dataclasses.replace(held, ks=new.ks, set_k=new.set_k) != new:
+    never dropped) and ``set_k`` as ``new``; ``keep_draws`` changes only what is stored from
+    then on (:func:`same_values`). Any other difference (the resamples, the refits) changes the
+    values: None."""
+    if not same_values(dataclasses.replace(held, ks=new.ks, set_k=new.set_k), new):
         return None
     if "all" in (held.ks, new.ks):
         ks: str | tuple[int, ...] = "all"
@@ -689,7 +720,7 @@ def scatter(part: BootstrapResult, rows, n: int, k: int,
     fixed-K bootstrap, for the measurements shown at a K other than their selected one."""
     rows = np.asarray(rows, dtype=np.int64)
     others = np.setdiff1d(np.arange(n), rows)
-    if base is not None and base.config != part.config:
+    if base is not None and not same_values(base.config, part.config):
         raise ValueError("the bootstrap there was made with other settings: redo it first")
     rest = base.select(others) if base is not None else _empty_like(part, len(others), k)
     return BootstrapResult.merge([part, rest], [rows, others])

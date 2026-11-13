@@ -31,7 +31,13 @@ from ..spectra import FULLDEUT, UNDEUT, point_order_key
 from .results import Results
 from .series import _control_row, _fragment_of, _reps, series_rows
 from .spectrum import _charge_of, _fit_data, _picked, _recorded, peak_measure
-from .tables import components_table, spectra_table, uptake_table, write_csv
+from .tables import (
+    _index_columns,
+    components_table,
+    spectra_table,
+    uptake_table,
+    write_csv,
+)
 
 log = logging.getLogger(__name__)
 
@@ -363,6 +369,68 @@ def _bins_table(results: Results, rows: np.ndarray, ks: str) -> dict[str, np.nda
     return out
 
 
+def _components_bootstrap_table(results: Results, rows: np.ndarray
+                                ) -> dict[str, np.ndarray] | None:
+    """One row per spectrum, population, and bootstrap resample at the K in effect: the cloud
+    the populations page draws behind each population (None when the results kept no
+    resamples: ``[run.bootstrap] keep_draws``). ``rank`` is the population's in
+    ``components.csv`` (the fit's, lowest mean first), ``resample`` the resample's number."""
+    from .series import population_data
+
+    fit = results.fit
+    index = _index_columns(results)
+    names = ("spectrum_id", "data_id", "sample", "peptide_range", "peptide", "charge", "time",
+             "role", "rep")
+    cols: dict[str, list] = {n: [] for n in (*names, "review_status", "K", "rank", "resample",
+                                             "mean", "mean_corrected", "population")}
+    status = np.asarray(results.review_status)
+    for i in rows:
+        i, k = int(i), int(results.effective_K[i])
+        boot = results.bootstrap_for(i, k)
+        if boot is None or boot.draws is None or not fit.fitted(k)[i]:
+            continue
+        sid = str(fit.spectrum_id[i])
+        plain = population_data(results, sid, k=k, corrected=False)
+        if plain["draws"] is None or not len(plain["draws"]):
+            continue
+        shown = population_data(results, sid, k=k)  # corrected where the series is
+        resample = np.flatnonzero(boot.draws.ok[i]) + 1
+        n = len(resample)
+        for c in range(k):
+            for name in names:
+                cols[name] += [index[name][i]] * n
+            cols["review_status"] += [str(status[i])] * n
+            cols["K"] += [k] * n
+            cols["rank"] += [c + 1] * n
+            cols["resample"] += resample.tolist()
+            cols["mean"] += plain["draws"][:, c, 0].tolist()
+            cols["mean_corrected"] += (shown["draws"][:, c, 0] if shown["corrected"]
+                                       else np.full(n, np.nan)).tolist()
+            cols["population"] += plain["draws"][:, c, 1].tolist()
+    if not cols["spectrum_id"]:
+        return None
+    out = {name: np.asarray(values) for name, values in cols.items()}
+    for name in ("time", "mean", "mean_corrected", "population"):
+        out[name] = np.asarray(cols[name], dtype=float)
+    return out
+
+
+def kept_resamples(results: Results) -> bool:
+    """Whether the results kept the bootstrap's resamples (``[run.bootstrap] keep_draws``), so
+    that :func:`plot_data` can write ``components_bootstrap``."""
+    boots = [results.bootstrap, *results.bootstrap_by_k.values()]
+    return any(b is not None and b.draws is not None for b in boots)
+
+
+def plot_tables(results: Results) -> tuple[str, ...]:
+    """The tables :func:`write_plot_data` writes for these results: ``raw`` only when they hold
+    the raw spectra, ``components_bootstrap`` only when they kept the resamples."""
+    raw = results.spectra is not None or results.loader is not None
+    return tuple(t for t in PLOT_TABLES
+                 if (t != "raw" or raw) and (t != "components_bootstrap"
+                                             or kept_resamples(results)))
+
+
 def _raw_table(results: Results, rows: np.ndarray) -> dict[str, np.ndarray] | None:
     """One row per raw point of each spectrum (None when the results hold no raw spectra)."""
     fit = results.fit
@@ -403,6 +471,9 @@ def plot_data(results: Results, *, data_id: int | None = None,
     - ``spectra``, ``components``, ``uptake``: the rows of ``spectra.csv``, ``components.csv``,
       and ``uptake.csv`` for these spectra (uptake: their series at their points), as the run's
       tables have them;
+    - ``components_bootstrap``: one row per spectrum, population, and bootstrap resample, the
+      cloud the populations page draws behind each population of ``components`` (left out when
+      the results kept no resamples: ``[run.bootstrap] keep_draws``);
     - ``about``: ``item``, ``value`` pairs (hxex version, the run, the peak measure, the
       correction, the K written).
 
@@ -418,6 +489,9 @@ def plot_data(results: Results, *, data_id: int | None = None,
         out["raw"] = raw
     out["spectra"] = spectra_table(results, rows=rows)
     out["components"] = components_table(results, rows=rows)
+    resamples = _components_bootstrap_table(results, rows)
+    if resamples is not None:
+        out["components_bootstrap"] = resamples
     uptake = uptake_table(results, data_ids=series)
     points = {(int(fit.data_id[i]), str(fit.role[i]),
                round(float(fit.time[i]), 9) if np.isfinite(fit.time[i]) else None) for i in rows}
@@ -426,11 +500,12 @@ def plot_data(results: Results, *, data_id: int | None = None,
         for d, r, t in zip(uptake["data_id"], uptake["role"], uptake["time"], strict=True)],
         dtype=bool)
     out["uptake"] = {name: np.asarray(values)[keep] for name, values in uptake.items()}
-    out["about"] = _about(results, series, ks, raw is not None)
+    out["about"] = _about(results, series, ks, raw is not None, resamples is not None)
     return out
 
 
-def _about(results: Results, series: list[int], ks: str, raw: bool) -> dict[str, np.ndarray]:
+def _about(results: Results, series: list[int], ks: str, raw: bool, resamples: bool
+           ) -> dict[str, np.ndarray]:
     import hxex
 
     settings = results.settings
@@ -448,13 +523,16 @@ def _about(results: Results, series: list[int], ks: str, raw: bool) -> dict[str,
         ("k_written", "the K in effect for each spectrum" if ks == "selected"
          else "every fitted K"),
         ("raw_spectra", "raw.csv" if raw else "not in the results"),
+        ("bootstrap_resamples", "components_bootstrap.csv" if resamples
+         else "not kept (results made before 2026-11-13, or keep_draws = false)"),
         ("intensities", "as measured (unscaled)"),
     ]
     return {"item": np.array([k for k, _ in items], dtype=object),
             "value": np.array([v for _, v in items], dtype=object)}
 
 
-PLOT_TABLES = ("bins", "raw", "spectra", "components", "uptake", "about")  # write_plot_data
+PLOT_TABLES = ("bins", "raw", "spectra", "components", "components_bootstrap", "uptake",
+               "about")  # write_plot_data
 
 
 def plot_data_name(results: Results, data_id: int, *, part: str = "", prefix: str = "",
@@ -503,9 +581,10 @@ def write_plot_data(results: Results, directory: str | Path, *, name: str | None
                     ks: str = "selected", overwrite: bool = False) -> list[Path]:
     """Write :func:`plot_data` as CSV files into ``directory`` (made if missing), named
     ``NAME_bins.csv``, ``NAME_raw.csv``, ``NAME_spectra.csv``, ``NAME_components.csv``,
-    ``NAME_uptake.csv``, and ``NAME_about.csv``; ``name`` defaults to the series'
-    :func:`plot_data_name`. Refused, before anything is written, when any of them is there,
-    unless ``overwrite``."""
+    ``NAME_components_bootstrap.csv``, ``NAME_uptake.csv``, and ``NAME_about.csv``
+    (:func:`plot_tables`: raw and bootstrap only when the results hold them); ``name``
+    defaults to the series' :func:`plot_data_name`. Refused, before anything is written, when
+    any of them is there, unless ``overwrite``."""
     tables = plot_data(results, data_id=data_id, spectrum_ids=spectrum_ids, ks=ks)
     if name is None:
         series = sorted({int(d) for d in tables["spectra"]["data_id"]})

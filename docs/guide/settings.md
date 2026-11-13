@@ -311,7 +311,7 @@ Standard errors and intervals from resampled refits of every measurement (guide:
 | `polish_steps` | integer | `40` | Levenberg-Marquardt iterations per refit (0: none) |
 | `grad_clip` | text | `"per_measurement"` | as in [run.fit] |
 | `seed` | integer | `42` | seed of the resampling and the restarts |
-| `keep_draws` | true/false | `false` | keep every resample's fit in the bundle |
+| `keep_draws` | true/false | `true` | keep every resample's fit in the bundle (the cloud of points on the populations page; about a tenth more bundle); changing it never makes a bootstrap again: results made without them keep their bootstrap |
 | `curve_band` | true/false | `true` | also the band of the total uptake curve |
 | `ks` | text or list | `"selected"` | "selected" (each measurement at its own K), "all" fitted K, or a list of K (fixed-K bootstraps for the analysis) |
 | `set_k` | true/false | `true` | with the population test, also bootstrap each spectrum at the K its set's values come from (the set's number of populations, and 1 for sets at one or two) where it was selected at another: the error of every set's average (else the replicates' scatter); a few spectra |

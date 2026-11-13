@@ -35,6 +35,7 @@ from .export import (
     plot_data,
     plot_data_files,
     plot_data_name,
+    plot_tables,
     write_plot_data,
 )
 from .figures import (
@@ -132,6 +133,7 @@ __all__ = [
     "plot_data",
     "plot_data_files",
     "plot_data_name",
+    "plot_tables",
     "write_plot_data",
     "PlotConfig",
     "Reference",

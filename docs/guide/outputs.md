@@ -216,7 +216,9 @@ no new run, only `hxex report` again. (Given the bundle instead, `hxex report re
     draws them all, over as many pages as they take;
   - **populations**: each population's mean and share, one panel per spectrum (titled as on the
     spectra page), with a last column that overlays the replicates (one marker shape per
-    replicate); the star is the population-weighted mean of the spectrum. The axis reaches the
+    replicate); the star is the population-weighted mean of the spectrum, and the pale points
+    behind each population are the bootstrap's resamples, each refitted (results made before
+    2026-11-13 keep none unless `[run.bootstrap] keep_draws = true` was set). The axis reaches the
     largest population drawn, so a population above the amide count is shown, not cut off.
     The page is left out when every spectrum has K=1. It goes on over the same pages as the
     spectra (`<series>_populations_1.png`, `_populations_2.png`, ...), with the same time
@@ -745,7 +747,7 @@ click **Export data** above its figures (see [The *hxex* window](gui.md#exportin
   peptide's row, the same writes one file for each of its charges.
 - **Export plot data** writes CSV files with what the series' figures draw, so you can draw
   them in your own style. Select a time point or a replicate to export only that part.
-  The six files go into the folder you choose, each named after the series and ending in
+  The files go into the folder you choose, each named after the series and ending in
   what it holds, for example `WT_0087_0096_EELKVKVLGD_z2_bins.csv` (a time point adds its
   time, `..._z2_30min_bins.csv`, and a replicate its number, `..._30min_rep2_bins.csv`; a
   time such as 1.5 min is written `1p5min`):
@@ -754,8 +756,11 @@ click **Export data** above its figures (see [The *hxex* window](gui.md#exportin
   |---|---|
   | `_bins.csv` | one row per spectrum and deuterium bin: the spectrum (sample, peptide, charge, time, replicate, review status), the number of populations of the fit (`k`; `K` is the one in effect, and `selected` says whether they agree), the bin, its m/z (`mz`, the window's centre) and the edges of its picking window (`mz_low`, `mz_high`: the points of `_raw.csv` between them, same `spectrum_id`, are the ones in the bin's window), the picked value (`picked`), the whole fit (`fit`) with its error band (`fit_band_low`, `fit_band_high`; empty without a bootstrap), the residual (picked minus fit), and each population's curve (`population_1`, `population_2`, ...) with its band |
   | `_raw.csv` | every point of each raw spectrum (left out when the results do not hold the raw spectra) |
-  | `_spectra.csv`, `_components.csv`, `_uptake.csv` | these spectra's rows of the run's tables: the deuterium values, populations, and errors the uptake and populations pages draw |
-  | `_about.csv` | the *hxex* version, the run, whether the bins hold peak heights or areas, whether the values are corrected for back-exchange, and which fits were written |
+  | `_spectra.csv` | these spectra's rows of `spectra.csv`, one row per spectrum: the points of each replicate on the uptake page, and the star (the population-weighted mean) on the populations page |
+  | `_components.csv` | these spectra's rows of `components.csv`, one row per spectrum and population: the points of the populations page, the deuterium level across (`mean_corrected`, or `mean` for a series without controls) and the share up (`population`), with their error bars (`mean_corrected_se` or `mean_se`, `population_se`); `rank` numbers the populations from the lowest deuterium level, as `population_1`, `population_2`, ... do in `_bins.csv` |
+  | `_components_bootstrap.csv` | one row per spectrum, population, and bootstrap resample: the cloud of pale points the populations page draws behind each population (`mean`, `mean_corrected`, `population`, with `rank` as in `_components.csv` and the resample's number in `resample`). Written when the results kept the resamples: they do by default since 2026-11-13 (`[run.bootstrap] keep_draws`); earlier results have none |
+  | `_uptake.csv` | these spectra's rows of `uptake.csv`: the uptake page's values for each time point, the replicates combined |
+  | `_about.csv` | the *hxex* version, the run, whether the bins hold peak heights or areas, whether the values are corrected for back-exchange, which fits were written, and whether the raw spectra and the bootstrap resamples are included |
 
   The values are as measured (not scaled to the tallest peak). By default the bins file holds
   each spectrum's fit at the number of populations in effect; choose **every fitted K** to

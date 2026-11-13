@@ -51,6 +51,7 @@ from .bootstrap import (
     bootstrap,
     bootstrap_by_k,
     fixed_ks,
+    same_values,
     scatter,
     selected_from,
 )
@@ -1121,7 +1122,7 @@ def _patched_bootstrap(config: RunConfig, data: Measurements, fit: FitResult,
     for k in sorted(set(int(k) for k in fit.selected_K[changed])):
         rows = np.flatnonzero(changed & (fit.selected_K == k))
         held = (by_k or {}).get(k)
-        if held is not None and held.config == boot.config:
+        if held is not None and same_values(held.config, boot.config):
             covered = np.array([held.covers(int(i)) for i in rows], dtype=bool)
         else:
             covered = np.zeros(len(rows), dtype=bool)
@@ -1892,7 +1893,8 @@ def resume_bootstrap(
             merged = added_settings(stored_settings, bootstrap)
             if merged is None:
                 differ = sorted(k for k, v in bootstrap.to_dict().items()
-                                if k not in ("ks", "set_k") and stored_settings.to_dict()[k] != v)
+                                if k not in ("ks", "set_k", "keep_draws")
+                                and stored_settings.to_dict()[k] != v)
                 raise ValueError(f"{path}: these bootstrap settings ({', '.join(differ)}) change "
                                  "its values: make it again (add=True; hxex resume does when the "
                                  "project file's [run.bootstrap] differs)")

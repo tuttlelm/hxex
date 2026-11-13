@@ -194,12 +194,16 @@ def resumed_fitted_with(manifest: Mapping) -> dict:
 def _settings(config):
     """A fit, population-test or bootstrap configuration without where it ran (``backend``:
     the device and precision; a GPU's fits are kept on a CPU and the reverse, owner
-    2026-11-11)."""
+    2026-11-11) and without ``keep_draws`` (what a bootstrap stores, not its values)."""
     import dataclasses
 
-    if config is not None and dataclasses.is_dataclass(config) and any(
-            f.name == "backend" for f in dataclasses.fields(config)):
-        return dataclasses.replace(config, backend=None)
+    if config is None or not dataclasses.is_dataclass(config):
+        return config
+    names = {f.name for f in dataclasses.fields(config)}
+    if "backend" in names:
+        config = dataclasses.replace(config, backend=None)
+    if "keep_draws" in names:  # only what is stored (owner, 2026-11-13)
+        config = dataclasses.replace(config, keep_draws=True)
     return config
 
 
