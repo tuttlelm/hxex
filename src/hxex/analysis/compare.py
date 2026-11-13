@@ -105,6 +105,28 @@ def _columns(cls, rows: list[dict]) -> dict:
     return {name: np.array([r[name] for r in rows]) for name in names}
 
 
+SPREAD_COLUMNS = ("sd_reference", "sd", "fit_se_reference", "fit_se")
+
+
+def _spread(values, errors) -> tuple[float, float]:
+    """One side's replicate standard deviation (NaN with one replicate) and its error of one
+    replicate from the fits (the root mean square of ``errors``, the finite ones; NaN without
+    any): the two terms of :func:`hxex.analysis.species._combine`."""
+    values = np.asarray(values, dtype=float)
+    errors = np.asarray(errors, dtype=float)
+    finite = errors[np.isfinite(errors)]
+    sd = float(np.std(values, ddof=1)) if len(values) > 1 else np.nan
+    return sd, (float(np.sqrt(np.mean(finite**2))) if len(finite) else np.nan)
+
+
+def _spread_columns(a, ea, b, eb) -> dict[str, float]:
+    """The four spread columns of a row from the reference's (``a``, ``ea``) and the sample's
+    (``b``, ``eb``) replicate values and errors (None: that side has none)."""
+    ref = _spread(a, ea) if a is not None else (np.nan, np.nan)
+    own = _spread(b, eb) if b is not None else (np.nan, np.nan)
+    return {"sd_reference": ref[0], "sd": own[0], "fit_se_reference": ref[1], "fit_se": own[1]}
+
+
 _SCALAR_FIELDS = ("alpha", "delta_crit", "reference", "reference_run", "K", "rank", "quantity",
                   "scaled", "share")
 QUANTITIES = ("fD", "population")
@@ -160,7 +182,13 @@ class PeptideComparison:
     ``(fD_avg_reference - fD_avg) / separation`` for the low-D share, and the row takes the K=1
     comparison's ``t``, ``p`` and ``significant``: the same measurement; HISTORY 281) and
     ``'own'`` where one does (each side's own positions, the positions' errors included); empty
-    for fD rows and populations not compared."""
+    for fD rows and populations not compared. ``sd_reference`` and ``sd``: the standard
+    deviation of each side's replicate values (NaN with one replicate), the spread Welch's test
+    uses; ``fit_se_reference`` and ``fit_se``: each side's error of one replicate from its fits
+    (the root mean square of the replicates' own errors: bootstrap, or the fit's; NaN without
+    any). Each side's ``*_se`` is ``sqrt(max(fit_se^2, sd^2) / n)`` (``fit_se`` alone with one
+    replicate), so with the means and ``n`` they give every number of the row;
+    NaN for the population rows, whose errors include the positions'."""
 
     sample: np.ndarray
     peptide: np.ndarray
@@ -198,8 +226,15 @@ class PeptideComparison:
     scaled: bool = False
     share: str = "low"  # a population comparison: of the low-D share, or the high-D one
     positions: np.ndarray | None = None
+    sd_reference: np.ndarray | None = None
+    sd: np.ndarray | None = None
+    fit_se_reference: np.ndarray | None = None
+    fit_se: np.ndarray | None = None
 
     def __post_init__(self):  # built without the reference's sequences: the same as the sample's
+        for name in SPREAD_COLUMNS:  # not computed (population rows): unknown
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.sample), np.nan))
         if self.positions is None:
             object.__setattr__(self, "positions", np.full(len(self.sample), "", dtype=object))
         if self.threshold is None:
@@ -266,7 +301,11 @@ class PeptideComparison:
                                    if f.name not in _SCALAR_FIELDS
                                    and f.name not in ("run", "threshold")}}
         out["delta_crit"] = self.threshold
-        return out
+        # the spread of each side after the replicate counts (what the errors are made of)
+        spread = {name: out.pop(name) for name in SPREAD_COLUMNS}
+        at = list(out).index("n") + 1
+        items = list(out.items())
+        return dict(items[:at] + list(spread.items()) + items[at:])
 
     def where(self, *, sample=None, time=None, run=None) -> np.ndarray:
         keep = np.ones(len(self), dtype=bool)
@@ -476,7 +515,9 @@ def compare_peptides(
                          "modification_reference": rkey[1],
                          "same_sequence": rkey[:2] == key[:2],
                          "control_fallback_reference": fell_back[(*reference, *rkey)],
-                         "control_fallback": fell_back[(*state, *key)], "reason": why})
+                         "control_fallback": fell_back[(*state, *key)], "reason": why,
+                         **_spread_columns(a, ses[(*reference, *rkey)], b,
+                                           ses[(*state, *key)])})
     cols = _columns(PeptideComparison, rows) if rows else {
         f.name: np.array([]) for f in fields(PeptideComparison)
         if f.name not in _SCALAR_FIELDS
@@ -617,7 +658,8 @@ def _not_described(K, missing, state, key, reference, rkey, a, b, ses, fell_back
             "significant": False, "peptide_reference": rkey[0],
             "modification_reference": rkey[1], "same_sequence": rkey[:2] == key[:2],
             "control_fallback_reference": fell_back[(*reference, *rkey)],
-            "control_fallback": fell_back[(*state, *key)], "reason": f"no K={K} ({side})"}
+            "control_fallback": fell_back[(*state, *key)], "reason": f"no K={K} ({side})",
+            **_spread_columns(a, ses.get((*reference, *rkey)), b, ses.get((*state, *key)))}
 
 
 # the end of the reason of a pair compared at K = 2 although a side's set has more than two
@@ -736,7 +778,9 @@ def _compare_populations_peptides(results, reference, samples, rank, alpha, excl
                          "reason": reason or more, "separation": sep, "positions": positions})
     for row in rows:  # the rows of pairs not described at K = 2
         row.setdefault("positions", "")
-    names = [f.name for f in fields(PeptideComparison) if f.name not in _SCALAR_FIELDS]
+    # the spread columns stay empty: a population's error includes the K=2 positions'
+    names = [f.name for f in fields(PeptideComparison)
+             if f.name not in _SCALAR_FIELDS and f.name not in SPREAD_COLUMNS]
     cols = ({name: np.array([r[name] for r in rows]) for name in names} if rows
             else {name: np.array([]) for name in names})
     cols["run"] = cols["run"].astype(object)

@@ -449,7 +449,7 @@ may be](inputs.md#what-each-peptide-may-be)).
 
 | File | Holds |
 |---|---|
-| `compare_peptides.csv` | per peptide and time: the difference from the reference, its error, t, p, the critical difference (`delta_crit`) and `significant`; `n_reference` and `n`, the replicates on each side (a replicate's charge states count once); for the population, the `separation` of its two populations, and `reason` says why a peptide was not compared (for example `not separated (reference)`: its two populations are too close to tell apart; `one population (sample)`: that side's set is best described by one population; `no K=2 (sample)`: that side has no two-population description left, for example reviewed to one population), or, for a peptide compared at K = 2 although a side has three populations, says so (`three populations (sample): K = 2 compared`); for the population, `positions` says whether the change was measured on population positions shared by both samples (`shared`) or on each sample's own (`own`; [the statistics page](statistics.md#same-states-different-shares)). A sample with no labelled time point (controls only) is left out of the analysis, with a warning |
+| `compare_peptides.csv` | per peptide and time: the difference from the reference, its error, t, p, the critical difference (`delta_crit`) and `significant`; `n_reference` and `n`, the replicates on each side (a replicate's charge states count once); `sd_reference` and `sd`, the standard deviation of each side's replicates, and `fit_se_reference` and `fit_se`, each side's error of one replicate from its fits: each side's error is the larger of the two divided by the square root of the replicates ([making your own plots](#making-a-volcano-or-fissure-plot-yourself)); for the population, the `separation` of its two populations, and `reason` says why a peptide was not compared (for example `not separated (reference)`: its two populations are too close to tell apart; `one population (sample)`: that side's set is best described by one population; `no K=2 (sample)`: that side has no two-population description left, for example reviewed to one population), or, for a peptide compared at K = 2 although a side has three populations, says so (`three populations (sample): K = 2 compared`); for the population, `positions` says whether the change was measured on population positions shared by both samples (`shared`) or on each sample's own (`own`; [the statistics page](statistics.md#same-states-different-shares)). A sample with no labelled time point (controls only) is left out of the analysis, with a warning |
 | `compare_residues.csv` | per residue and time: difference, error, z, `significant` (at K=2, only where both samples keep two populations), and whether each side keeps two (`two_reference`, `two`); the values and `delta` are each sample's own, while `z` and `significant` come from the peptides measured in both samples at that time, whose difference and error are `delta_shared` and `delta_shared_se` (see *Reading the residue overlay* below) |
 | `compare_population_counts.csv` | per peptide and time: whether each side is best described by one or two populations (`K_reference`, `K`), the evidence (`delta_criterion`: negative favours two), `differs`, and `borderline` (a difference with weak evidence); with the [population test](population-test.md), `p` and `p_reference` (each side's p-value where they differ), which then decide `borderline` |
 | `compare_populations.csv` | per residue and time: the low-D population against the reference's, with the critical difference (`delta_crit`) and `significant` (judged from the peptides measured in both samples, `delta_shared`; empty without a bootstrap at K = 2, see [the statistics page](statistics.md#what-the-bootstrap-adds)). The table keeps the low-D share, as `compare_peptides.csv` does; the figures draw the high-D share (one minus it, so `delta` has the opposite sign there), so that higher is more deuterium. `positions`: `shared` where the difference was judged on population positions shared by both samples (neither position differs there), `own` where each sample kept its own ([the statistics page](statistics.md#same-states-different-shares)) |
@@ -471,6 +471,29 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `ladder_rates.csv` | (with `[analysis.fragments] fit_rates = true`) per one-residue ladder step: rate and amplitude with errors, `resolved`, `precise`; with `kint`, intrinsic rate and protection |
 | `ladder_residues.csv` | (with `[analysis.fragments] fit_rates = true`) per residue and N-/C-terminal ion pair: the combined rate, misfit, `agreement` |
 | `closure.csv` | per complementary pair and split: the miss c + z minus the precursor, flagged beyond the tolerance; `reference` says what the precursor was: `MS1` (the parent's MS1 spectrum in the same run) or `M` (its ion in the fragment scans, when the parents were not read) |
+
+### Making a volcano or fissure plot yourself
+
+`compare_peptides.csv` holds every number of each comparison, so you can draw other plots of it
+in a spreadsheet or another program. Take the rows whose `comparison` is `K=1 fD`.
+
+- **Volcano plot**: `delta` across, and the p-value `p` up (usually as minus its logarithm).
+  The lines are at plus and minus `delta_crit` and at the p-value level `alpha` (0.05 unless
+  `[analysis] alpha` says otherwise; `analysis_settings_used.toml` has it). `significant` says
+  which peptides pass both.
+- **Fissure vent plot** (HDXBoxeR, Janowska et al.): `value_reference` across and `value` up,
+  with the line where they are equal and lines `delta_crit` above and below it. To draw each
+  peptide as an ellipse that clears the middle line exactly when its p-value is below `alpha`,
+  give it the half-widths t × `sd_reference` / √`n_reference` across and t × `sd` / √`n` up,
+  where t is Student's t at 1 − `alpha`/2 with Welch's degrees of freedom (in a spreadsheet,
+  `T.INV(1 - alpha/2, df)`): with a = `sd_reference`² / `n_reference` and b = `sd`² / `n`, the
+  degrees of freedom are df = (a + b)² / (a² / (`n_reference` − 1) + b² / (`n` − 1)).
+
+The errors in the table (`value_reference_se`, `value_se`) are not the replicate spread: each
+is the larger of the replicates' spread (`sd`) and the fits' own error (`fit_se`), divided by
+the square root of the replicates, so a peptide whose fits are less certain than its replicates
+agree carries the larger error. Welch's test uses the replicate spread alone. With one replicate
+on a side, `sd` is empty and the error is `fit_se`.
 
 ### The HDX data summary for a paper
 

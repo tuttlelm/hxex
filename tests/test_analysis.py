@@ -639,6 +639,48 @@ def test_compare_peptides_with_the_hybrid_rule(results):
         compare_peptides(results, "S", match="position")
 
 
+def test_the_spread_columns_rebuild_every_number_of_a_comparison(results):
+    """``sd`` and ``fit_se`` of each side, with the means and replicate counts, give the
+    side's error, the difference's, and Welch's t and p (owner, 2026-11-13: enough for a user
+    to draw a volcano or fissure plot); written after the replicate counts; NaN for the
+    population rows."""
+    import dataclasses
+
+    from scipy import stats
+
+    from hxex.analysis import compare_peptides
+
+    binned = results.binned
+    shifted = dataclasses.replace(binned, sample=np.where(binned.data_id == 1, "V", "S"))
+    two = dataclasses.replace(results, binned=shifted)
+    pc = compare_peptides(two, "S")
+
+    def rebuilt(sd, fit, n):
+        n = np.asarray(n, dtype=float)
+        var = np.fmax(np.nan_to_num(fit, nan=0.0) ** 2, np.nan_to_num(sd, nan=0.0) ** 2)
+        return np.where(n == 1, fit, np.sqrt(var / n))
+
+    se_ref = rebuilt(pc.sd_reference, pc.fit_se_reference, pc.n_reference)
+    se = rebuilt(pc.sd, pc.fit_se, pc.n)
+    np.testing.assert_allclose(se_ref, pc.value_reference_se, rtol=1e-12)
+    np.testing.assert_allclose(se, pc.value_se, rtol=1e-12)
+    np.testing.assert_allclose(np.hypot(se_ref, se), pc.delta_se, rtol=1e-12)
+    a2 = pc.sd_reference**2 / pc.n_reference
+    b2 = pc.sd**2 / pc.n
+    t = (pc.value - pc.value_reference) / np.sqrt(a2 + b2)
+    df = (a2 + b2) ** 2 / (a2**2 / (pc.n_reference - 1) + b2**2 / (pc.n - 1))
+    tested = np.isfinite(pc.p)
+    assert tested.any() and (pc.n[tested] >= 2).all()
+    np.testing.assert_allclose(t[tested], pc.t[tested], rtol=1e-9)
+    np.testing.assert_allclose(2 * stats.t.sf(np.abs(t[tested]), df[tested]), pc.p[tested],
+                               rtol=1e-9)
+    names = list(pc.columns())
+    at = names.index("n")
+    assert names[at + 1:at + 5] == ["sd_reference", "sd", "fit_se_reference", "fit_se"]
+    pop = compare_peptides(two, "S", K=2, rank=1, quantity="population")
+    assert np.isnan(pop.sd).all() and np.isnan(pop.fit_se_reference).all()
+
+
 def test_residue_comparison_and_regions():
     from hxex.analysis import Region, compare_residues, region_summary
 

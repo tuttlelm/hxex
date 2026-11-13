@@ -9718,3 +9718,25 @@ CSVs or mzML if wanted.
     log names both ranges. A peptide table's own `drift_start`, `drift_end` still take the place
     of the range found. Private record: the pooled raw project's drift_two_peaks folder (README
     "Using the better drift peak", better/). Tests: tests/test_drift_gate.py.
+
+379. **Each side's replicate spread and fit error in `compare_peptides.csv` (owner,
+    2026-11-13).** Comparing HDXBoxeR 0.1.0's volcano and new fissure vent plots with *hxex*'s
+    Woods and butterfly plots (drafts in *hxex*'s style on the tutorial data:
+    hxex_private/analysis_examples/fissure_volcano, README) showed little new on that dataset
+    (381 of 479 peptide time points significant, effects far above the 0.015 fD threshold), so
+    neither plot is built (PLAN 19 (2) left open). The owner asked instead what the tables need
+    for a user to draw them: everything was there except each side's replicate spread, since
+    `value_se` is `sqrt(max(fit error^2, sd^2) / n)` and the fit error is the larger in about
+    four fifths of the tutorial's rows (`value_se * sqrt(n)` returned `sd` in 84 and 101 of 479).
+    New columns after `n_reference` and `n`: `sd_reference`, `sd` (each side's replicate
+    standard deviation, NaN with one replicate) and `fit_se_reference`, `fit_se` (each side's
+    error of one replicate from its fits, the root mean square of the replicates' own errors).
+    With the means and `n` they rebuild each side's error, `delta_se`, and Welch's t and p
+    (tested; on the tutorial the written columns rebuild `value_se` and `value_reference_se`
+    in all 488 rows and Welch's p within 0.14 % in all 479 tested, the rest being the CSV's
+    six-digit rounding of the means: hxex_private/analysis_examples/fissure_volcano,
+    columns_check.py);
+    `delta_crit` pools every replicated peptide time point, partners or not, and stays its own
+    column. Empty for the population rows, whose errors include the K=2 positions'. Guide
+    outputs.md "Making a volcano or fissure plot yourself" says how to draw both from the table.
+    Tests: tests/test_analysis.py.
