@@ -180,8 +180,9 @@ _DESCRIPTIONS: dict[str, str] = {
                                     "to the parent's charge); charges written out are used as "
                                     "given",
     "output.bundle": "name of the folder (or .zip archive, a name ending in .zip) that `hxex run` "
-                     "creates for the results (the bundle); it must not exist yet unless "
-                     "overwrite or keep_previous is set",
+                     "creates for the results (the bundle); a name alone is made in the folder "
+                     "that holds the project file (results: beside hxex.toml), or give a full "
+                     "location; it must not exist yet unless overwrite or keep_previous is set",
     "output.overwrite": "replace an existing bundle (its review is carried over) and its tables "
                         "(its figures and analyses stay until redrawn)",
     "output.keep_previous": "move the existing bundle, tables and figures to the next "
@@ -388,9 +389,11 @@ _INTROS: dict[str, str] = {
                        "Repeat the table for other conditions (e.g. with and without in-source "
                        "activation).",
     "input.scans": "Scan formats: how scans become spectra (hxex.io.MzmlConfig).",
-    "output": "Where results go. The bundle and the folders named after it (<bundle>_tables, "
-              "<bundle>_figures, <bundle>_analysis_<reference>, and the generations "
-              "<bundle>.1, ...) belong to *hxex*: a later run replaces or renames them.",
+    "output": "Where results go. A short location here, as in every setting that names a "
+              "file or folder, is counted from the folder that holds the project file. The "
+              "bundle and the folders named after it (<bundle>_tables, <bundle>_figures, "
+              "<bundle>_analysis_<reference>, and the generations <bundle>.1, ...) go beside "
+              "it and belong to *hxex*: a later run replaces or renames them.",
     "analysis": "The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See "
                 "docs/ANALYSIS.md for the methods.",
     "analysis.filters": "Which spectra and K=2 descriptions the analysis trusts. Whole "

@@ -192,11 +192,11 @@ Scan formats: how scans become spectra (hxex.io.MzmlConfig).
 
 ## `[output]`
 
-Where results go. The bundle and the folders named after it (<bundle>_tables, <bundle>_figures, <bundle>_analysis_<reference>, and the generations <bundle>.1, ...) belong to *hxex*: a later run replaces or renames them.
+Where results go. A short location here, as in every setting that names a file or folder, is counted from the folder that holds the project file. The bundle and the folders named after it (<bundle>_tables, <bundle>_figures, <bundle>_analysis_<reference>, and the generations <bundle>.1, ...) go beside it and belong to *hxex*: a later run replaces or renames them.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `bundle` | path | unset | name of the folder (or .zip archive, a name ending in .zip) that `hxex run` creates for the results (the bundle); it must not exist yet unless overwrite or keep_previous is set |
+| `bundle` | path | unset | name of the folder (or .zip archive, a name ending in .zip) that `hxex run` creates for the results (the bundle); a name alone is made in the folder that holds the project file (results: beside hxex.toml), or give a full location; it must not exist yet unless overwrite or keep_previous is set |
 | `overwrite` | true/false | `false` | replace an existing bundle (its review is carried over) and its tables (its figures and analyses stay until redrawn) |
 | `keep_previous` | true/false | `false` | move the existing bundle, tables and figures to the next generation (results.1, ...) first |
 | `keep_spectra` | true/false | `true` | store the raw spectra in the bundle (needed to rerun from it) |

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -173,6 +174,17 @@ class SettingRow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 6)
         layout.addLayout(line)
+        # where a file or folder setting points, in full: a short form is counted from the
+        # project file's folder, which the page did not say (owner, 2026-11-13)
+        self.where = None
+        if "path" in self.kind and isinstance(self.editor, QLineEdit):
+            self.where = QLabel()
+            self.where.setWordWrap(True)
+            self.where.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.where.setToolTip(tip("the full location: a short form is counted from the "
+                                      "folder that holds the project file"))
+            self.editor.textEdited.connect(self._show_where)
+            layout.addWidget(self.where)
         layout.addWidget(self.about)
         self._value = None
 
@@ -208,6 +220,15 @@ class SettingRow(QWidget):
                 fallback if where == "the default" else f"{fallback} (preset {preset})")
             self.editor.setText("" if not is_set else _shown(value))
         self.editor.blockSignals(False)
+        if self.where is not None:
+            self._show_where(self.editor.text())
+
+    def _show_where(self, text: str) -> None:
+        """The full location ``text`` (or the default, when empty) points to, under the box;
+        nothing for a setting left unset, or true/false."""
+        where = full_location(text.strip() or self.editor.placeholderText(), self.project_dir)
+        self.where.setText("" if where is None else f"→ {where}")
+        self.where.setHidden(where is None)
 
     def _ordered(self, items: list) -> None:
         from ..config import _toml_value
@@ -361,6 +382,21 @@ def _quoted(text: str) -> str:
     from ..config import _toml_value
 
     return _toml_value(text)
+
+
+def full_location(text: str, folder: Path | None) -> Path | None:
+    """Where a path setting's ``text`` points: as written when it is a full location, else
+    counted from ``folder`` (the project file's), as hxex reads it (``~`` the home folder).
+    None for no path: empty, unset (``(unset)``), a preset's value, or true/false."""
+    text = text.strip().strip('"').strip("'")
+    if not text or text.startswith("(") or text.lower() in ("true", "false") or " (preset" in text:
+        return None
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        if folder is None:
+            return None
+        path = folder / path
+    return Path(os.path.normpath(path))
 
 
 def relative(path: Path, folder: Path | None) -> str:
@@ -1126,12 +1162,13 @@ def _form() -> QFormLayout:
 
 
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_ITALIC = re.compile(r"(?<![\w*])\*(\w[^*\n]*?)\*(?![\w*])")  # *hxex*, not 2 * 3
 
 
 def plain(text: str) -> str:
     """The reference's text without its Markdown: ``[Input formats](inputs.md)`` becomes
-    ``Input formats``, and backticks go."""
-    return _LINK.sub(r"\1", text).replace("`", "")
+    ``Input formats``, and backticks and the italics' asterisks (``*hxex*``) go."""
+    return _ITALIC.sub(r"\1", _LINK.sub(r"\1", text).replace("`", ""))
 
 
 def _heading(text: str) -> QLabel:

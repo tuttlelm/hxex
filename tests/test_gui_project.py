@@ -3,6 +3,7 @@
 writes them, refused changes, stages switched on and off, the format's settings, and changes
 made outside the window. Runs offscreen."""
 import os
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +15,12 @@ import tomllib  # noqa: E402
 from PySide6.QtCore import QSettings  # noqa: E402
 
 from hxex.config import template  # noqa: E402
-from hxex.gui.project_editor import ProjectEditor, plain, relative  # noqa: E402
+from hxex.gui.project_editor import (  # noqa: E402
+    ProjectEditor,
+    full_location,
+    plain,
+    relative,
+)
 from hxex.gui.window import MainWindow, new_project  # noqa: E402
 
 
@@ -140,6 +146,27 @@ def test_paths_are_written_relative_to_the_project(tmp_path):
     elsewhere = tmp_path.parent / "other.csv"
     assert relative(elsewhere, tmp_path) == str(elsewhere)
     assert plain("See [Input formats](inputs.md) and `x`.") == "See Input formats and x."
+    assert plain("belong to *hxex*: n * k") == "belong to hxex: n * k"  # italics, not products
+
+
+def test_a_path_setting_shows_where_it_points(editor, project, tmp_path):
+    """Under a file or folder setting, its full location: a short form counted from the
+    project file's folder (owner, 2026-11-13: the [output] page did not say where the bundle
+    goes), following what is typed; nothing for a setting left unset."""
+    _page(editor, "output")
+    bundle = editor.rows["output.bundle"]
+    assert bundle.where.text() == f"→ {tmp_path / 'results'}"
+    bundle.editor.setText("../elsewhere/run1")
+    bundle.editor.textEdited.emit("../elsewhere/run1")
+    assert bundle.where.text() == f"→ {tmp_path.parent / 'elsewhere' / 'run1'}"
+    assert editor.rows["output.overwrite"].where is None  # not a path
+    _page(editor, "input")
+    assert editor.rows["input.data_dir"].where.text() == f"→ {tmp_path / 'SpecExport'}"
+    assert editor.rows["input.retention_times"].where.isHidden()  # unset
+    assert full_location("true", tmp_path) is None
+    assert full_location('"/abs/x.csv"', tmp_path) == Path("/abs/x.csv")
+    assert full_location("~/x", None) == Path.home() / "x"
+    assert full_location("x", None) is None  # no project file to count from
 
 
 def test_a_new_project_opens_in_the_editor(qtbot, tmp_path):
