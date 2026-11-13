@@ -140,7 +140,7 @@ def test_kinds_are_told_apart_by_their_longest_name():
     assert kind_of("protection_difference_V").name == "protection_difference"
     assert kind_of("residue_significance_K2_WT").name == "residue_significance_K2"
     assert kind_of("residue_significance").name == "residue_significance"
-    assert kind_of("WT_0001_0010_PEPTIDE_z_2_uptake", REPORT).name == "series_uptake"
+    assert kind_of("WT_0001_0010_PEPTIDE_z2_uptake", REPORT).name == "series_uptake"
     assert kind_of("something_else") is None
     assert kind_named("woods").title == "Woods plot"
 

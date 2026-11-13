@@ -138,10 +138,11 @@ def _time_scale(results) -> str:
 
 
 def _time_label(time: float, scale: str = "seconds") -> str:
-    """A time for a file name: ``5min``, ``20h``, ``4s`` (``undeuterated`` for a control
-    without a time, NaN; the number alone when the times only order the points)."""
-    return ("undeuterated" if not np.isfinite(time)
-            else format_time(time, scale).replace(" ", ""))
+    """A time for a file name: ``5min``, ``20h``, ``4s``, ``1p5min`` (``undeuterated`` for a
+    control without a time, NaN; the number alone when the times only order the points)."""
+    from .figures import name_part
+
+    return "undeuterated" if not np.isfinite(time) else name_part(format_time(time, scale))
 
 
 MAP_ROW = 0.2  # inches per row of a significance or tier map

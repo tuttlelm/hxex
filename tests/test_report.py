@@ -587,7 +587,8 @@ def test_fragment_series_are_named_by_their_fragment(results, tmp_path):
     from hxex.spectra import PeptideEntry
 
     peptide = series_info(results, 0)["label"]
-    assert series_info(results, 0)["file_label"] == peptide  # a peptide keeps its label
+    # a peptide's file label is its label with the charge as z2 (owner, 2026-11-12)
+    assert series_info(results, 0)["file_label"] == peptide.replace(" z=", " z")
     parent = PeptideEntry("f", "S", "GSHPLVFKAEDLR", "11-23", 11, 23, 3)
     (frag,) = fragment_targets(parent, "z-dot:7:2", activation="ETD", label="gentle")
     source = {"reader": "mzml", "targets": [frag.to_dict(), MzmlTarget(parent).to_dict()],
@@ -1539,20 +1540,20 @@ def test_replicates_past_six_change_marker_too(results):
 def test_figure_stems_keep_any_letters_and_shorten_the_sample(results, monkeypatch):
     from hxex.report import figures
 
-    labels = {0: ("α-syn Müller", "α-syn Müller 0001-0010 PEP z=2"),
-              1: ("a" * 70, "a" * 70 + " 0001-0010 PEP z=2"),
-              2: ("a" * 70, "a" * 70 + " 0001-0010 PEP z=3"),
-              3: ("WT", "WT 0001-0010 PEP z=2"),
-              4: ("WT", "WT 0001-0010 PEP z=2")}
+    labels = {0: ("α-syn Müller", "α-syn Müller 0001-0010 PEP z2"),
+              1: ("a" * 70, "a" * 70 + " 0001-0010 PEP z2"),
+              2: ("a" * 70, "a" * 70 + " 0001-0010 PEP z3"),
+              3: ("WT", "WT 0001-0010 PEP z2"),
+              4: ("WT", "WT 0001-0010 PEP z2")}
     monkeypatch.setattr(figures, "series_info", lambda r, d: {
         "file_label": labels[d][1], "sample": labels[d][0]})
     stems = figures.figure_stems(results, list(labels))
-    assert stems[0] == "α_syn_Müller_0001_0010_PEP_z_2"
-    assert stems[1] == "a" * 30 + "_0001_0010_PEP_z_2" and stems[2].endswith("_z_3")
-    assert stems[3] == "WT_0001_0010_PEP_z_2_id3" and stems[4].endswith("_id4")
+    assert stems[0] == "α_syn_Müller_0001_0010_PEP_z2"
+    assert stems[1] == "a" * 30 + "_0001_0010_PEP_z2" and stems[2].endswith("_z3")
+    assert stems[3] == "WT_0001_0010_PEP_z2_id3" and stems[4].endswith("_id4")
     # ASCII names without a collision are as before
     monkeypatch.undo()
-    assert figures.figure_stems(results, [0])[0] == "S_0001_0010_RDKVQKEYAL_z_2"
+    assert figures.figure_stems(results, [0])[0] == "S_0001_0010_RDKVQKEYAL_z2"
 
 
 def test_the_controls_histograms_have_fixed_edges(results):

@@ -197,7 +197,9 @@ def series_info(results: Results, data_id: int) -> dict:
         b = results.binned
         sample = str(b.sample[j])
         z = int(b.charge[j])
-        label = file_label = f"{b.sample[j]} {b.peptide_range[j]} {b.peptide[j]} z={z}".strip()
+        label = f"{b.sample[j]} {b.peptide_range[j]} {b.peptide[j]} z={z}".strip()
+        # the charge as z2 in file names (owner, 2026-11-12: as fragments' already were)
+        file_label = f"{b.sample[j]} {b.peptide_range[j]} {b.peptide[j]} z{z}".strip()
         frag = _fragment_of(results, data_id)
         if frag is not None:
             pz, cond = frag["parent_charge"], frag["condition"]

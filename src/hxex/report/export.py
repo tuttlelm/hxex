@@ -11,6 +11,7 @@ can be drawn again in one's own style. docs/PLAN.md Next steps 32.
 from __future__ import annotations
 
 import logging
+import weakref
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -427,36 +428,74 @@ def _about(results: Results, series: list[int], ks: str, raw: bool) -> dict[str,
             "value": np.array([v for _, v in items], dtype=object)}
 
 
-def plot_data_folder(results: Results, data_id: int, *, part: str = "", prefix: str = "",
-                     suffix: str = "") -> str:
-    """The folder name for a series' plot data: ``[PREFIX_]STEM[_PART]_plot_data[_SUFFIX]``,
-    ``STEM`` the series' figure name (:func:`hxex.report.figures.figure_stems`) and ``PART``
-    what of it is exported when not all of it (a time point ``30 s``, a spectrum ``30 s rep
-    2``), written as a file name."""
-    from .figures import _slug, figure_stems
+PLOT_TABLES = ("bins", "raw", "spectra", "components", "uptake", "about")  # write_plot_data
+
+
+def plot_data_name(results: Results, data_id: int, *, part: str = "", prefix: str = "",
+                   suffix: str = "") -> str:
+    """The start of a series' plot-data file names, ``[PREFIX_]STEM[_PART][_SUFFIX]``, each
+    file then ending ``_bins.csv``, ``_raw.csv`` and so on (owner, 2026-11-12: files named by
+    the series in the chosen folder, not a folder of their own). ``STEM`` is the series' figure
+    name (:func:`hxex.report.figures.figure_stems`) and ``PART`` what of it is exported when
+    not all of it (a time point ``30 s``, a spectrum ``30 s rep 2``), written compactly
+    (:func:`hxex.report.figures.name_part`: ``30s``, ``30s_rep2``, ``1p5min``)."""
+    from .figures import name_part
 
     prefix, suffix = _affix(prefix, "prefix"), _affix(suffix, "suffix")
     _first_row(results, data_id)
-    stem = figure_stems(results, [int(data_id)])[int(data_id)]
-    body = "_".join(p for p in (stem, _slug(part), "plot_data") if p)
-    return "_".join(p for p in (prefix, body, suffix) if p)
+    stem = _series_stems(results)[int(data_id)]
+    return "_".join(p for p in (prefix, stem, name_part(part), suffix) if p)
 
 
-def write_plot_data(results: Results, directory: str | Path, *, data_id: int | None = None,
-                    spectrum_ids: Sequence[str] | None = None, ks: str = "selected",
-                    overwrite: bool = False) -> list[Path]:
-    """Write :func:`plot_data` as CSV files (``bins.csv``, ``raw.csv``, ``spectra.csv``,
-    ``components.csv``, ``uptake.csv``, ``about.csv``) into ``directory``, which is made. A
-    directory that already holds any of those files is refused unless ``overwrite``."""
+_STEMS: dict[int, tuple[weakref.ref, dict[int, str]]] = {}  # id(results) -> (results, stems)
+
+
+def _series_stems(results: Results) -> dict[int, str]:
+    """Every series' figure name, made unique over the whole results (``_id<data_id>`` where two
+    series share a label), so that exports of separate series never share file names; kept
+    per results (the dialog asks again at every key pressed)."""
+    from .figures import figure_stems
+
+    held = _STEMS.get(id(results))  # by identity: Results holds arrays, so it cannot be hashed
+    if held is not None and held[0]() is results:
+        return held[1]
+    stems = figure_stems(results, [int(d) for d in np.unique(results.fit.data_id)])
+    for key in [k for k, (ref, _) in _STEMS.items() if ref() is None]:
+        del _STEMS[key]
+    _STEMS[id(results)] = (weakref.ref(results), stems)
+    return stems
+
+
+def plot_data_files(directory: str | Path, name: str) -> list[Path]:
+    """The files :func:`write_plot_data` may write into ``directory`` for ``name``
+    (:func:`plot_data_name`), ``raw`` among them even when the results hold no raw spectra."""
+    return [Path(directory) / f"{name}_{table}.csv" for table in PLOT_TABLES]
+
+
+def write_plot_data(results: Results, directory: str | Path, *, name: str | None = None,
+                    data_id: int | None = None, spectrum_ids: Sequence[str] | None = None,
+                    ks: str = "selected", overwrite: bool = False) -> list[Path]:
+    """Write :func:`plot_data` as CSV files into ``directory`` (made if missing), named
+    ``NAME_bins.csv``, ``NAME_raw.csv``, ``NAME_spectra.csv``, ``NAME_components.csv``,
+    ``NAME_uptake.csv``, and ``NAME_about.csv``; ``name`` defaults to the series'
+    :func:`plot_data_name`. Refused, before anything is written, when any of them is there,
+    unless ``overwrite``."""
     tables = plot_data(results, data_id=data_id, spectrum_ids=spectrum_ids, ks=ks)
+    if name is None:
+        series = sorted({int(d) for d in tables["spectra"]["data_id"]})
+        if len(series) != 1:
+            raise ExportError(f"the spectra are of {len(series)} series: give the files a "
+                              "name (name=...)")
+        name = plot_data_name(results, series[0])
     directory = Path(directory)
-    names = [f"{name}.csv" for name in tables]
-    there = [n for n in names if (directory / n).exists()]
+    paths = {table: directory / f"{name}_{table}.csv" for table in tables}
+    there = [p.name for p in paths.values() if p.exists()]
     if there and not overwrite:
         raise FileExistsError(f"{directory} already holds {', '.join(there)} "
                               "(overwrite=True replaces them)")
     directory.mkdir(parents=True, exist_ok=True)
-    paths = [write_csv(columns, directory / f"{name}.csv") for name, columns in tables.items()]
-    log.info("wrote the plot data of %d spectr%s into %s", len(tables["spectra"]["spectrum_id"]),
-             "um" if len(tables["spectra"]["spectrum_id"]) == 1 else "a", directory)
-    return paths
+    written = [write_csv(columns, paths[table]) for table, columns in tables.items()]
+    n = len(tables["spectra"]["spectrum_id"])
+    log.info("wrote the plot data of %d spectr%s into %s (%s_*.csv)", n,
+             "um" if n == 1 else "a", directory, name)
+    return written

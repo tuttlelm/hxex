@@ -39,7 +39,7 @@ hxex report hxex.toml --figures
 
 ## Step 2: a very bright peptide
 
-Open `WT_0068_0075_MRLEKDRF_z_2.pdf`. The title of each spectrum says its number of
+Open `WT_0068_0075_MRLEKDRF_z2.pdf`. The title of each spectrum says its number of
 populations and its flags:
 
 ![The spectra of WT 68-75: bright, flat-topped envelopes, and one dim spectrum at 30 min](../images/tutorial_bright.png)
@@ -108,7 +108,7 @@ populations (for example to 1, for a second population you know is wrong).
 
 ## Step 4: what to leave alone
 
-In `WT_0042_0054_TSLSPFYLRPPSF_z_2.pdf`, the 30 min spectra have a second population too, a
+In `WT_0042_0054_TSLSPFYLRPPSF_z2.pdf`, the 30 min spectra have a second population too, a
 small one: 6 to 10 % in each replicate. One spectrum alone cannot pin down so small a share (the
 bootstrap gives each share an error of 4 to 13 points, about as large as the share), but
 together they can: all four replicates find it, it continues the shrinking of the slow
@@ -125,7 +125,7 @@ one population, and `fd_multimodal` for the fully deuterated ones. An undeuterat
 should be one envelope, the peptide's natural isotope pattern, so a second one there is
 something else.
 
-Five series of this run have `m0_multimodal`. Open `R120G_0114_0137_ISREFHGKYRIPADVDPLTITSSL_z_3.pdf`:
+Five series of this run have `m0_multimodal`. Open `R120G_0114_0137_ISREFHGKYRIPADVDPLTITSSL_z3.pdf`:
 
 ![The spectra of R120G 114-137 at charge 3: a second, smaller envelope in every spectrum](../images/tutorial_second_species.png)
 

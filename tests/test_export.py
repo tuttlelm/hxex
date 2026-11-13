@@ -26,7 +26,7 @@ from hxex.report.export import (
     hxexpress_spectra,
     plain_sequence,
     plot_data,
-    plot_data_folder,
+    plot_data_name,
     write_plot_data,
 )
 from test_run import PEPTIDE, boot_config, config, raw_spectra
@@ -159,11 +159,11 @@ def test_a_prefix_and_a_suffix_name_the_file(results, tmp_path):
         with pytest.raises(ExportError, match="file name"):
             hxexpress_name(results, 0, suffix=bad)
     assert hxexpress_name(results, 0, suffix="a b").endswith("-hxex_a b.xlsx")
-    # a folder name may hold '-': the rule is the HX-Express name's own
-    folder = plot_data_folder(results, 0, prefix="talk-2026", suffix="v 2")
-    assert folder.startswith("talk-2026_") and folder.endswith("_plot_data_v 2")
+    # plot-data names may hold '-': the rule is the HX-Express name's own
+    name = plot_data_name(results, 0, prefix="talk-2026", suffix="v 2")
+    assert name.startswith("talk-2026_") and name.endswith("_z2_id0_v 2")
     with pytest.raises(ExportError, match="file name"):
-        plot_data_folder(results, 0, suffix="a/b")
+        plot_data_name(results, 0, suffix="a/b")
 
 
 def test_points_without_real_times_take_their_rank(results, monkeypatch, caplog):
@@ -224,16 +224,33 @@ def test_every_fitted_k_and_a_time_point_alone(results):
         plot_data(results, data_id=1, spectrum_ids=point)
 
 
-def test_plot_data_files_and_their_folder(results, tmp_path):
-    folder = tmp_path / plot_data_folder(results, 0, prefix="talk", suffix="v2")
-    assert folder.name.startswith("talk_") and folder.name.endswith("_plot_data_v2")
+def test_plot_data_files_are_named_by_the_series(results, tmp_path):
+    """The files go into the folder given, each named by the series (owner: no folder of
+    their own), ``STEM_bins.csv`` and so on; a prefix and suffix around the series' name."""
+    folder = tmp_path / "exports"
     paths = write_plot_data(results, folder, data_id=0)
-    assert sorted(p.name for p in paths) == ["about.csv", "bins.csv", "components.csv",
-                                             "raw.csv", "spectra.csv", "uptake.csv"]
-    about = {r["item"]: r["value"] for r in _rows(folder / "about.csv")}
+    stem = plot_data_name(results, 0)
+    # the two test series share a label: each name carries its series' number, as their
+    # figures' names do when written together
+    assert stem.endswith("_z2_id0") and plot_data_name(results, 1).endswith("_z2_id1")
+    assert sorted(p.name for p in paths) == sorted(
+        f"{stem}_{t}.csv" for t in ("about", "bins", "components", "raw", "spectra", "uptake"))
+    about = {r["item"]: r["value"] for r in _rows(folder / f"{stem}_about.csv")}
     assert about["k_written"] == "the K in effect for each spectrum"
     assert about["intensities"] == "as measured (unscaled)"
-    assert len(_rows(folder / "bins.csv")) == len(plot_data(results, data_id=0)["bins"]["bin"])
+    assert (len(_rows(folder / f"{stem}_bins.csv"))
+            == len(plot_data(results, data_id=0)["bins"]["bin"]))
     with pytest.raises(FileExistsError, match="overwrite"):
         write_plot_data(results, folder, data_id=0)
     write_plot_data(results, folder, data_id=0, overwrite=True)
+    # a second series and a named export sit beside them
+    write_plot_data(results, folder, data_id=1)
+    named = plot_data_name(results, 0, prefix="talk", suffix="v2")
+    assert named == f"talk_{stem}_v2"
+    write_plot_data(results, folder, name=named, data_id=0)
+    assert len(list(folder.iterdir())) == 18
+    # spectra of two series need a name
+    sids = list(plot_data(results, data_id=0)["spectra"]["spectrum_id"][:1]) + list(
+        plot_data(results, data_id=1)["spectra"]["spectrum_id"][:1])
+    with pytest.raises(ExportError, match="name"):
+        write_plot_data(results, folder, spectrum_ids=sids)

@@ -30,7 +30,7 @@ my_protein/
 │   └── hxex_listing.json        the files hxex wrote here
 ├── results_figures/             the figures (hxex report --figures)
 │   ├── overview.pdf
-│   ├── WT_0012_0025_LVPRGS_z_2.pdf    one file per series, named by its label
+│   ├── WT_0012_0025_LVPRGS_z2.pdf    one file per series, named by its label
 │   ├── ...
 │   └── hxex_listing.json
 ├── results_analysis_WT/         the analysis with WT as the reference (hxex analyse)
@@ -236,9 +236,9 @@ no new run, only `hxex report` again. (Given the bundle instead, `hxex report re
     point labelled at 0 s cannot be drawn.
 
 A series' file name keeps the letters of any alphabet in its label (as the analysis folder's
-names do) and replaces everything else with `_`; a sample name longer than 30 characters is
-shortened, never the range, peptide, and charge that follow it. When two series would get the
-same name, `_id` and the series' `data_id` are added (`WT_0001_0010_PEPTIDE_z_2_id7`).
+names do) and replaces everything else with `_`, with the charge written `z2`; a sample name
+longer than 30 characters is shortened, never the range, peptide, and charge that follow it. When two series would get the
+same name, `_id` and the series' `data_id` are added (`WT_0001_0010_PEPTIDE_z2_id7`).
 
 By default only the flagged series get figures (a quality flag, a rejection or a control
 fallback); `series = "all"` in `[figures]`, or `hxex report hxex.toml --figures --series all`,
@@ -724,8 +724,8 @@ nothing. File paths are written as `record_paths` in `[input]` says: with `recor
 ## Exporting one series
 
 The window can write one series (a peptide at one charge in one sample, with its time points,
-replicates, and controls) in two other forms. Right-click the series in the **Results** tree
-(see [The *hxex* window](gui.md#exporting-a-series)):
+replicates, and controls) in two other forms. Select the series in the **Results** tree and
+click **Export data** above its figures (see [The *hxex* window](gui.md#exporting-a-series)):
 
 - **Export for HX-Express** writes the spreadsheet HX-Express reads: one sheet with every time
   point and replicate of the peptide at that charge, an m/z column and an intensity column per
@@ -744,17 +744,20 @@ replicates, and controls) in two other forms. Right-click the series in the **Re
   modifications and terminal groups are not in the name, so enter them in HX-Express. On a
   peptide's row, the same writes one file for each of its charges.
 - **Export plot data** writes CSV files with what the series' figures draw, so you can draw
-  them in your own style. Right-click a time point or a replicate to export only that part.
-  The folder holds:
+  them in your own style. Select a time point or a replicate to export only that part.
+  The six files go into the folder you choose, each named after the series and ending in
+  what it holds, for example `WT_0087_0096_EELKVKVLGD_z2_bins.csv` (a time point adds its
+  time, `..._z2_30min_bins.csv`, and a replicate its number, `..._30min_rep2_bins.csv`; a
+  time such as 1.5 min is written `1p5min`):
 
-  | File | What it holds |
+  | File ends in | What it holds |
   |---|---|
-  | `bins.csv` | one row per spectrum and deuterium bin: the spectrum (sample, peptide, charge, time, replicate, review status), the number of populations of the fit (`k`; `K` is the one in effect, and `selected` says whether they agree), the bin, its m/z, the picked value (`picked`), the whole fit (`fit`) with its error band (`fit_band_low`, `fit_band_high`; empty without a bootstrap), the residual (picked minus fit), and each population's curve (`population_1`, `population_2`, ...) with its band |
-  | `raw.csv` | every point of each raw spectrum (left out when the results do not hold the raw spectra) |
-  | `spectra.csv`, `components.csv`, `uptake.csv` | these spectra's rows of the run's tables: the deuterium values, populations, and errors the uptake and populations pages draw |
-  | `about.csv` | the *hxex* version, the run, whether the bins hold peak heights or areas, whether the values are corrected for back-exchange, and which fits were written |
+  | `_bins.csv` | one row per spectrum and deuterium bin: the spectrum (sample, peptide, charge, time, replicate, review status), the number of populations of the fit (`k`; `K` is the one in effect, and `selected` says whether they agree), the bin, its m/z, the picked value (`picked`), the whole fit (`fit`) with its error band (`fit_band_low`, `fit_band_high`; empty without a bootstrap), the residual (picked minus fit), and each population's curve (`population_1`, `population_2`, ...) with its band |
+  | `_raw.csv` | every point of each raw spectrum (left out when the results do not hold the raw spectra) |
+  | `_spectra.csv`, `_components.csv`, `_uptake.csv` | these spectra's rows of the run's tables: the deuterium values, populations, and errors the uptake and populations pages draw |
+  | `_about.csv` | the *hxex* version, the run, whether the bins hold peak heights or areas, whether the values are corrected for back-exchange, and which fits were written |
 
-  The values are as measured (not scaled to the tallest peak). By default `bins.csv` holds
+  The values are as measured (not scaled to the tallest peak). By default the bins file holds
   each spectrum's fit at the number of populations in effect; choose **every fitted K** to
   have them all.
 
@@ -762,10 +765,12 @@ Both ask for a folder (by default `hxex_exports` beside the results) and take an
 prefix and suffix for the names. For HX-Express the suffix goes at the end of the name
 (`...-hxex_SUFFIX.xlsx`) and the prefix before the sample, so *hxex* reads it as part of the
 sample's name if the file is read back; neither may hold `-`, which separates the fields of an
-HX-Express file name (use `_`). A plot-data folder takes any prefix and suffix a folder name
-can hold.
-The window shows the names before writing, and asks before replacing a file or folder that is
-already there.
+HX-Express file name (use `_`). The plot-data files take the prefix at the start of their names
+and the suffix after the series' name (`..._z2_SUFFIX_bins.csv`), and any characters a file
+name can hold. Where two series of the results have the same label (sample, residues, peptide,
+and charge), the plot-data names end in the series' number (`_id12`) to keep them apart.
+The window shows the names before writing, and asks before replacing a file that is already
+there.
 
 ## Sharing results
 

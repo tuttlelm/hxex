@@ -33,7 +33,8 @@ from .export import (
     export_hxexpress,
     hxexpress_name,
     plot_data,
-    plot_data_folder,
+    plot_data_files,
+    plot_data_name,
     write_plot_data,
 )
 from .figures import (
@@ -129,7 +130,8 @@ __all__ = [
     "export_hxexpress",
     "hxexpress_name",
     "plot_data",
-    "plot_data_folder",
+    "plot_data_files",
+    "plot_data_name",
     "write_plot_data",
     "PlotConfig",
     "Reference",

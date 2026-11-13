@@ -746,8 +746,7 @@ Fitting (HISTORY "Evidence behind the ...", "Phase 2 plan" and "Phase 2 status")
   plots are corrected by default (item 31). The fully deuterated retention is combined over a
   peptide's charge states (`combine_charges`, item 140). Without `[run] controls` the data
   decide whether the correction runs (on when the spectra hold undeuterated and fully
-  deuterated controls; `controls = false` turns it off; HISTORY pending item "The data decide
-  the back-exchange correction").
+  deuterated controls; `controls = false` turns it off; HISTORY 343).
 - The post-fitting analysis (`hxex_utils.py` and the owner's notebooks): the hybrid rule's
   `delta_crit` uses a robust typical replicate standard deviation (the median of the
   chi-square-scaled variances), not the plain pool of Hageman and Weis, which a few broken
@@ -981,8 +980,10 @@ Planned, not built:
    201). Built: `[input.scans] find_retention_time = "off" | "suggest" (default) |
    "automatic"`, `rt_search_ppm`, `rt_search_tolerance` (both measured by default), module
    `hxex.io.retention_search`, `retention_suggestions.csv`, flag `rt_found`. Scan formats with
-   find_peak only. Open: a second dataset (a Q-TOF LC-MS run as mzML would test the measured
-   m/z tolerance on another instrument) before `automatic` could become the default.
+   find_peak only. Q-TOF LC-MS runs as mzML are now read (two Waters projects, ion mobility;
+   HISTORY 306, 355), but only "suggest" has run on them. Open: an evaluation of `automatic`
+   on them before it could become the default; it waits for the profile fit of item 31
+   (owner, 2026-11-12).
 
 17. **A detection limit for a second population** (owner, 2026-10-31: "something to consider in
    the future if needed"; HISTORY 212). Per set, the smallest share (at a stated separation) or
@@ -1551,7 +1552,8 @@ Planned, not built:
 
 32. **Exporting a series: HX-Express spreadsheets and the data behind the figures** (owner,
    2026-11-12; BUILT the same day, HISTORY 373: `hxex.report.export`,
-   `hxex.io.hxexpress` writers, the Results tree's right-click; a user prefix and suffix for
+   `hxex.io.hxexpress` writers, the window's **Export data** button (first a right-click in the
+   Results tree, replaced the same day: owner, "easy to miss"); a user prefix and suffix for
    the names, and nothing replaced without asking, owner). The largest unit is one series (a peptide or ion at one
    charge in one sample, as in the Results tree: its time points, replicates, and controls).
    Two exports:
@@ -1584,7 +1586,9 @@ Planned, not built:
      - Reading the file back with `read_hxexpress_file` gives the same spectra and labels
        (the round-trip test).
    - *Plot data* (CSV only, owner). Everything needed to redraw the series' figures in one's
-     own style, in a folder named after the series:
+     own style, as files named after the series in the folder chosen
+     (`STEM_bins.csv`, `STEM_raw.csv`, ...; first a folder of their own, changed the same day,
+     owner):
      - `bins.csv`: one row per spectrum and deuterium bin: identity (sample, range, charge,
        time, rep, role, spectrum id), `k`, bin, m/z, picked value, fit total, each population's
        curve (`population_1` ... up to the largest K written; blank where a spectrum has fewer),
@@ -1599,7 +1603,7 @@ Planned, not built:
        whether the values are back-exchange corrected, which K was written.
      A time point or a single spectrum is the same export with fewer rows.
    - *Where:* Python functions first (`hxex.report.export_hxexpress` on
-     `hxex.io.write_hxexpress_file`; `hxex.report.write_plot_data`), then the window: a right-click in the Results tree, "Export for
+     `hxex.io.write_hxexpress_file`; `hxex.report.write_plot_data`), then the window: **Export data** beside **Save figure** for the tree's selection, "Export for
      HX-Express…" on a series, "Export plot data…" on a series, a time point, or a spectrum.
      No command-line form for now (the series is the unit); a bundle-wide HX-Express export
      can follow if users ask.

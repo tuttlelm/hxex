@@ -199,9 +199,6 @@ class ResultsWorkspace(QWidget):
         self.tree.itemExpanded.connect(self._expanded)
         self.tree.currentItemChanged.connect(lambda item, _previous: self._selected(
             item, again=False))
-        # right-click: export a series for HX-Express, or the data behind its figures
-        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.export_folder: Path | None = None  # the folder the last export went to
         self.review = ReviewPanel(self)
         self.review.decided.connect(self._reviewed)
@@ -367,6 +364,8 @@ class ResultsWorkspace(QWidget):
     def panel(self, name: str) -> FigurePanel:
         if name not in self.panels:
             panel = FigurePanel(render=self.render)
+            if name != "overview":  # the overview is the whole run's, not the selection's
+                panel.add_option(self._export_button())
             if name == "uptake":  # the only page with a time axis: its choice in its own bar
                 panel.add_option(self.time_axis)
             if name == "overview":
@@ -1086,10 +1085,24 @@ class ResultsWorkspace(QWidget):
 
     # --- exporting -------------------------------------------------------------------------
 
+    def _export_button(self) -> QPushButton:
+        """**Export data** beside **Save figure** (owner, 2026-11-12: the right-click in the tree
+        was easy to miss): a menu of what the selected tree row exports, made when it opens."""
+        from PySide6.QtWidgets import QMenu
+
+        button = QPushButton("Export data")
+        button.setToolTip(tip("the selection's data: an HX-Express spreadsheet of the series, "
+                              "or the CSV files behind its figures"))
+        menu = QMenu(button)
+        menu.setToolTipsVisible(True)
+        menu.aboutToShow.connect(lambda m=menu: self.fill_export_menu(m))
+        button.setMenu(menu)
+        return button
+
     def export_targets(self, item: QTreeWidgetItem) -> dict[str, list]:
-        """What a right-click on ``item`` exports (docs/PLAN.md Next steps 32): for HX-Express,
-        the series (a peptide: each of its charges shown); for the plot data, the series, the
-        time point's spectra, or the spectrum."""
+        """What **Export data** exports for the tree row ``item`` (docs/PLAN.md Next steps 32):
+        for HX-Express, the series (a peptide: each of its charges shown); for the plot data, the
+        series, the time point's spectra, or the spectrum."""
         from .export_dialog import HXEXPRESS, PLOT_DATA, Target
 
         kind, payload = item.data(0, KIND), item.data(0, PAYLOAD)
@@ -1108,16 +1121,19 @@ class ResultsWorkspace(QWidget):
             some = Target(data_id, [spectrum.spectrum_id], f"{point.label} rep {spectrum.rep}")
         return {HXEXPRESS: [Target(data_id)], PLOT_DATA: [some]}
 
-    def export_menu(self, item: QTreeWidgetItem):
-        """The right-click menu of ``item``: ``(menu, {action: (kind, targets)})``."""
-        from PySide6.QtWidgets import QMenu
-
+    def fill_export_menu(self, menu) -> dict:
+        """Fill **Export data**'s ``menu`` for the selected tree row; returns
+        ``{action: (kind, targets)}`` (empty, with one greyed line, when nothing is selected)."""
         from .export_dialog import HXEXPRESS, PLOT_DATA
 
+        menu.clear()
+        item = self.tree.currentItem()
+        if item is None or self.results is None or item.data(0, KIND) not in DEPTH:
+            menu.addAction("Select a peptide, charge, time point, or spectrum").setEnabled(False)
+            return {}
         kind = item.data(0, KIND)
         targets = self.export_targets(item)
         n = len(targets[HXEXPRESS])
-        menu = QMenu(self)
         hx = menu.addAction(
             f"Export its {n} charge states for HX-Express…" if kind == "peptide" and n > 1
             else "Export for HX-Express…" if kind in ("peptide", "series")
@@ -1128,17 +1144,10 @@ class ResultsWorkspace(QWidget):
         plot = menu.addAction(f"Export {what}plot data…")
         plot.setToolTip(tip("CSV files with what the figures draw: picked values, fits, "
                             "populations, raw spectra, and the table rows"))
-        menu.setToolTipsVisible(True)
-        return menu, {hx: (HXEXPRESS, targets[HXEXPRESS]), plot: (PLOT_DATA, targets[PLOT_DATA])}
-
-    def _tree_menu(self, pos) -> None:
-        item = self.tree.itemAt(pos)
-        if item is None or self.results is None:
-            return
-        menu, actions = self.export_menu(item)
-        chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
-        if chosen in actions:
-            self.open_export(*actions[chosen])
+        actions = {hx: (HXEXPRESS, targets[HXEXPRESS]), plot: (PLOT_DATA, targets[PLOT_DATA])}
+        for action, (what, chosen) in actions.items():
+            action.triggered.connect(lambda _c=False, w=what, t=chosen: self.open_export(w, t))
+        return actions
 
     def default_export_folder(self) -> Path:
         """The last export's folder, else ``hxex_exports`` beside the results (not inside the

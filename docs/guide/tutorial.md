@@ -315,13 +315,13 @@ and uptake) and `overview.pdf`, and writes the tables again. Each page has a leg
 lines and marks, and each spectrum's title says its number of populations (`K=2`), their
 deuterium (`D 1.85 / 6.40`), and any flag.
 
-**One population.** In `WT_0087_0096_EELKVKVLGD_z_2.pdf` every spectrum is one smooth envelope.
+**One population.** In `WT_0087_0096_EELKVKVLGD_z2.pdf` every spectrum is one smooth envelope.
 The black sticks are the measured isotope peaks, the line through them is the fit, and the
 envelope moves to the right (more deuterium) with time:
 
 ![The spectra of WT 87-96: one population at every time](../images/tutorial_one_population.png)
 
-**Two populations.** In `WT_0042_0054_TSLSPFYLRPPSF_z_2.pdf` the 4 s and 1 min spectra are too
+**Two populations.** In `WT_0042_0054_TSLSPFYLRPPSF_z2.pdf` the 4 s and 1 min spectra are too
 broad for one envelope: the fit uses two (the dashed lines), a slow one that has taken up
 little deuterium and a fast one that has taken up much more. At 30 min only a small share of
 the slow one is left, and by 20 h they have merged into one. The undeuterated (UN) and fully

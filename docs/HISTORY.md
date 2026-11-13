@@ -9527,9 +9527,29 @@ CSVs or mzML if wanted.
     and bin: picked value, fit, band, residual, each population's curve and band; unscaled),
     `raw.csv`, the spectra's rows of `spectra.csv`, `components.csv`, and `uptake.csv`, and
     `about.csv`; the K in effect by default, every fitted K as an option (owner). A series, a
-    time point, or one spectrum. Both take a user prefix and suffix and replace nothing unless
-    told to (owner); the window's dialog (`hxex.gui.export_dialog`, a right-click in the
-    Results tree) lists the names and asks before replacing. Tests: tests/test_export.py (the
-    spreadsheet read back by hxex's reader gives the same spectra, labels, roles, and
-    replicates; the plot data equal what `spectrum_data` draws), tests/test_gui_export.py. Not
-    checked: HX-Express itself opening the files (no copy here); the owner to try one.
+    time point, or one spectrum. The files go into the folder chosen, each named by the series
+    (`[PREFIX_]STEM[_PART][_SUFFIX]_bins.csv`, STEM the series' figure name, `_id<data_id>`
+    where two series of the results share a label; first a folder of their own per export,
+    changed the same day: owner). Both take a user prefix and suffix and replace nothing unless
+    told to (owner); the window's dialog (`hxex.gui.export_dialog`; first a right-click in the
+    Results tree, replaced the same day by an **Export data** button beside **Save figure** on
+    the selection's figures: owner, the right-click was easy to miss) lists the names and asks
+    before replacing. Tests: tests/test_export.py (the spreadsheet read back by hxex's reader gives the same spectra, labels, roles, and
+    replicates; the plot data equal what `spectrum_data` draws), tests/test_gui_export.py. The
+    owner opened an exported spreadsheet (raw spectra, one series of the tutorial data) in
+    HX-Express: it reads as expected (2026-11-12).
+
+374. **Shorter file names: `z2`, `4s`, `1p5min`, `rep2` (owner, 2026-11-12: "much more
+    readable"; no scripts depended on the old names).** A series' figure files and its exported
+    plot data are named `WT_0087_0096_EELKVKVLGD_z2` (was `..._z_2`, from turning `z=2` into a
+    file name; fragment ions were already `z2`), and the time-point and replicate parts of
+    exported plot data are written compactly by `hxex.report.figures.name_part`: a number
+    joined to its unit (`4s`, `30min`, `20h`), a decimal point as `p` (`1p5min`, common in the
+    owner's field), and `rep2`. The analysis figures' times use the same rule (`residues_all_1p5min`;
+    whole times read as before, `residues_all_30min`). Figures written by an earlier version
+    keep their names; a later `hxex report --figures` writes the new ones. Plot data are written
+    as files named by the series in the folder chosen (`..._z2_30min_bins.csv`; a folder of
+    their own first, changed the same day: owner), and the window's **Export data** button
+    (beside **Save figure**) replaces the right-click in the Results tree (owner: easy to miss);
+    both are in item 373's text. Tests: tests/test_export.py, tests/test_gui_export.py,
+    tests/test_report.py (stems), tests/test_catalogue.py.

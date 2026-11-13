@@ -334,3 +334,17 @@ def _slug(text: str) -> str:
     """``text`` as part of a file name: every run of characters other than letters (of any
     script) and digits becomes one ``_``."""
     return re.sub(r"[\W_]+", "_", text).strip("_") or ""
+
+
+_UNIT = r"(?:ms|s|sec|min|h|d)\b"
+
+
+def name_part(text: str) -> str:
+    """A time, time point or replicate label as part of a file name, written compactly (owner,
+    2026-11-12): a decimal point as ``p`` and a number joined to its unit (``1.5 min`` ->
+    ``1p5min``, ``4 s`` -> ``4s``), ``rep 2`` -> ``rep2``, then :func:`_slug` (``30 min rep 2``
+    -> ``30min_rep2``)."""
+    text = re.sub(r"(?<=\d)\.(?=\d)", "p", str(text))
+    text = re.sub(rf"(?<=\d)\s+(?={_UNIT})", "", text)
+    text = re.sub(r"\brep\s+(?=\d)", "rep", text)
+    return _slug(text)

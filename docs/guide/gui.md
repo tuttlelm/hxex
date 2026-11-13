@@ -429,10 +429,11 @@ report hxex.toml` does.
 
 ### Exporting a series
 
-Right-click a peptide, a charge, a time point, or a replicate in the tree to export it:
-**Export for HX-Express** writes the series (on a peptide's row, each of its charges) as an
-HX-Express spreadsheet, and **Export plot data** writes the data behind its figures as CSV
-files (on a time point or a replicate, only that part). A dialog asks for the folder, an
+Select a peptide, a charge, a time point, or a replicate in the tree, then click **Export
+data**, beside **Save figure…** above its figures: **Export for HX-Express** writes the series
+(for a peptide, each of its charges) as an HX-Express spreadsheet, and **Export plot data**
+writes the data behind its figures as CSV files (for a time point or a replicate, only that
+part). A dialog asks for the folder, an
 optional prefix and suffix for the names, and the options; it lists the names it will write
 and asks before replacing anything. What each export holds is in
 [Outputs](outputs.md#exporting-one-series).
@@ -619,6 +620,8 @@ sample, and charge of a series), which stays readable however far you zoom:
   comparison, both samples' values, the difference, and whether it is significant.
 - **Save figure…** saves the figure as SVG or PDF (sharp at any size, for papers and slides
   you edit further) or PNG (a picture); the window's bottom bar says where it went.
+- **Export data**, on the **Results** figures, writes the selection's data rather than the
+  picture (see [Exporting a series](#exporting-a-series)).
 - **?**, at the end of the buttons, lists these mouse actions: rest the pointer on it, or
   click it.
 

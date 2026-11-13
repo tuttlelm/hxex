@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Exporting from the Results tree (hxex.gui.export_dialog; docs/PLAN.md Next steps 32): what
+"""Exporting from the Results view (hxex.gui.export_dialog; docs/PLAN.md Next steps 32): what
 each level exports, the names the dialog shows, and replacing only after asking. Offscreen."""
 import os
 
@@ -52,7 +52,7 @@ def test_each_level_exports_its_part(page):
 
 def test_the_dialog_names_what_it_writes_and_refuses_bad_affixes(qtbot, results, tmp_path):
     d = _dialog(qtbot, results, HXEXPRESS, [Target(0)], tmp_path)
-    assert f"S_1-10-{PEPTIDE}-z2-hxex.xlsx" in d.names.text()
+    assert d.names.text() == f"Writes 1 file: S_1-10-{PEPTIDE}-z2-hxex.xlsx"
     d.suffix.setText("v-2")
     assert not d.export_button.isEnabled() and "'-'" in d.names.text()
     d.suffix.setText("v2")
@@ -75,27 +75,45 @@ def test_an_export_replaces_files_only_when_the_user_says_so(qtbot, results, tmp
     assert again.export() == [] and len(read_hxexpress_file(path, entry)) == 8
 
 
-def test_a_time_points_plot_data_go_to_their_own_folder(qtbot, page, results, tmp_path):
+def test_a_time_points_plot_data_are_named_by_it(qtbot, page, results, tmp_path):
     series = page.tree.topLevelItem(0).child(0)
     page.tree.expandItem(series)
     target = page.export_targets(series.child(1))[PLOT_DATA][0]
     d = _dialog(qtbot, results, PLOT_DATA, [target], tmp_path)
     d.ks.setCurrentIndex(d.ks.findData("all"))
+    name = d.name_of(target)
+    assert name.endswith("_z2_id0_1min")
+    assert d.names.text().startswith(f"Writes 6 CSV files named {name}")
     assert d.export() == []
-    folder, = d.written
-    assert folder.name.endswith("_1_min_plot_data")
-    assert sorted(p.name for p in folder.iterdir()) == sorted(
-        ["about.csv", "bins.csv", "components.csv", "raw.csv", "spectra.csv", "uptake.csv"])
-    assert d.existing() == [folder]
+    assert sorted(p.name for p in d.written) == sorted(
+        f"{name}_{t}.csv" for t in ("about", "bins", "components", "raw", "spectra", "uptake"))
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(p.name for p in d.written)
+    assert sorted(d.existing()) == sorted(d.written)
 
 
-def test_the_right_click_menu_names_each_levels_export(page):
+def test_the_export_button_names_each_levels_export(page, qtbot, monkeypatch):
+    """**Export data** sits beside **Save figure** on the selection's figures (not the run's
+    overview), and its menu names what the selected row exports; the tree has no right-click."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMenu
+
+    assert page.tree.contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu
+    panel = page.panel("spectra")
+    bar = panel._bar_layout
+    button = bar.itemAt(bar.indexOf(panel.save_button) + 1).widget()
+    assert button.text() == "Export data" and button.menu() is not None
+    assert all(w.text() != "Export data" for w in page.panel("overview")._options
+               if hasattr(w, "text"))
+    menu = QMenu()
+    page.tree.setCurrentItem(None)
+    assert page.fill_export_menu(menu) == {} and not menu.actions()[0].isEnabled()
     peptide = page.tree.topLevelItem(0)
     series = peptide.child(0)
     page.tree.expandItem(series)
     seen = []
     for item in (peptide, series, series.child(1), series.child(1).child(0)):
-        menu, actions = page.export_menu(item)
+        page.tree.setCurrentItem(item)
+        actions = page.fill_export_menu(menu)
         seen.append([a.text() for a in menu.actions()])
         assert [kind for kind, _ in actions.values()] == [HXEXPRESS, PLOT_DATA]
     assert seen == [
@@ -103,3 +121,7 @@ def test_the_right_click_menu_names_each_levels_export(page):
         ["Export for HX-Express…", "Export plot data…"],
         ["Export the series for HX-Express…", "Export this time point's plot data…"],
         ["Export the series for HX-Express…", "Export this spectrum's plot data…"]]
+    opened = []
+    monkeypatch.setattr(page, "open_export", lambda kind, targets: opened.append(kind))
+    menu.actions()[1].trigger()  # the spectrum's plot data
+    assert opened == [PLOT_DATA]
