@@ -986,6 +986,19 @@ def two_sample_bundle(tmp_path_factory):
     return out
 
 
+def test_an_analysis_of_several_samples_without_a_reference_warns(two_sample_bundle, caplog):
+    """No reference: the samples are not compared, said in the log (owner, 2026-11-13)."""
+    from hxex.analysis import AnalysisConfig
+    from hxex.io import open_bundle
+    from hxex.report import analysis_outputs
+
+    with open_bundle(two_sample_bundle) as b, caplog.at_level("WARNING"):
+        out = analysis_outputs(Results.from_bundle(b), AnalysisConfig())
+    assert "compare_peptides" not in out.tables
+    assert any(r.getMessage().startswith("reference needed for comparison plots")
+               for r in caplog.records)
+
+
 def test_analysis_config_checks_and_round_trips():
     from hxex.analysis import AnalysisConfig, Annotations, Region
 

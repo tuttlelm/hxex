@@ -265,3 +265,42 @@ def test_the_analysis_list_puts_the_fragment_figures_apart():
     assert not {"ladder", "closure"} & set(names[0] + names[1])
     assert analysis_sections(kinds, False, "S", "S")[2][2] == []
 
+
+
+def test_without_a_reference_the_window_says_so_and_offers_one(qtbot, tmp_path,
+                                                               two_sample_bundle):  # noqa: F811
+    """Two samples and no [analysis] reference: a warning above the list that the samples are
+    not compared, with a list to choose the reference, written to the project file (owner,
+    2026-11-13: the comparisons were off and only the list's "off" lines said why)."""
+    import tomllib
+
+    path = tmp_path / "hxex.toml"
+    path.write_text(f'project = "gui"\n\n[output]\nbundle = "{two_sample_bundle.as_posix()}"\n'
+                    '\n[analysis]\nresidue_level = true\n', encoding="utf-8")
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(path)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    assert page.no_reference.isVisibleTo(page)
+    assert page.no_reference_text.text() == "Reference needed for comparison plots"
+    choices = [page.choose_reference.itemText(i) for i in range(page.choose_reference.count())]
+    assert choices == ["choose a reference…", "S", "V", "every sample in turn"]
+    page.choose_reference.activated.emit(choices.index("S"))
+    assert tomllib.loads(path.read_text(encoding="utf-8"))["analysis"]["reference"] == "S"
+    assert not page.no_reference.isVisibleTo(page)  # compared now: the warning goes
+    # every sample in turn
+    path.write_text(f'project = "gui"\n\n[output]\nbundle = "{two_sample_bundle.as_posix()}"\n'
+                    '\n[analysis]\nresidue_level = true\n', encoding="utf-8")
+    page.refresh()
+    assert page.no_reference.isVisibleTo(page)
+    page.choose_reference.activated.emit(page.choose_reference.count() - 1)
+    assert tomllib.loads(path.read_text(encoding="utf-8"))["analysis"]["reference"] == "all"
+
+
+def test_a_reference_set_shows_no_warning(qtbot, tmp_path, project):
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    assert not window.analysis_page.no_reference.isVisibleTo(window.analysis_page)

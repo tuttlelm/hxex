@@ -376,6 +376,9 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
               if config.samples else present)
     ref_state = (resolve_sample(up.run, up.sample, config.reference, "reference sample")
                  if config.reference else None)
+    if ref_state is None and len(wanted) >= 2:  # (owner, 2026-11-13: easy to miss)
+        log.warning("reference needed for comparison plots and tables: hxex set hxex.toml "
+                    "analysis.reference %s (or \"all\")", wanted[0][1])
     listed = list(wanted)  # the settings' order, for the figures that compare nothing
     if ref_state is not None:
         wanted = [ref_state] + [s for s in wanted if s != ref_state]

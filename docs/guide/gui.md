@@ -499,6 +499,9 @@ file), so what you see here is what the command writes.
   these results have nothing to draw (no peptide with two populations, say). [Figures](figures.md)
   lists every kind, with what each shows and needs; `hxex figures hxex.toml` prints the same
   list in a terminal.
+- With two samples or more and no `[analysis] reference`, a red line above the list says
+  *Reference needed for comparison plots*, with **choose a reference…** beside it: the sample
+  chosen is written to the project file (**every sample in turn** writes `reference = "all"`).
 - Select a figure to see it; **Save figure…** suggests the name `hxex analyse` gives it.
 - The **data** tab beside the figure lists what the figure draws, one row per bar: on a coverage
   map each peptide's sample, time, residues, sequence, fD and its error, and how many spectra
