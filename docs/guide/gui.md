@@ -15,6 +15,11 @@ The window is being built in steps. What it does today:
 - **Analysis**: shows the figures `hxex analyse` would write with the project's settings, and
   why each figure left out is left out (below).
 
+In every table of the window (the data tabs, the HDX Summary Table, the Results list, the Tables
+view, and the lists in the Project settings), hold Ctrl and turn the mouse wheel to make the
+text larger or smaller, as in the Run tab's messages. The size applies to every table, and the
+window remembers it; Ctrl+0 over a table goes back to the usual size.
+
 ## Installing it
 
 The window needs one extra piece of software (Qt, about 100 MB). Install *hxex* with the

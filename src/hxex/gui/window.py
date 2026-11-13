@@ -249,6 +249,11 @@ class MainWindow(QMainWindow):
         # how figures are drawn: matplotlib (its raster renderer, as for PNG; the default, owner)
         # or Qt's SVG renderer, which ignores clipping (HISTORY 237: the SVG's data is cut to
         # the panels instead, hxex.gui.svg_trim)
+        # Ctrl+mouse wheel over any table sets the tables' font size (owner, 2026-11-13)
+        from .table_zoom import TableZoom
+
+        self.table_zoom = TableZoom(self, self.settings)
+        self.table_zoom.start()
         self.render = str(self.settings.value("render", "matplotlib"))
         if self.render not in ("svg", "matplotlib"):
             self.render = "matplotlib"
@@ -852,6 +857,7 @@ class MainWindow(QMainWindow):
         if self.run_page.may_close() and self.project_page.tables.editor.may_leave() \
                 and self._may_discard():
             logging.getLogger("hxex").removeHandler(self.handler)
+            self.table_zoom.stop()
             # drawings and loads still running finish first (their results are dropped)
             from .tasks import collection, drawing_pool
 
