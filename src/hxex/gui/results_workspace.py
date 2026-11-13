@@ -114,6 +114,22 @@ TABS = {"start": ("overview",),  # results open, nothing selected yet: the first
         "spectrum": ("spectrum", "fits at each K", "elution", "uptake", "data", "overview")}
 # shown only for spectra read from scan files (mzML, Thermo raw): read again when in view
 TRACE_TABS = ("elution",)
+# the figure tabs' tooltips (owner, 2026-11-13): a series is a peptide at one charge in one
+# sample, with its time points, replicates, and controls; a spectrum is one replicate
+TAB_TIPS = {
+    "spectra": "the raw spectrum, the picked peaks, and the fit of each spectrum of the selection",
+    "spectrum": "this spectrum's raw data, picked peaks, and fit",
+    "fits at each K": "the same spectra fitted with 1, 2, 3 … populations, side by side",
+    "elution": "where this spectrum was summed in retention time (and drift); change its window "
+               "here",
+    "uptake": "the series' deuterium against time (or order), every replicate and the controls",
+    "populations": "the components: each population's deuterium level and share, one panel per "
+                   "spectrum",
+    "data": "the rows behind the figures: spectra, populations, or uptake for a series; the "
+            "spectra of a time point; one spectrum's values",
+    "overview": "the whole results at a glance: populations chosen, controls, quality flags (it "
+                "doesn't follow the selection)",
+}
 # the pages of the overview tab, as hxex report --figures writes them (overview_<kind>)
 OVERVIEW_PAGES = {"k_selection": "K selection", "controls": "controls",
                   "quality": "quality flags"}
@@ -406,7 +422,8 @@ class ResultsWorkspace(QWidget):
             self.figures.removeTab(0)
         names = tuple(n for n in TABS[kind] if n not in TRACE_TABS or self._traceable())
         for name in names:
-            self.figures.addTab(self.table_view if name == "data" else self.panel(name), name)
+            at = self.figures.addTab(self.table_view if name == "data" else self.panel(name), name)
+            self.figures.setTabToolTip(at, tip(TAB_TIPS[name]))
         self._tab_keys = names  # the data tab's text carries its count
         if current in names:
             self.figures.setCurrentIndex(names.index(current))

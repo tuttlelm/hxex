@@ -66,6 +66,24 @@ log = logging.getLogger(__name__)
 GUIDE_URL = "https://github.com/tuttlelm/hxex/blob/main/docs/guide/README.md"
 RECENT = 8  # sessions remembered in the File menu
 SERIES_KINDS = ("spectra", "uptake", "populations")
+# the tabs' tooltips (owner, 2026-11-13)
+WORKSPACE_TIPS = {
+    "project": "the project file: its settings, its tables (peptides, review, elution "
+               "windows), and the sequence",
+    "run": "run hxex's commands (check, run, resume, report, analyse) and read their messages",
+    "results": "every peptide, series, time point, and spectrum, with their figures and table "
+               "rows",
+    "analysis": "what hxex analyse makes from [analysis]: coverage, deuterium per peptide and "
+                "residue, comparisons between samples, and their statistics",
+}
+PROJECT_TIPS = {
+    "Settings": "the project file's settings, grouped as in the file",
+    "Tables": "the tables the project file names (peptides or files, elution windows, "
+              "review), to view and edit",
+    "Sequence": "the protein sequence(s) as the analysis numbers them, with each residue's "
+                "coverage",
+    "File": "the project file as text (read only)",
+}
 PEPTIDE_WIDTH = 170  # pixels: the widest the peptide column starts
 ABOUT_LOGO_WIDTH = 220  # pixels: the logo in the About box
 
@@ -144,10 +162,9 @@ class ProjectWorkspace(QWidget):
         self.tables = TablesView()
         self.sequence = SequenceView()  # the protein sequence(s), as the analysis numbers them
         self.views = QTabWidget()
-        self.views.addTab(self.editor, "Settings")
-        self.views.addTab(self.tables, "Tables")
-        self.views.addTab(self.sequence, "Sequence")
-        self.views.addTab(self.text, "File")
+        for page, name in ((self.editor, "Settings"), (self.tables, "Tables"),
+                           (self.sequence, "Sequence"), (self.text, "File")):
+            self.views.setTabToolTip(self.views.addTab(page, name), tip(PROJECT_TIPS[name]))
         layout = QVBoxLayout(self)
         layout.addLayout(top)
         layout.addWidget(self.views, 1)
@@ -264,7 +281,8 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         for name, page in zip(WORKSPACES, (self.project_page, self.run_page, self.results_page,
                                            self.analysis_page), strict=True):
-            self.tabs.addTab(page, name.capitalize())
+            self.tabs.setTabToolTip(self.tabs.addTab(page, name.capitalize()),
+                                    tip(WORKSPACE_TIPS[name]))
         self.setCentralWidget(self.tabs)
 
         self.messages = QPlainTextEdit()

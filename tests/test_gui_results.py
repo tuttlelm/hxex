@@ -422,6 +422,22 @@ def test_the_search_reads_residue_numbers():
     assert search_matches("spfy", *row) and search_matches("z2", *row, "z2")
 
 
+def test_every_figure_tab_says_what_it_shows(qtbot, page):
+    """Each figure tab has its tooltip at every level (owner, 2026-11-13), the data tab's kept
+    when its name gains its count."""
+    from hxex.gui.results_workspace import TAB_TIPS
+    from hxex.gui.tips import tip
+
+    series = _open_series(page)  # its time points and spectra are filled when it opens
+    point = series.child(1)
+    for item in (series, point, point.child(0)):
+        page.tree.setCurrentItem(item)
+        for at in range(page.figures.count()):
+            name = page.figures.tabText(at).split(" (")[0]
+            assert page.figures.tabToolTip(at) == tip(TAB_TIPS[name]), name
+    assert "the components" in TAB_TIPS["populations"]
+
+
 def test_the_data_tab_holds_the_selections_report_rows(qtbot, page, results):
     """Beside the figures, the selection's rows of the report's tables (owner): a series'
     uptake.csv rows with its series.csv values said above them, a time point's spectra.csv

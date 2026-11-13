@@ -321,6 +321,10 @@ def test_the_window_opens_results_draws_a_series_and_saves_the_session(qtbot, wi
                                                                         tmp_path):
     assert [window.tabs.tabText(i) for i in range(4)] == ["Project", "Run", "Results",
                                                           "Analysis"]
+    # every tab says what it holds (owner, 2026-11-13), Project's own tabs too
+    assert all(window.tabs.tabToolTip(i) for i in range(4))
+    views = window.project_page.views
+    assert all(views.tabToolTip(i) for i in range(views.count()))
     window.open_path(bundle)
     qtbot.waitUntil(lambda: not window.loading, timeout=30000)
     page = window.results_page
