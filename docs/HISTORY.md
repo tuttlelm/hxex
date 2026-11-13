@@ -9582,3 +9582,82 @@ CSVs or mzML if wanted.
     tests/test_export.py (the table equals what the figure draws), tests/test_run.py (a
     bootstrap without resamples kept by resume, joined with one that has them),
     tests/test_bootstrap.py.
+
+376. **Drift profiles on corrected m/z; a drift peak on the ion's m/z named (2026-11-12;
+    docs/PLAN.md Next steps 22).** Owner's case (the private pooled dataset read from its raw
+    ion-mobility files, one sample's undeuterated controls): an 11-residue 3+ peptide ion had a
+    broad elution trace and two drift peaks, the smaller below half the apex. The tall one
+    (hxex's range, and HDExaminer's drift bins) is another peptide of a sibling form, 34 ppm
+    heavier at every charge, with a third ion (that form's other variant) whose monoisotopic
+    peak sits on the peptide's M+2 at the same drift time; the peptide is the small drift peak:
+    there its monoisotopic peak is -5 to +2 ppm from the prediction and its isotope shares
+    match natural abundance (0.46/0.31/0.17/0.06 against 0.46/0.32/0.16/0.06), in every
+    undeuterated file and, deuterated, in the 14 labelled runs (+1.9 ppm median, one weak run
+    +15.6; the fully deuterated files without usable signal). The other peptide was found by a
+    mass search of the pool's FASTA (2 candidates within 40 ppm) and checked by its 2+ ion at its
+    own m/z and its sibling's drift times; the owner's separate identification run lists it,
+    from a scan isolated at the peptide's m/z. With HDExaminer's drift range set on the small
+    peak by the owner, its monoisotopic labels moved 24-35 ppm down to the peptide's; its score
+    did not prefer the right species (0.66-0.82 against 0.79-0.83). Two causes in hxex: the
+    profile was measured before `mz_calibration`, with the +-50 ppm window centred on
+    uncorrected m/z (files +16 to +38 ppm off), so the two species were not told apart and the
+    second peak's height swung 0.09-0.88 with the window; and the isotope spacing cannot tell
+    two ions of one charge apart. `off_mz` caught the series only narrowly (+27.3 ppm against a
+    limit of 25.1).
+    Counted (scratch) on the undeuterated controls, drift peaks >= 10 % of the apex with their
+    monoisotopic + M+1 position: the pooled dataset 319 ions (1 clear case, 2 weaker), the
+    intact-peptide benchmark's ion-mobility reads 341 ions (3 cases; in one the uncorrected
+    profile made the other species the apex).
+    BUILT (owner agreed): `_drift_found` first measures each undeuterated file's offset as
+    `file_offsets` does, on its targets' scans summed over every drift time (at least 10
+    spectra; with `mz_calibration = "auto"`), and measures the profiles at it;
+    `scan_profile(..., offset_ppm, positions=True)` adds the monoisotopic and M+1 intensity and
+    its ppm distance per drift time; `DriftProfiles.ranges` gives each range its position
+    (`offset_ppm`) and its drift peaks >= `MIN_PEAK` 0.1 of the apex (`peaks`: drift, height,
+    position); the run's position scatter is the robust sd of the single-peak ions' positions
+    (at least 20 ions, floor 1 ppm); a range beyond `OFF_SD` 4 sd with another peak within
+    `ON_SD` 2.5 sd and closer by `GAP_SD` 3 sd gets that peak's span (`better`, stopping before a
+    valley) and `unclear` (flag `drift_unclear`); hxex keeps its range (flag only); a warning
+    names the ions and ranges. Record: per range `offset_ppm`, `peaks`, `better`; `position`
+    (centre, sd, ions); `profile_offsets` by file. Built on both datasets (profile step only,
+    scratch): the pooled dataset names the owner's peptide at the range found by hand, the
+    benchmark 4 ions (the 3 counted and one 1+ ion); position sd 2.84 / 2.03 ppm. Ranges changed
+    by the corrected m/z: 34 of 319 (5 apexes moved, one onto its m/z) and 16 of 341 (none
+    moved), mostly one bin at an edge. Second peaks >= 0.5 not told apart: 6 -> 6 and 0 -> 3.
+    Profile offsets against the final (gated) calibration: benchmark 0.5-0.9 ppm short, pooled
+    3-9 ppm short (its drift-summed spectra hold more co-drifting species); the position test is
+    relative to the run's centre (+5.6 / +1.6 ppm), so this does not move its decisions.
+    Reruns, main against this branch on both datasets (series whose range did not change came
+    out identical): benchmark (58 of 1,375 series changed) labelled replicate sd median 0.103 ->
+    0.095 D, q90 0.437 -> 0.324 (uncorrected), labelled charge pairs > 0.5 D 13.0 -> 11.5 %,
+    fully deuterated 11.1 -> 8.3 %, undeuterated unchanged: better. Pooled (165 of 1,590)
+    undeuterated better (|K = 1 mean| q90 1.86 -> 1.04 D) but labelled worse (replicate sd
+    0.264 -> 0.293, charge pairs > 0.5 D 54 -> 59 %), all from ranges that widened by an edge bin
+    (0.157 -> 0.333); measured at the files' final offsets the same ranges widen, so it is the
+    corrected m/z, not the provisional offset (the bins it added were 0.100-0.11 of the apex:
+    knife-edge cases of the 0.1 share). Owner chose (2026-11-13): keep the corrected m/z for the
+    apex and the m/z test, with a range rule that does not widen. Tried on the saved profiles
+    (scratch): a cap from the run's drift peak width (full width at 0.1 = 0.098 / 0.119 x the
+    drift time on single-peak ions, the same at every charge) left most widenings (they are
+    within one ion's width) and narrowed 40-136 other ranges; shares 0.15 and 0.2 widen nothing.
+    Reruns of both against main, over every series (uncorrected values; benchmark / pooled):
+    undeuterated |K = 1 mean| q90 0.096 -> 0.086 (0.15) -> 0.082 (0.2) / 0.176 -> 0.165 -> 0.160 D
+    (pooled K > 1 19.5 -> 19.0 -> 17.2 %); labelled replicate sd q90 0.190 -> 0.184 -> 0.178 /
+    0.910 -> 0.849 -> 0.806; labelled charge pairs > 0.5 D 5.7 -> 5.7 -> 5.5 / 36.1 -> 35.0 ->
+    33.8 %; undeuterated pairs 2.1 -> 2.2 -> 2.3 / 30.0 -> 28.9 -> 27.2 %; fully deuterated pairs
+    8.6 -> 8.3 -> 8.2 / 72.0 -> 74.1 -> 75.6 %. The pooled fully deuterated pairs differ by 2.1 D
+    (median) already on main; at 0.2, 70 pairs whose range changed crossed above 0.5 D and 27
+    below (11 and 12 among pairs whose range did not change, which move through the refits'
+    noise curve). Not a drift shift with deuteration (fully deuterated minus undeuterated drift
+    centroid +0.02 bins, median): only 41 % of the intensity in a fully deuterated envelope's m/z
+    range lies in the ion's drift range (78 % undeuterated), so those pairs mostly measure other
+    ions. SHARE 0.1 -> 0.2: no range wider than before; median 4 / 3 bins (HDExaminer's gates on
+    the benchmark: 5); a median 91 / 86 % of the ion's drift intensity kept. Narrower ranges leave
+    more of a profile outside: second peaks >= 0.5 not told apart 3 -> 6 (benchmark) and 6 -> 7
+    (pooled); the m/z test names the same ions. Owner adopted 0.2 and the extra flags (2026-11-13).
+    Not done:
+    switching to the better range by itself (4 cases in 660 ions); a flag for a range off its
+    m/z with no drift peak on it (owner: off_mz covers it, documented in the guide's ion-mobility
+    section). Private record: the pooled raw project's
+    drift_two_peaks folder (README, scripts, built/). Tests: tests/test_drift_gate.py,
+    tests/test_mzml.py.

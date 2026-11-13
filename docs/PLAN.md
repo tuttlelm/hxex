@@ -1071,7 +1071,8 @@ Planned, not built:
      each MS1 peptide (as its spectra take them, `find_peak` included): the intensity within the
      picker's window of the undeuterated isotope peaks (clusters >= 5 % of the tallest) per drift
      time, summed over scans and every sample's controls; the range is the apex and the drift
-     times either side down to 10 % of it (`SHARE`), one range per peptide ion for every file.
+     times either side down to 20 % of it (`SHARE`; 10 % before the corrected profiles, HISTORY
+     376), one range per peptide ion for every file.
      The undeuterated files are read twice (once for the profiles).
    - *Unclear ranges.* A peptide ion without an undeuterated control with signal keeps every
      drift time; so does a fragment. Flag `drift_unclear` (series): no range, or a second peak
@@ -1081,11 +1082,22 @@ Planned, not built:
      the same m/z drifts elsewhere and puts peaks between the ion's); the peak whose on-peak
      share is higher by 0.2 or more is taken, whichever is taller, and is not flagged. The
      drift-m/z trend of the charge was not needed.
+     BUILT (owner, 2026-11-12; HISTORY 376): the
+     profiles are measured on m/z corrected by each undeuterated file's own offset (measured on
+     its targets summed over every drift time), and each drift peak >= 10 % of the apex gets
+     its m/z position; a chosen range off the ion's m/z (> 4 robust sd of the run's single-peak
+     ions) with another drift peak on it (< 2.5 sd, closer by > 3 sd) is flagged
+     `drift_unclear` and that peak's range named in the log and the record (`better`). Flag
+     only: hxex keeps the range it chose (4 cases in 660 ions: too few to justify switching).
+     With them the share went from 0.1 to 0.2 (edge bins just above 0.1 widened ranges and
+     added other ions' intensity to labelled spectra; 0.2 better on both datasets).
    - *Settings and outputs.* `[input.scans] drift_gate` ("auto", the default; false: every drift
      time; a record written before it reads as false); peptide-table `drift_start`, `drift_end`
      (ms, both or neither) take the place of the range found; spectra and spectra.csv columns
      `drift_start`, `drift_end` (written only when a range was used); the read record's
-     `drift_gate` entry lists every range (apex, second peak, files) and the unclear series.
+     `drift_gate` entry lists every range (apex, second peak, files, m/z position, drift peaks,
+     better range), the run's position scatter, the files' profile offsets and the unclear
+     series.
    - *Not done.* `find_peak`'s chromatogram is still summed over every drift time. Gating it
      was measured (HISTORY 311) and not needed: on the benchmark the found peaks scatter more
      than a fixed window around one time per sample and time point, gated or not.

@@ -66,6 +66,7 @@ from ..spectra import (
     time_point,
 )
 from .drift_gate import (
+    SECOND_PEAK,
     DriftProfiles,
     DriftRange,
     drift_key,
@@ -1528,8 +1529,9 @@ def _read_runs(
     gates = None
     if config.drift_gate == "auto" and fmt.reader == "mzml" and any(
             MzmlFile(p).ion_mobility for p in dict.fromkeys(opened)):
-        gates = _drift_profiles(fmt, runs, opened, targets, windows, config=config, tie=tie,
-                                picker=picker, registry=registry, cancel=cancel)
+        gates, gate_notes = _drift_profiles(fmt, runs, opened, targets, windows, config=config,
+                                            tie=tie, picker=picker, registry=registry,
+                                            cancel=cancel)
     unclear: set[int] = set()
     unclear_of = None  # the set the series without a clear drift range are added to
     if gates is not None:
@@ -1749,10 +1751,12 @@ def _read_runs(
             {"offset_ppm": None if not np.isfinite(o) else round(o, 3), "n_spectra": n}
             for o, n in calibration]
     if gates is not None:
-        source["drift_gate"] = drift_record(gates, unclear)
+        source["drift_gate"] = drift_record(gates, unclear, gate_notes["position"],
+                                            gate_notes["offsets"])
         if unclear:
             log.warning("%d series read from scans with ion mobility bins have no clear drift "
-                        "range (no undeuterated control with signal, or a second drift peak): "
+                        "range (no undeuterated control with signal, a second drift peak, or "
+                        "another drift peak on the ion's m/z): "
                         "flagged drift_unclear", len(unclear))
     # as stored (tuples become lists), so a record read back from a file compares equal
     return SpectrumSet.from_spectra(spectra, source=json.loads(json.dumps(source)))
@@ -2264,17 +2268,24 @@ def _number_series(made, series: dict[tuple[str, int], int], spectra: list,
 
 
 def _drift_found(f: _SharedFile, run: MzmlRun, targets, windows, gated: set[int], *, config,
-                 tie, picker, registry) -> list[tuple[tuple, tuple]]:
+                 tie, picker, registry) -> tuple[list[tuple[tuple, tuple]], float]:
     """The drift profiles of one undeuterated control (:func:`_drift_profiles`): per target
     with scans with drift times and signal, its peptide ion and :func:`scan_profile`'s
-    profile (kept in ``f.memo`` for the file's other runs)."""
+    profile with the m/z positions (kept in ``f.memo`` for the file's other runs); and the
+    file's m/z offset the profiles were measured with (ppm; NaN: not measured, the m/z as read).
+
+    With ``mz_calibration = "auto"`` the offset is measured first, as :func:`file_offsets`
+    measures it later on the gated spectra, but on each target's scans summed over every drift
+    time (the drift range is not known yet): the median of the picker's offsets, from at least
+    :data:`MIN_CALIBRATION_SPECTRA` spectra with signal. Files 16 to 38 ppm off moved the
+    profile's peaks enough to choose another species' drift peak (HISTORY 376)."""
     scanned = _run_scans(f, run, targets, windows, config=config, tie=tie, picker=picker,
                          registry=registry, only=gated, drift=True, quiet=True, memo=f.memo)
     if scanned is None:
-        return []
+        return [], float("nan")
     table, _, plans, by_index, _ = scanned
     r_mz = float(getattr(f, "resolving_power_mz", np.nan))
-    out = []
+    items = []
     for t_i, plan in enumerate(plans):
         if plan is None:
             continue
@@ -2283,6 +2294,31 @@ def _drift_found(f: _SharedFile, run: MzmlRun, targets, windows, gated: set[int]
         scans = [by_index[i] for i in positions]
         if not any(s.binned is not None for s in scans):
             continue
+        items.append((t_i, positions, scans))
+    offset = float("nan")
+    if config.mz_calibration == "auto":
+        measured = []
+        for t_i, positions, scans in items:
+            e = targets[t_i].entry
+            lo, hi = windows[t_i]
+            known = ("drift offset", lo, hi, tuple(positions), e.peptide, e.charge, e.modification)
+            if known not in f.memo:
+                mz, y, _, _ = _summed(scans, lo, hi, None, config)
+                recorded = np.array([s.resolution for s in scans], dtype=float)
+                recorded = recorded[np.isfinite(recorded)]
+                picked = pick_spectrum(
+                    mz, y, e.peptide, e.charge, modification=e.modification, config=picker,
+                    registry=registry,
+                    resolving_power=float(np.median(recorded)) if len(recorded) else None,
+                    resolving_power_mz=r_mz)
+                f.memo[known] = (None if picked.no_signal or not np.isfinite(picked.mz_offset_ppm)
+                                 else float(picked.mz_offset_ppm))
+            if f.memo[known] is not None:
+                measured.append(f.memo[known])
+        if len(measured) >= MIN_CALIBRATION_SPECTRA:
+            offset = float(np.median(measured))
+    out = []
+    for t_i, positions, scans in items:
         e = targets[t_i].entry
         bins = plan_bins(e.peptide, e.charge, modification=e.modification,
                          config=picker, registry=registry)
@@ -2293,47 +2329,59 @@ def _drift_found(f: _SharedFile, run: MzmlRun, targets, windows, gated: set[int]
             peaks, e.charge, resolving_power=float(np.median(recorded))
             if len(recorded) else None, resolving_power_mz=r_mz)
         known = ("drift profile", tuple(positions), np.asarray(peaks, dtype=float).tobytes(),
-                 np.asarray(half, dtype=float).tobytes())
+                 np.asarray(half, dtype=float).tobytes(), offset)
         if known not in f.memo:
-            f.memo[known] = scan_profile(scans, peaks, half)
+            f.memo[known] = scan_profile(scans, peaks, half, offset, positions=True)
         if f.memo[known] is not None:
             out.append((drift_key(e), f.memo[known]))
-    return out
+    return out, offset
 
 
 def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[Path],
                     targets, windows, *, config, tie, picker, registry, cancel
-                    ) -> dict[tuple, DriftRange]:
+                    ) -> tuple[dict[tuple, DriftRange], dict]:
     """The drift range of every peptide ion with an undeuterated control and signal
     (``drift_gate``, :mod:`hxex.io.drift_gate`): its scans in every undeuterated control (a run
-    with a fixed time), as its spectra would take them, read with their drift times. A file
-    listed by several samples is read once for all of them (:class:`_SharedFile`), and the
-    profiles are added in the order of the runs."""
+    with a fixed time), as its spectra would take them, read with their drift times, on m/z
+    corrected by each file's own offset (:func:`_drift_found`). A file listed by several
+    samples is read once for all of them (:class:`_SharedFile`), and the profiles are added in
+    the order of the runs. Also returns what the read record keeps beside the ranges: the run's
+    position scatter and the files' offsets (:func:`hxex.io.drift_gate.drift_record`)."""
     gated = {i for i, t in enumerate(targets) if _gated_kind(t)}
     profiles = DriftProfiles()
     controls = [n for n, run in enumerate(runs) if run.role == UNDEUT and run.fixed]
     found_in: dict[int, list] = {}  # per run: (key, profile) in the order of its targets
+    offsets: dict[str, float] = {}
     for members in _same_file(controls, opened):
         with fmt.open(opened[members[0]]) as opened_file:
             f = _SharedFile(opened_file, windows)
             for n in members:
                 check_cancel(cancel)
-                found_in[n] = _drift_found(f, runs[n], targets, windows, gated, config=config,
-                                           tie=tie, picker=picker, registry=registry)
+                found_in[n], offsets[_run_file_name(opened[n])] = _drift_found(
+                    f, runs[n], targets, windows, gated, config=config, tie=tie, picker=picker,
+                    registry=registry)
     for n in controls:
         for key, found in found_in[n]:
             profiles.add(key, *found, file=str(opened[n]))
     ranges = profiles.ranges()
     n_ions = len({drift_key(targets[i].entry) for i in gated})
-    two = sum(r.unclear for r in ranges.values())
+    two = sum(r.second >= SECOND_PEAK and not r.decided for r in ranges.values())
     told = sum(r.decided for r in ranges.values())
+    better = [(k, r) for k, r in ranges.items() if r.better is not None]
     log.info("drift ranges found for %d of %d peptide ions from the undeuterated controls "
              "(median %.3g ms wide)%s%s", len(ranges), n_ions,
              float(np.median([r.end - r.start for r in ranges.values()])) if ranges else 0.0,
              f"; {told} with a second drift peak told apart by the ion's isotope spacing"
              if told else "",
              f"; {two} with a second drift peak (flagged drift_unclear)" if two else "")
-    return ranges
+    if better:
+        log.warning("%d peptide ion(s) have their drift range off their m/z and another drift "
+                    "peak on it (flagged drift_unclear; to use that peak, give its range in the "
+                    "peptide table's drift_start and drift_end): %s", len(better), "; ".join(
+                        f"{k[2]}-{k[3]} {k[0]} {k[4]}+ at {r.start:.3g}-{r.end:.3g} ms, "
+                        f"on its m/z at {r.better[0]:.3g}-{r.better[1]:.3g} ms"
+                        for k, r in better[:5]) + ("; ..." if len(better) > 5 else ""))
+    return ranges, {"position": profiles.position, "offsets": offsets}
 
 
 MIN_CALIBRATION_SPECTRA = 10  # a file with fewer MS1 peptide spectra with signal is not moved

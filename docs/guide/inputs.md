@@ -1074,9 +1074,13 @@ would then be added to the peptide's spectra. So, with `drift_gate = "auto"` (th
 *hxex* keeps only each peptide's own drift time:
 
 1. In the peptide's undeuterated controls (every sample's), it adds up the intensity at the
-   peptide's natural isotope peaks at each drift time, over the scans its spectra take.
+   peptide's natural isotope peaks at each drift time, over the scans its spectra take. The
+   m/z of each file is first corrected by the file's own offset (see
+   [Each file's m/z offset](#each-files-mz-offset)), so that the peaks are looked for
+   where the peptide's are.
 2. The peptide's range is the drift time where that intensity is highest, and the drift times
-   either side of it down to a tenth of that height.
+   either side of it down to a fifth of that height (lower edges add more of other ions
+   than of the peptide).
 3. Every spectrum of the peptide, in every file, is summed over that range only. Deuterium
    does not change the drift time measurably, so one range serves every time point.
 
@@ -1091,6 +1095,23 @@ another charge at the same m/z drifts at another time, and its isotope peaks fal
 peptide's as well as on them. So *hxex* compares how much of each peak's intensity sits on the
 peptide's isotope peaks rather than half-way between them, and takes the peak where clearly more
 does (by a fifth of the intensity or more), even when it is the lower of the two.
+
+Another peptide a few ppm away, closer than the width of a peak, that drifts at another time
+is not told apart by its isotope spacing when it has the same charge. So *hxex* also measures
+where each drift peak's intensity sits in m/z: at its monoisotopic and next isotope peak, in
+ppm from where the peptide's should be. When the range chosen sits clearly off the peptide's
+m/z (more than four times the usual scatter of the dataset's single-peak peptides) and another
+drift peak sits on it, the log names the peptide and that drift peak's range, and the series is
+flagged `drift_unclear`. *hxex* keeps the range it chose: check the spectra and, if the other
+peak is the peptide, give its range in `drift_start` and `drift_end`. On a pooled Q-TOF
+dataset, one peptide of 319 was found this way: its tallest drift peak was another peptide 34
+ppm heavier, and the peptide itself was the smaller drift peak, a quarter as high.
+
+When the range chosen sits off the peptide's m/z and no drift peak sits on it, no drift range
+would help: the peptide is not among the ions at that retention time, or too weak to be seen.
+The drift test leaves such a series alone; the m/z check of the undeuterated controls flags it
+`off_mz` and the analysis leaves it out (see
+[A series whose peaks sit off its m/z](picking-window.md#a-series-whose-peaks-sit-off-its-mz)).
 
 A peptide without an undeuterated control with signal keeps every drift time, and its series
 is flagged `drift_unclear`. So is a peptide whose two drift peaks the isotope spacing does not

@@ -1615,6 +1615,10 @@ def test_drift_gate_keeps_each_peptides_drift_range(tmp_path, caplog):
     assert rec["unclear"] == [] and len(rec["ranges"]) == 1
     assert rec["ranges"][0]["apex"] == 5.3 and rec["ranges"][0]["n_files"] == 1
     assert rec["ranges"][0]["second"] == pytest.approx(0.0)
+    # one peptide: too few spectra for the file's own offset (the profile at the m/z as read)
+    # or for the run's position scatter (no m/z position test); the drift peak's position kept
+    assert rec["profile_offsets"] == {"un.mzML": None} and rec["position"] is None
+    assert len(rec["ranges"][0]["peaks"]) == 1 and rec["ranges"][0]["better"] is None
     # the read is repeated from its record as it was made; a record from before reads summed
     again = read_mzml_source(gated.source)
     np.testing.assert_array_equal(again.intensity, gated.intensity)

@@ -18,20 +18,41 @@ another time. ``[input.scans] drift_gate = "auto"`` keeps each peptide ion's own
   the midpoints between them (another charge state at the same m/z, which drifts at another
   time, puts its peaks between the ion's too); the peak whose intensity sits on the ion's
   peaks by :data:`ON_SHARE_MARGIN` more is taken, whichever is taller (:class:`DriftProfiles`);
+- the profile is measured on m/z corrected by each undeuterated file's own offset (measured on
+  its peptide spectra summed over every drift time, as ``mz_calibration`` measures it later on
+  the gated spectra), so that its peaks are where the ion's are; and every drift peak of at least
+  :data:`MIN_PEAK` of the apex gets the m/z position of its monoisotopic and M+1 intensity
+  (ppm from the prediction): when the chosen range sits off the ion's m/z (beyond
+  :data:`OFF_SD` of the run's position scatter, the robust sd over the ions with one drift peak)
+  and another drift peak sits on it (within :data:`ON_SD`, closer by :data:`GAP_SD`), that
+  peak's range is named (``better``) and the series is flagged ``drift_unclear``: another ion
+  that drifts at another time and lies a few ppm away (closer than the peaks' width) fills the
+  chosen range (:class:`DriftProfiles`);
 - a peptide table row's own ``drift_start``, ``drift_end`` (ms) take the place of the measured
   range (:func:`hxex.spectra.entry_drift_window`).
 
 Drift times are those the file records (ms); no instrument setting is needed. A peptide ion
 without an undeuterated control with signal keeps every drift time, and so does a fragment
 (its drift is not its own: fragments formed after the drift cell take their precursor's).
-The series of such an ion, and of one whose profile has a second peak of at least
+The series of such an ion, of one whose profile has a second peak of at least
 :data:`SECOND_PEAK` of the apex outside its range that the isotope spacing does not tell apart,
-is flagged ``drift_unclear``.
+and of one with a better drift peak on its m/z, is flagged ``drift_unclear``.
 
 Measured on an intact-peptide dataset of Q-TOF HDMS files (HISTORY 304): HDExaminer's
 gates are 5 drift bins (of 200), the same peptide ion within one bin across files and no shift
 with deuteration; the ranges found here (median 4 bins) gave the same K as HDExaminer's gates in
-97 % of spectra, centroids within 0.009 D (median), and a replicate scatter as small.
+97 % of spectra, centroids within 0.009 D (median), and a replicate scatter as small. The m/z
+position test (HISTORY 376): on that dataset (341 peptide ions) and a pooled dataset of the same
+kind (319), 4 ions had their chosen range off their m/z with another drift peak on it, in two of
+them because the profile had been measured on m/z not yet corrected (files 16 to 38 ppm off); the
+position scatter of single-peak ions was 2.3-2.4 ppm (robust sd). The share was 0.1 until then:
+on the corrected profiles some edge bins sat just above it (heights 0.100-0.11 of the apex), and
+the labelled spectra of the ranges they widened scattered twice as much; at 0.2 (no range wider
+than at 0.1) both datasets gained on every yardstick but the pooled one's fully deuterated
+charge pairs (undeuterated |K = 1 mean| q90 0.096 -> 0.082 and 0.176 -> 0.160 D, labelled
+replicate sd q90 0.190 -> 0.178 and 0.910 -> 0.806, labelled charge pairs > 0.5 D 5.7 -> 5.5 and
+36.1 -> 33.8 %), keeping a median 91 % (benchmark) and 86 % (pooled) of the ion's drift
+intensity.
 """
 
 from __future__ import annotations
@@ -41,11 +62,17 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-SHARE = 0.1  # the range: the drift times around the apex down to this share of it
+SHARE = 0.2  # the range: the drift times around the apex down to this share of it
 SECOND_PEAK = 0.5  # a peak outside the range this high (share of the apex): drift_unclear
 MIN_CLUSTER = 0.05  # natural isotope clusters at least this share of the tallest make a profile
 ON_SHARE_MARGIN = 0.2  # a second drift peak is told apart when its on-peak shares differ this much
 _DECIMALS = 6  # drift times (ms) compared at this precision (the same bins in every file)
+MIN_PEAK = 0.1  # drift peaks at least this share of the apex get an m/z position
+ON_SD = 2.5  # a drift peak within this many position sd of the ion's m/z sits on it
+OFF_SD = 4.0  # a chosen range beyond this many sd sits off it
+GAP_SD = 3.0  # and the other peak is closer by at least this many sd
+MIN_POSITION_IONS = 20  # ions with one drift peak needed to measure the run's position scatter
+MIN_POSITION_SD = 1.0  # ppm: the position scatter is taken as at least this
 
 
 def drift_key(entry) -> tuple:
@@ -68,11 +95,15 @@ def isotope_peaks(plan) -> np.ndarray:
     return plan.undeut_mz + offsets[keep] / plan.charge
 
 
-def scan_profile(scans, peaks: np.ndarray, half: np.ndarray):
+def scan_profile(scans, peaks: np.ndarray, half: np.ndarray, offset_ppm: float = 0.0,
+                 positions: bool = False):
     """The drift profile of ``scans`` (with :attr:`hxex.io.mzml.Scan.binned`) at ``peaks``
-    (m/z, each +- its ``half``): the distinct drift times, the intensity at each, and the
-    intensity at the midpoints between neighbouring peaks (each +- the larger half-width of the
-    two), summed over the scans; None when no scan has drift times."""
+    (m/z, each +- its ``half``; moved by the file's m/z offset ``offset_ppm`` when it is known):
+    the distinct drift times, the intensity at each, and the intensity at the midpoints between
+    neighbouring peaks (each +- the larger half-width of the two), summed over the scans; None
+    when no scan has drift times. With ``positions``, also per drift time the intensity within
+    the half-widths of the monoisotopic and M+1 peaks and that intensity times its distance from
+    them (ppm): their sum over drift times divided by the intensity is the m/z position."""
     parts = [s.binned for s in scans if s.binned is not None]
     if not parts:
         return None
@@ -80,6 +111,8 @@ def scan_profile(scans, peaks: np.ndarray, half: np.ndarray):
     y = np.concatenate([p[1] for p in parts])
     d = drift_times(np.concatenate([p[2] for p in parts]))
     peaks = np.atleast_1d(np.asarray(peaks, dtype=float))
+    if np.isfinite(offset_ppm) and offset_ppm:
+        peaks = peaks * (1.0 + offset_ppm * 1e-6)
     half = np.broadcast_to(np.asarray(half, dtype=float), peaks.shape)
     near = np.zeros(len(mz), dtype=bool)
     for p, h in zip(peaks, half, strict=True):
@@ -90,8 +123,18 @@ def scan_profile(scans, peaks: np.ndarray, half: np.ndarray):
     between &= ~near
     values, where = np.unique(d, return_inverse=True)
     n = len(values)
-    return (values, np.bincount(where, weights=np.where(near, y, 0.0), minlength=n),
-            np.bincount(where, weights=np.where(between, y, 0.0), minlength=n))
+    out = (values, np.bincount(where, weights=np.where(near, y, 0.0), minlength=n),
+           np.bincount(where, weights=np.where(between, y, 0.0), minlength=n))
+    if not positions:
+        return out
+    pos = np.zeros(len(mz), dtype=bool)
+    ppm = np.zeros(len(mz))
+    for p, h in zip(peaks[:2], half[:2], strict=True):
+        sel = np.abs(mz - p) <= h
+        pos |= sel
+        ppm[sel] = 1e6 * (mz[sel] - p) / p
+    return out + (np.bincount(where, weights=np.where(pos, y, 0.0), minlength=n),
+                  np.bincount(where, weights=np.where(pos, y * ppm, 0.0), minlength=n))
 
 
 @dataclass(frozen=True)
@@ -99,8 +142,12 @@ class DriftRange:
     """A peptide ion's drift range (ms): ``start`` and ``end``, the profile's ``apex``, the
     tallest peak outside the range as a share of the apex (``second``; 0 without one), the
     number of undeuterated files whose profiles made it, the share of the range's intensity on
-    the ion's isotope peaks rather than between them (``on_share``; NaN when not measured), and
-    whether the isotope spacing chose it over a second peak (``decided``)."""
+    the ion's isotope peaks rather than between them (``on_share``; NaN when not measured),
+    whether the isotope spacing chose it over a second peak (``decided``), the m/z position of
+    the range's monoisotopic and M+1 intensity (``offset_ppm``, ppm from the prediction; NaN when
+    not measured), the drift peaks of at least :data:`MIN_PEAK` of the apex (``peaks``: drift
+    time, height as a share of the apex, m/z position), and a drift range on the ion's m/z when
+    the chosen one sits off it (``better``: start, end, apex; None otherwise)."""
 
     start: float
     end: float
@@ -109,10 +156,13 @@ class DriftRange:
     n_files: int = 0
     on_share: float = float("nan")
     decided: bool = False
+    offset_ppm: float = float("nan")
+    peaks: tuple = ()
+    better: tuple | None = None
 
     @property
     def unclear(self) -> bool:
-        return self.second >= SECOND_PEAK and not self.decided
+        return (self.second >= SECOND_PEAK and not self.decided) or self.better is not None
 
 
 def find_range(drifts: np.ndarray, profile: np.ndarray, share: float = SHARE,
@@ -179,50 +229,137 @@ def choose_range(drifts: np.ndarray, on: np.ndarray, between: np.ndarray | None 
     return first
 
 
+def _peak_span(profile: np.ndarray, j: int, share: float = SHARE) -> tuple[int, int]:
+    """The drift positions either side of the peak at ``j`` down to ``share`` of it, stopping
+    before a valley (where the profile rises again away from the peak): a smaller peak's own
+    range, without its neighbour's tail."""
+    top = profile[j]
+    lo = hi = j
+    while lo > 0 and share * top <= profile[lo - 1] <= profile[lo]:
+        lo -= 1
+    while hi < len(profile) - 1 and share * top <= profile[hi + 1] <= profile[hi]:
+        hi += 1
+    # the valley itself (the profile rises beyond it) holds both peaks' tails: left out
+    if hi > j and hi < len(profile) - 1 and profile[hi + 1] > profile[hi]:
+        hi -= 1
+    if lo < j and lo > 0 and profile[lo - 1] > profile[lo]:
+        lo += 1
+    return lo, hi
+
+
+def drift_peaks(drifts: np.ndarray, on: np.ndarray, weight: np.ndarray,
+                weighted_ppm: np.ndarray, min_peak: float = MIN_PEAK) -> list[tuple]:
+    """The local maxima of a profile of at least ``min_peak`` of its apex, each as (position,
+    drift time, height as a share of the apex, m/z position (ppm) over the peak's drift time and
+    its two neighbours)."""
+    top = float(on.max())
+    n = len(on)
+    out = []
+    for j in range(n):
+        if on[j] >= min_peak * top and (j == 0 or on[j] >= on[j - 1]) and (
+                j == n - 1 or on[j] >= on[j + 1]):
+            sel = slice(max(0, j - 1), j + 2)
+            w = float(weight[sel].sum())
+            out.append((j, float(drifts[j]), float(on[j] / top),
+                        float(weighted_ppm[sel].sum()) / w if w > 0 else float("nan")))
+    return out
+
+
 class DriftProfiles:
     """Drift profiles summed per peptide ion over the undeuterated controls' files."""
 
     def __init__(self):
         self._profiles: dict[tuple, dict[float, list[float]]] = {}
         self._files: dict[tuple, set] = {}
+        self.position: tuple | None = None  # (centre, sd, ions) after ranges(), when measured
 
     def add(self, key: tuple, drifts: np.ndarray, intensity: np.ndarray,
-            between: np.ndarray | None = None, *, file: str) -> None:
-        """Add one file's profile: intensity on the ion's isotope peaks per drift time, and
-        between them (:func:`scan_profile`)."""
+            between: np.ndarray | None = None, weight: np.ndarray | None = None,
+            weighted_ppm: np.ndarray | None = None, *, file: str) -> None:
+        """Add one file's profile: intensity on the ion's isotope peaks per drift time, between
+        them, and the monoisotopic and M+1 intensity with its distance from them
+        (:func:`scan_profile` with ``positions``)."""
         summed = self._profiles.setdefault(key, {})
-        if between is None:
-            between = np.zeros(len(intensity))
-        for d, v, b in zip(drifts.tolist(), intensity.tolist(), between.tolist(), strict=True):
-            cell = summed.setdefault(d, [0.0, 0.0])
+        n = len(intensity)
+        between = np.zeros(n) if between is None else between
+        weight = np.zeros(n) if weight is None else weight
+        weighted_ppm = np.zeros(n) if weighted_ppm is None else weighted_ppm
+        for d, v, b, w, wp in zip(drifts.tolist(), intensity.tolist(), between.tolist(),
+                                  weight.tolist(), weighted_ppm.tolist(), strict=True):
+            cell = summed.setdefault(d, [0.0, 0.0, 0.0, 0.0])
             cell[0] += v
             cell[1] += b
+            cell[2] += w
+            cell[3] += wp
         self._files.setdefault(key, set()).add(file)
 
     def ranges(self, share: float = SHARE) -> dict[tuple, DriftRange]:
-        """The range of every peptide ion whose profile has signal (:func:`choose_range`)."""
+        """The range of every peptide ion whose profile has signal (:func:`choose_range`), with
+        the m/z positions of its drift peaks and, where the chosen range sits off the ion's m/z
+        and another drift peak on it, that peak's range (``better``; see the module notes)."""
         out = {}
+        arrays = {}
         for key, summed in self._profiles.items():
             drifts = np.array(sorted(summed))
-            on = np.array([summed[d][0] for d in drifts])
-            between = np.array([summed[d][1] for d in drifts])
-            found = choose_range(drifts, on, between, share)
-            if found is not None:
-                out[key] = replace(found, n_files=len(self._files[key]))
+            cells = np.array([summed[d] for d in drifts])
+            found = choose_range(drifts, cells[:, 0], cells[:, 1], share)
+            if found is None:
+                continue
+            peaks = drift_peaks(drifts, cells[:, 0], cells[:, 2], cells[:, 3])
+            inside = (drifts >= found.start) & (drifts <= found.end)
+            w = float(cells[inside, 2].sum())
+            offset = float(cells[inside, 3].sum()) / w if w > 0 else float("nan")
+            out[key] = replace(found, n_files=len(self._files[key]), offset_ppm=offset,
+                               peaks=tuple((d, round(h, 4), round(o, 2)) for _, d, h, o in peaks))
+            arrays[key] = (drifts, cells[:, 0], peaks)
+        # the run's position scatter: ions with a single drift peak
+        single = np.array([r.offset_ppm for r in out.values()
+                           if len(r.peaks) == 1 and np.isfinite(r.offset_ppm)])
+        if len(single) < MIN_POSITION_IONS:
+            return out
+        centre = float(np.median(single))
+        sd = max(1.4826 * float(np.median(np.abs(single - centre))), MIN_POSITION_SD)
+        for key, r in out.items():
+            c = abs(r.offset_ppm - centre)
+            if not c > OFF_SD * sd:
+                continue
+            drifts, on, peaks = arrays[key]
+            others = [(j, abs(o - centre)) for j, d, _, o in peaks
+                      if not r.start <= d <= r.end and np.isfinite(o)]
+            if not others:
+                continue
+            j, b = min(others, key=lambda x: x[1])
+            if b <= ON_SD * sd and c - b > GAP_SD * sd:
+                lo, hi = _peak_span(on, j, share)
+                out[key] = replace(r, better=(float(drifts[lo]), float(drifts[hi]),
+                                              float(drifts[j])))
+        self.position = (centre, sd, len(single))
         return out
 
 
-def drift_record(ranges: Mapping[tuple, DriftRange], unclear: Iterable[int]) -> dict:
-    """The read record's ``drift_gate`` entry: the share, every range found and the series
-    flagged ``drift_unclear``."""
+def drift_record(ranges: Mapping[tuple, DriftRange], unclear: Iterable[int],
+                 position: tuple | None = None, offsets: Mapping[str, float] | None = None
+                 ) -> dict:
+    """The read record's ``drift_gate`` entry: the share, every range found, the series
+    flagged ``drift_unclear``, the run's position scatter (``position``: centre and sd in ppm,
+    ions measured; None when too few ions have one drift peak) and the undeuterated files'
+    m/z offsets the profiles were measured with (``offsets``, ppm by file)."""
     return {
         "share": SHARE,
         "second_peak": SECOND_PEAK,
+        "position": None if position is None else {
+            "centre_ppm": round(position[0], 2), "sd_ppm": round(position[1], 2),
+            "ions": int(position[2])},
+        "profile_offsets": {k: (None if not np.isfinite(v) else round(v, 2))
+                            for k, v in (offsets or {}).items()},
         "ranges": [{"peptide": k[0], "modification": k[1], "start_seq": k[2], "end_seq": k[3],
                     "charge": k[4], "drift_start": r.start, "drift_end": r.end,
                     "apex": r.apex, "second": round(r.second, 4), "n_files": r.n_files,
                     "on_share": None if not np.isfinite(r.on_share) else round(r.on_share, 4),
-                    "decided": r.decided}
+                    "decided": r.decided,
+                    "offset_ppm": None if not np.isfinite(r.offset_ppm) else round(r.offset_ppm, 2),
+                    "peaks": [list(p) for p in r.peaks],
+                    "better": None if r.better is None else list(r.better)}
                    for k, r in sorted(ranges.items())],
         "unclear": sorted(int(d) for d in unclear),
     }
