@@ -107,6 +107,7 @@ from .significance import (
     plot_residue_significance,
     plot_residue_significance_k2,
 )
+from .summary import dataset_summary, summary_markdown
 from .tables import write_csv
 from .tiers import plot_population_tiers
 
@@ -808,7 +809,11 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 jobs.append((f"regions_{_time_label(t, scale)}", lambda t=t: plot_region_bars(
                     regions, t, samples=in_order, styles=styles, **when)))
     jobs.extend(form_jobs)
-
+    # the HDX data summary table of Masson et al. 2019, one column per sample (the reference
+    # first): from the tables above and [analysis.summary]
+    tables["summary"] = dataset_summary(
+        results, up, wanted, labels, config=config, sequences=sequences, tables=tables,
+        time_scale=scale, set_averages=set_average_ks(up))
     return tables, jobs
 
 
@@ -1495,6 +1500,9 @@ def write_analysis(
     total = len(tables) + len(jobs)
     names = [f"{name}.csv" for name in tables] + [f"{_stem(stem)}.{config.format}"
                                                    for stem, _ in jobs]
+    if "summary" in tables:
+        names.append("summary.md")
+        total += 1
     records = settings_records(read, config, record_paths, review) if total else {}
     names += list(records)
     total += len(records)
@@ -1507,19 +1515,24 @@ def write_analysis(
     if note and total:
         log.warning("%s", note)
     with replace_outputs(directory, names, made=made) as written:
-        for n, (name, cols) in enumerate(tables.items()):
+        for name, cols in tables.items():
             check_cancel(cancel)
             written.append(write_csv(cols, directory / f"{name}.csv"))
-            report(progress, n + 1, total)
-        for n, (stem, draw) in enumerate(jobs):
+            report(progress, len(written), total)
+            if name == "summary":  # also as a Markdown table, for a manuscript
+                md = directory / "summary.md"
+                md.write_text(summary_markdown(cols), encoding="utf-8")
+                written.append(md)
+                report(progress, len(written), total)
+        for stem, draw in jobs:
             check_cancel(cancel)
             path = directory / f"{_stem(stem)}.{config.format}"
             mark_provisional(draw(), note).savefig(path, dpi=150, bbox_inches="tight")
             written.append(path)
-            report(progress, len(tables) + n + 1, total)
-        for n, (name, text) in enumerate(records.items()):
+            report(progress, len(written), total)
+        for name, text in records.items():
             (directory / name).write_text(text, encoding="utf-8")
             written.append(directory / name)
-            report(progress, len(tables) + len(jobs) + n + 1, total)
+            report(progress, len(written), total)
     log.info("analysis: %d tables and %d figures in %s", len(tables), len(jobs), directory)
     return written

@@ -1016,7 +1016,9 @@ Planned, not built:
    lists its rows. G3's exit check passes (HISTORY 285): review edits made in the window give
    the same `hxex report` tables as the same edits made in a spreadsheet.
    Later: retention and drift windows edited in the review (item 26).
-19. **Outputs borrowed from HDXBoxeR** (owner, 2026-11-04; for the future, not scheduled).
+19. **Outputs borrowed from HDXBoxeR** (owner, 2026-11-04; for the future, not scheduled;
+   item (1), the summary table, BUILT 2026-11-13, HISTORY 377: `summary.csv`/`summary.md` of
+   every analysis and the window's HDX Summary Table tab, with `[analysis.summary]`).
    HDXBoxeR (Janowska et al. 2024, Bioinformatics, doi:10.1093/bioinformatics/btae479; R,
    GPL >= 2) applies the same Welch plus critical-interval test to HDExaminer uptake tables.
    Four of its outputs are worth adding, drawn from tables *hxex* already writes, with its

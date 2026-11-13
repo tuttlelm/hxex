@@ -35,6 +35,7 @@ my_protein/
 │   └── hxex_listing.json
 ├── results_analysis_WT/         the analysis with WT as the reference (hxex analyse)
 │   ├── left_out_summary.csv           what was left out, step by step: read it first
+│   ├── summary.csv, summary.md        the HDX data summary for a paper (Masson et al. 2019)
 │   ├── species_uptake.csv, compare_peptides.csv, ...
 │   ├── woods_Mut_1min.pdf, ...
 │   ├── analysis_settings_used.toml    every setting of the analysis, written out
@@ -470,6 +471,54 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | `ladder_rates.csv` | (with `[analysis.fragments] fit_rates = true`) per one-residue ladder step: rate and amplitude with errors, `resolved`, `precise`; with `kint`, intrinsic rate and protection |
 | `ladder_residues.csv` | (with `[analysis.fragments] fit_rates = true`) per residue and N-/C-terminal ion pair: the combined rate, misfit, `agreement` |
 | `closure.csv` | per complementary pair and split: the miss c + z minus the precursor, flagged beyond the tolerance; `reference` says what the precursor was: `MS1` (the parent's MS1 spectrum in the same run) or `M` (its ion in the fragment scans, when the parents were not read) |
+
+### The HDX data summary for a paper
+
+Masson et al. ([Nat. Methods 16, 595, 2019](https://doi.org/10.1038/s41592-019-0459-y),
+Table 1) ask every HDX-MS study to report a short summary of its data. Every analysis writes it
+as `summary.csv` (for a spreadsheet) and `summary.md` (a Markdown table to paste into a
+manuscript or its supplement): one row per item and one column per sample, the reference first.
+
+Masson's rows come first, in the paper's order. Each cell holds a short value; the item's
+name gives its units and a note number, and the notes below the table say once how the values
+were made (in `summary.csv` they follow a blank row, `Note 1`, `Note 2`, and so on). *hxex*
+fills in what it knows from the analysis:
+
+| Row | What *hxex* writes |
+|---|---|
+| HDX reaction details | the labelling conditions of `[analysis.labelling]` when you set them; otherwise your text, or "not given" |
+| HDX time course | the labelling times kept (the controls are not time points) |
+| HDX controls | how many peptides have an undeuterated and a fully deuterated control, and how many were corrected with a stand-in |
+| Back-exchange | the mean and interquartile range over the peptide charge states with their own fully deuterated control (stand-ins left out), with the D2O fraction used (`[run.controls] d2o_fraction`) |
+| Number of peptides | the peptides with labelled data after the filters, and their charge states |
+| Sequence coverage | the share of the protein's amides (no proline, not the protein's first residue) that the peptides cover, with the residue range; without a protein sequence (`[analysis] fasta`) *hxex* takes the protein to end at the last covered residue and counts the residues no peptide covers as amides, and the row says so |
+| Average peptide length / redundancy | in residues, and the mean number of peptides covering each covered amide |
+| Replicates (biological or technical) | how many replicates each peptide has at each time (charge states of one replicate count once) |
+| Repeatability | the median replicate standard deviation, in fD and in deuterons: the same scatter the significance threshold below is made from |
+| Significant differences in HDX | the threshold of the comparison with the reference: `delta_crit` in fD, in deuterons over the peptides' amide counts, and the Welch's t-test level `alpha` |
+
+Then *hxex*'s own rows: how the number of populations was chosen, how many peptide sets have
+two or more populations, how many spectra the analysis filters left out, how many peptide time
+points differ from the reference, and the *hxex* version.
+
+What only you know (the buffer, pH and temperature, the quench, the protease, the LC and the
+mass spectrometer, whether replicates are biological or technical) goes in `[analysis.summary]`:
+
+```toml
+[analysis.summary]
+"HDX reaction details" = "20 mM HEPES, 150 mM NaCl, pD 7.4, 85 % D2O, 20 °C"
+Replicates = "technical: separate labelling reactions from one protein preparation"
+Protease = "immobilised pepsin, 0 °C"
+"LC/MS" = "Waters Synapt G2-Si, 7 min gradient"
+
+[analysis.summary.Quench]             # one text per sample
+WT = "4 M urea, 0.5 M TCEP, pH 2.5"
+Mut = "4 M urea, 0.5 M TCEP, pH 2.5, 1 min longer"
+```
+
+An item named like one of Masson's rows (in any capitals) is added to that row, after what
+*hxex* wrote there. Any other item, such as `Protease` above, is listed first. Text with
+spaces or a slash in its name needs quotes.
 
 ## Figures from `hxex analyse`
 

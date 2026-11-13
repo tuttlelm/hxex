@@ -242,3 +242,47 @@ def test_the_data_tabs_menu_copies(qtbot):
     data.table.selectRow(0)
     data.row_menu(data.model.index(0, 0)).actions()[-1].trigger()
     assert QApplication.clipboard().text().splitlines()[1].startswith("S\t10")
+
+
+def test_the_hdx_summary_table_tab_shows_the_analysis_summary(qtbot, tmp_path, project):
+    """The tab beside figure and data: empty until Compute, then the summary hxex analyse
+    writes (owner, 2026-11-13), marked out of date when [analysis.summary] changes, and saved
+    as CSV or Markdown."""
+    from hxex.gui.summary_panel import EMPTY
+    from hxex.report.summary import MASSON_ROWS, SOFTWARE, base_item, split_notes
+
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    assert page.views.tabText(2) == "HDX Summary Table"
+    assert page.summary.count.text() == EMPTY and not page.summary.model.rows
+    page.compute()
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    summary = page.summary
+    assert summary.model.columns == ["item", "S", "V"]
+    items = [base_item(r["item"]) for r in summary.model.rows]
+    assert [i for i in items if i in MASSON_ROWS] == list(MASSON_ROWS)
+    table, notes = split_notes(page.outputs.tables["summary"])
+    assert summary.model.rows == [  # the table summary.csv holds, the notes below it
+        {n: table[n][i] for n in table} for i in range(len(items))]
+    assert summary.notes.text().splitlines()[0] == f"1. {notes[0]}"
+    # a value the same for every sample: once, across the samples' columns
+    software = items.index(SOFTWARE)
+    assert summary.table.columnSpan(software, 1) == 2
+    differ = next(i for i, r in enumerate(summary.model.rows) if r["S"] != r["V"])
+    assert summary.table.columnSpan(differ, 1) == 1
+    # an item's note is its tooltip
+    first = next(i for i in summary.model.notes)
+    tooltip = summary.model.data(summary.model.index(first, 0), Qt.ItemDataRole.ToolTipRole)
+    assert notes[0].split()[0] in tooltip
+    assert summary.note.isHidden()
+    with open(project, "a", encoding="utf-8") as f:
+        f.write('\n[analysis.summary]\nProtease = "pepsin"\n')
+    window.analysis_page.refresh()
+    qtbot.waitUntil(lambda: summary.note.text().startswith("Out of date"), timeout=10000)
+    md = summary.save(tmp_path / "s.md")
+    assert md.read_text(encoding="utf-8").startswith("# HDX data summary")
+    with open(summary.save(tmp_path / "s.csv"), newline="", encoding="utf-8") as f:
+        saved = [r["item"] for r in csv.DictReader(f)]
+    assert saved == [str(x) for x in page.outputs.tables["summary"]["item"]]  # notes too

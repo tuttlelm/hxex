@@ -514,6 +514,16 @@ file), so what you see here is what the command writes.
   figures, with a `figure` column naming each one's file. It does so when you open the data
   tab, since it draws every figure of the kind (minutes for a run with hundreds); choosing
   another figure meanwhile stops it.
+- The **HDX Summary Table** tab beside **figure** and **data** shows the data summary of
+  Masson et al. (2019) that `hxex analyse` writes as `summary.csv` and `summary.md`: one row per
+  item and one column per sample, the reference first ([The HDX data summary for a
+  paper](outputs.md#the-hdx-data-summary-for-a-paper)). A value that is the same for every
+  sample is shown once, across their columns, and the notes are below the table (point at an
+  item to see its note). It fills in when you press **Compute** and says when it is out of
+  date. Your own items (the buffer, the quench, the
+  protease) go in `[analysis.summary]` in the **Project** settings. Ctrl+C copies the rows
+  you selected, and **Save table…** writes the summary as CSV or, with a name ending in
+  `.md`, as the Markdown table.
 - Right-click a peptide in a coverage map or a Woods plot for a menu of its spectra, and
   choose one to see them in **Results** (the peptide is selected in the tree, its charge
   states under it). Where bars overlap, the menu lists every peptide under the pointer, top

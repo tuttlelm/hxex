@@ -45,6 +45,7 @@ from .data_table import DataPanel, spectra_menu
 from .figure_view import HINT, SPECTRA_HINT, FigurePanel
 from .order import natural_key
 from .review import table_stamp
+from .summary_panel import SummaryPanel
 from .tasks import Latest, drawing_pool
 from .tips import tip
 
@@ -165,6 +166,13 @@ class AnalysisWorkspace(QWidget):
         self.views.addTab(self.data, "data")
         self.views.setTabToolTip(1, tip("the values of what the figure draws, one row per bar: "
                                         "sort, copy or save them as CSV"))
+        # the HDX data summary of the analysis shown (owner, 2026-11-13: a tab beside these)
+        self.summary = SummaryPanel()
+        self._summary_shown = None  # the summary columns shown (redrawn only when they change)
+        self.views.addTab(self.summary, "HDX Summary Table")
+        self.views.setTabToolTip(2, tip("the HDX data summary of Masson et al. 2019, one column "
+                                        "per sample, as hxex analyse writes summary.csv and "
+                                        "summary.md; your own items: [analysis.summary]"))
         self.views.currentChanged.connect(lambda _i: self._gather_if_shown())
         split = QSplitter()
         split.addWidget(left)
@@ -299,6 +307,7 @@ class AnalysisWorkspace(QWidget):
         they are out of date (computed only when asked: Compute)."""
         self._fill()
         self._show_fit_rates()
+        self._show_summary()
         if self.results is None:
             self.status.setText("No results open: open a project file whose results exist, or "
                                 "a results bundle.")
@@ -341,6 +350,19 @@ class AnalysisWorkspace(QWidget):
             self.compute_button.setText("Recompute")
 
     _error: str | None = None
+
+    def _show_summary(self) -> None:
+        """The summary tab: the summary of the analysis shown (filled again only when that
+        analysis changes), and whether it is out of date. Kept while an analysis computes."""
+        if self._computing.running:
+            return
+        outputs = self.outputs
+        columns = outputs.tables.get("summary") if outputs is not None else None
+        if columns is not self._summary_shown:
+            self._summary_shown = columns
+            self.summary.show_summary(columns)
+        if columns is not None:
+            self.summary.set_out_of_date(self.why_out_of_date())
 
     def _show_fit_rates(self) -> None:
         """The 'fit ladder rates' box: shown for results with fragment series whose fragment

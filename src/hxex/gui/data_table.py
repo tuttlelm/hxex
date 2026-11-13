@@ -157,6 +157,9 @@ class DataPanel(QWidget):
 
     activated = Signal(dict)  # a row double-clicked: go to its spectra
 
+    HINT = ("Click a column's header to sort. Ctrl+C copies the rows selected. "
+            "Double-click a peptide's row, or right-click it, to go to its spectra.")
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.save_name = ""  # the file name the save dialog suggests (the figure's)
@@ -183,8 +186,7 @@ class DataPanel(QWidget):
         bar.addWidget(self.save_button)
         bar.addWidget(self.count, 1)
         self._bar = bar
-        hint = QLabel("Click a column's header to sort. Ctrl+C copies the rows selected. "
-                      "Double-click a peptide's row, or right-click it, to go to its spectra.")
+        hint = QLabel(self.HINT)
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(placeholder-text);")
         self.note = QLabel()  # what the rows are (from which table), when said

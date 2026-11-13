@@ -9662,6 +9662,45 @@ CSVs or mzML if wanted.
     drift_two_peaks folder (README, scripts, built/). Tests: tests/test_drift_gate.py,
     tests/test_mzml.py.
 
+377. **The HDX data summary table of Masson et al. 2019, written by every analysis
+    (owner, 2026-11-13; PLAN Next steps 19, item 1).** `hxex analyse` writes `summary.csv` and
+    `summary.md` (a Markdown table for a manuscript): one row per item, one column per sample,
+    the reference first, as the paper's Table 1 ("one column for each condition") and
+    HDXBoxeR's `hdx_summary_table` lay it out. Masson's ten rows come first in the paper's
+    order and wording, filled from the analysis (`hxex.report.summary.dataset_summary`): the
+    labelled times kept (controls are not time points); the peptides with an undeuterated and
+    a fully deuterated control and those corrected with a stand-in; the back-exchange as mean
+    and interquartile range (the paper's measure; HDXBoxeR gives the full range) over the
+    peptide charge states with their own fully deuterated control, from the controls the
+    analysis uses, at `[run.controls] d2o_fraction`; peptides and charge states; coverage as
+    the share of amides (no proline, not the protein's first residue) at the labelled times;
+    mean length and redundancy (mean peptides per covered amide, as HDXBoxeR and the
+    redundancy figure); replicates per peptide and time; repeatability as the median replicate
+    standard deviation, in fD and in deuterons, from the same values and the same robust
+    estimator as `delta_crit` (item 140), so the two rows agree (tested:
+    `delta_crit = t s sqrt(2/n)`); and the comparison's threshold in fD, in deuterons over the
+    sample's peptides, and `alpha`. Owner's choices (2026-11-13): what only the experimenter
+    knows comes from a new `[analysis.summary]` table (item = text, or a table of sample =
+    text; an item named like a Masson row is added to that row, any other is listed first;
+    `[analysis.labelling]` fills the reaction details when set); fD and deuterons both; CSV
+    and Markdown; *hxex*'s own rows after Masson's (how K was chosen, peptide sets with two or
+    more populations, spectra the filters left out, peptide time points different from the
+    reference, the version). Nothing is guessed: a row *hxex* cannot fill says why. On the
+    tutorial data (WT, D109H, R120G): 4 time points, 61-63 peptides, coverage 98.7-99.4 % of
+    the amides, redundancy 4.7-4.9, back-exchange 41 % (IQR 35-46 %), repeatability 0.008-0.010
+    fD, threshold 0.015 fD. The first version wrote an explanation in every cell, a wall of
+    text with nine samples (owner, 2026-11-13); now the cells hold short values, the item names
+    carry the units and a note number, and the notes follow the table once (in `summary.csv`
+    after a blank row, as `Note N` rows: the owner's choice over a notes column;
+    `split_notes`). In the window, an **HDX Summary Table** tab beside the Analysis
+    workspace's figure and data tabs shows the summary of the analysis computed (owner's name
+    and place; `hxex.gui.summary_panel`), out of date with it, copied and saved as CSV or
+    Markdown, a value the same for every sample shown once across the samples' columns
+    (owner) and an item's note as its tooltip. The table stays in the analysis, not the run (owner asked): nearly every row
+    counts what the analysis keeps after its filters, the repeatability is the scatter its
+    test uses, and the threshold needs its reference. Tests: tests/test_summary.py,
+    tests/test_gui_data.py.
+
 378. **The drift peak on the ion's m/z used (2026-11-13; docs/PLAN.md Next steps 22).** Owner
     asked why hxex only named the drift peak on the ion's m/z (HISTORY 376) instead of using it.
     Tested (scratch) on main 8c8180a, both datasets read twice: as built, and with every ion the

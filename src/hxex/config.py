@@ -1030,7 +1030,7 @@ ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "residu
                  "overlay_two_only", "peptide_match", "head_to_head", "populations",
                  "borderline_evidence", "modified_peptides",
                  "controls", "merge", "colours",
-                 "fragments", "protection", "labelling")
+                 "fragments", "protection", "labelling", "summary")
 # removed (owner, 2026-10-19; docs/HISTORY.md item 106): refused with the reason
 _REMOVED_ANALYSIS_KEYS = ("protection_residues", "protection_r1", "protection_max_se")
 
@@ -2508,6 +2508,10 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# initial_fraction = 0.9          # back-exchange only: the D fraction the amides",
         "#                                 # began with (above d2o_fraction: fD falls with",
         "#                                 # time); leave it out for labelling",
+        "# [analysis.summary]              # for summary.csv/.md (Masson et al. 2019): what",
+        '# "HDX reaction details" = "20 mM HEPES, 150 mM NaCl, pD 7.4, 20 C"  # only you know',
+        '# Replicates = "technical: separate labelling reactions"  # added to that row',
+        '# Protease = "pepsin column, 0 C"  # an item of its own: listed first',
     ]
     return "\n".join(lines) + "\n"
 

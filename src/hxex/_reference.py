@@ -274,6 +274,8 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.protection": "opt in to the peptides' protection factors (needs "
                            "[analysis.labelling])",
     "analysis.labelling": "the labelling solvent: [analysis.labelling] (below)",
+    "analysis.summary": "what only you know for the HDX data summary table (summary.csv, "
+                        "summary.md): [analysis.summary] (below)",
     "analysis.filters.min_population": "every population of a spectrum within [min_population, "
                                        "1 - min_population]",
     "analysis.filters.max_fD": "no population deuterated beyond this fraction of the amides "
@@ -448,6 +450,16 @@ _INTROS: dict[str, str] = {
     "analysis.labelling": "The labelling solvent of the peptide protection factors, for every "
                           "sample, or one table per sample ([analysis.labelling.SAMPLE]) or per "
                           "run and sample.",
+    "analysis.summary": "The items of the HDX data summary table (Masson et al. 2019; "
+                        "summary.csv and summary.md of every analysis) that only you know: "
+                        'item = "text" for every sample, or a table of sample = "text" per '
+                        'item ([analysis.summary."HDX reaction details"]). An item named like '
+                        "one of Masson's rows (HDX reaction details, HDX time course, HDX "
+                        "controls, Back-exchange, Number of peptides, Sequence coverage, "
+                        "Average peptide length / redundancy, Replicates, Repeatability, "
+                        "Significant differences in HDX) is added to that row after what hxex "
+                        "fills in; any other item (Protease, Quench, LC/MS) is listed first. "
+                        "See [Outputs](outputs.md).",
     "run.picker.amide_rules": _SECTION_COMMENTS["run.picker.amide_rules"] + " Keys are ion "
                               "types, values true or false.",
     "run.registry.residues": "One table per modified residue; the default registry holds acK, "
@@ -640,7 +652,7 @@ def tables() -> list[Table]:
                      _INTROS["analysis.filters"]))
     out.append(Table("analysis.choice", False, _settings(ChoiceConfig, "analysis.choice"),
                      _INTROS["analysis.choice"]))
-    for name in ("fasta", "controls", "runs", "merge", "colours"):
+    for name in ("fasta", "controls", "runs", "merge", "colours", "summary"):
         out.append(Table(f"analysis.{name}", False, (), _INTROS[f"analysis.{name}"]))
     out.append(Table("analysis.regions", True, _settings(Region, "analysis.regions"),
                      _INTROS["analysis.regions"]))

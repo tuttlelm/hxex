@@ -40,6 +40,7 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[analysis.runs]`](#analysisruns)
 - [`[analysis.merge]`](#analysismerge)
 - [`[analysis.colours]`](#analysiscolours)
+- [`[analysis.summary]`](#analysissummary)
 - [`[[analysis.regions]]`](#analysisregions)
 - [`[[analysis.sites]]`](#analysissites)
 - [`[analysis.fragments]`](#analysisfragments)
@@ -455,6 +456,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `borderline_evidence` | number | `10.0` | where the number of populations differs between samples: borderline unless the two-population side's summed criterion is at least this far below 0 and the other's above 0 (with populations = "population_test" the test's p-values decide instead: below significance / 10 on the side with more populations, above significance x 10 on the other) |
 | `modified_peptides` | text | `"separate"` | "separate" (modified forms as states of their own) or "combined" (averaged with the sample) |
 | `protection` | true/false | `false` | opt in to the peptides' protection factors (needs [analysis.labelling]) |
+| `summary` | table | unset | what only you know for the HDX data summary table (summary.csv, summary.md): [analysis.summary] (below) |
 
 ## `[analysis.filters]`
 
@@ -507,6 +509,11 @@ Samples combined across runs: `"run:sample" = label`; the same label pools them 
 ## `[analysis.colours]`
 
 A sample's colour in every figure that colours samples (the residue overlays, the region bars, redundancy and resolution): `sample = "colour"`, any colour name or hex code (`"orange"`, `"#1f77b4"`); `"run:sample"` for one run's sample. A sample not named keeps its default, the same in every figure and against every reference: in the order of [analysis] samples (the first black), from the colours not chosen here.
+
+
+## `[analysis.summary]`
+
+The items of the HDX data summary table (Masson et al. 2019; summary.csv and summary.md of every analysis) that only you know: item = "text" for every sample, or a table of sample = "text" per item ([analysis.summary."HDX reaction details"]). An item named like one of Masson's rows (HDX reaction details, HDX time course, HDX controls, Back-exchange, Number of peptides, Sequence coverage, Average peptide length / redundancy, Replicates, Repeatability, Significant differences in HDX) is added to that row after what hxex fills in; any other item (Protease, Quench, LC/MS) is listed first. See [Outputs](outputs.md).
 
 
 ## `[[analysis.regions]]`

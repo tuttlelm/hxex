@@ -190,6 +190,11 @@ class AnalysisConfig:
       needs ``labelling``, the labelling conditions, :class:`hxex.kint.ExchangeConditions`, one
       set for every sample or sample -> set). There are no residue-level factors from
       peptides (removed: unreliable); fragment ladders give them (``fragments``).
+    - ``summary``: what only the experimenter knows, for the HDX data summary table
+      (``summary.csv`` and ``summary.md``, :mod:`hxex.report.summary`; Masson et al. 2019):
+      item -> text, one text for every sample or a table of sample -> text. An item named like
+      one of Masson's rows (e.g. ``"HDX reaction details"``, ``"Replicates"``) is added to that
+      row, any other item is listed first.
     """
 
     reference: str | tuple[str, ...] = ""
@@ -225,6 +230,7 @@ class AnalysisConfig:
     protection: bool = False
     labelling: Any = None  # ExchangeConditions, or sample -> ExchangeConditions
     exclude: tuple = ()  # hxex.exclusions.Exclusion rules: spectra treated as rejected
+    summary: Mapping[str, Any] | None = None  # item -> text, or sample -> text
 
     def __post_init__(self):
         from ..kint import read_conditions
@@ -257,6 +263,10 @@ class AnalysisConfig:
                                      f"{SEPARATOR!r}")
         for what, setting in (("fasta", self.fasta), ("labelling", self.labelling)):
             self._check_nested(what, setting)
+        if self.summary is not None:
+            object.__setattr__(self, "summary", _summary_items(self.summary))
+            for item, value in self.summary.items():
+                self._check_nested(f"summary.{item}", value)
         if self.fragments is not None:
             self._check_nested("fragments.exchange", self.fragments.exchange)
             self._check_nested("fragments.labels", self.fragments.labels)
@@ -456,3 +466,21 @@ def resolve_match(match: str, runs) -> str:
                if getattr(r, "settings", None) is not None]
     pooled = any(s.get("reader") == "pooled" or s.get(CANDIDATES_RECORD) for s in sources)
     return "sequence" if pooled else "range"
+
+
+def _summary_items(items) -> dict:
+    """``[analysis.summary]`` checked: item -> text, or a table of sample (or run, then
+    sample) -> text; numbers are written as text."""
+    if not isinstance(items, Mapping):
+        raise ValueError("summary must be a table of item = text (or of item = a table of "
+                         "sample = text)")
+
+    def text(value, where: str):
+        if isinstance(value, Mapping):
+            return {str(k): text(v, f"{where}.{k}") for k, v in value.items()}
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise ValueError(f"summary.{where} = {value!r}: write the text in quotes")
+        return str(value)
+
+    return {str(item): text(value, str(item)) for item, value in items.items()}
+
