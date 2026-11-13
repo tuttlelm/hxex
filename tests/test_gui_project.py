@@ -188,6 +188,27 @@ def test_a_new_project_opens_in_the_editor(qtbot, tmp_path):
     assert "trial" in w.project_page.text.toPlainText()  # the File view
 
 
+def test_a_project_never_saved_as_a_session_asks_on_closing(qtbot, tmp_path):
+    """Open recent lists sessions, so a project closed without one would be lost from it
+    (owner, 2026-11-13): closing asks even when the view did not change; once a session is
+    saved, an unchanged one closes without asking, as before."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from hxex.gui.session import SUFFIX
+
+    path = new_project(tmp_path / "new.toml", "specexport", "trial")
+    w = MainWindow(settings=QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat))
+    qtbot.addWidget(w)
+    asked = []
+    w.ask_to_save = lambda: asked.append(1) or QMessageBox.StandardButton.Cancel
+    w._new_session_with(path)  # as File > New project does
+    assert not w.modified() and w.never_saved()
+    assert not w._may_discard() and asked == [1]  # asked; Cancel keeps it open
+    w.session_path = tmp_path / f"new{SUFFIX}"
+    assert w.save_session() and not w.never_saved()
+    assert w._may_discard() and asked == [1]  # saved and unchanged: not asked
+
+
 @pytest.fixture
 def scan_editor(qtbot, tmp_path):
     path = tmp_path / "hxex.toml"

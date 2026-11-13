@@ -819,16 +819,29 @@ class MainWindow(QMainWindow):
         return self.save_session()
 
     def ask_to_save(self) -> QMessageBox.StandardButton:
-        """Save, Discard or Cancel: the question asked before a changed session is closed."""
+        """Save, Discard or Cancel: the question asked before a changed session is closed, or
+        a project's that was never saved (:meth:`never_saved`, the view unchanged)."""
+        text = ("Save a session for this project, to reopen it from File > Open recent? "
+                if self.never_saved() and not self.modified() else
+                "Save what the window shows as a session file, to reopen it later? ")
         return QMessageBox.question(
-            self, "Save the session?", "Save what the window shows as a session file, to "
-            "reopen it later? (Settings and review decisions are in their own files already.)",
+            self, "Save the session?", text + "(Settings and review decisions are in their own "
+            "files already.)",
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel)
 
+    def never_saved(self) -> bool:
+        """A project file open in a session never saved: closing it would leave it off the
+        Open recent list, which lists sessions (owner, 2026-11-13: ask even when nothing in
+        the view changed)."""
+        return self.project is not None and self.session_path is None
+
     def _may_discard(self) -> bool:
-        """Ask whether to save a session that changed; False when the user cancels."""
-        if not self.modified() or (self.project is None and self.results_path is None):
+        """Ask whether to save a session that changed, or a project's never saved; False when
+        the user cancels."""
+        if self.project is None and self.results_path is None:
+            return True
+        if not self.modified() and not self.never_saved():
             return True
         answer = self.ask_to_save()
         if answer == QMessageBox.StandardButton.Cancel:

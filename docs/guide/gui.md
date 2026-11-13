@@ -653,5 +653,7 @@ tables, where the commands find them. Opening a session whose project or results
 been moved or deleted opens what is left and says what is missing in the Messages pane.
 Closing the window, starting a new session, opening another project file or session, or
 making a new project file, after changing what the window shows, asks whether to save the
-session first. Opening a project file starts a new session (not yet saved); opening results
-stays in the session you are in.
+session first. With a project file open in a session never saved, it asks even when nothing
+changed, since **Open recent** lists sessions only: save one to find the project there next
+time. Opening a project file starts a new session (not yet saved); opening results stays in
+the session you are in.
