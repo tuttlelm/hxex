@@ -1037,7 +1037,7 @@ def _check_peptides(project, entries) -> list[str]:
     return problems
 
 
-def _instrument_text(record: dict, picker) -> str:
+def _instrument_text(record: dict) -> str:
     """One line on a scan file's instrument and recorded resolving power, for ``hxex check``."""
     parts = [f"instrument {record['model']}" if record.get("model") else "instrument unknown"]
     powers = record.get("resolving_power") or {}
@@ -1047,9 +1047,6 @@ def _instrument_text(record: dict, picker) -> str:
         parts.append("resolving power " + ", ".join(
             f"{v if isinstance(v, str) else f'{v:g}'} at MS{level}" for level, v in powers.items())
             + at_text)
-        if picker.resolving_power is None:
-            parts.append('[run.picker] resolving_power = "recorded" would use it with '
-                         'pick = "window_max" (pick = "peak" keeps the resolution_ppm window)')
     return "; ".join(parts)
 
 
@@ -1132,7 +1129,7 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
              f"{len(table)} scans; {len(mine) - len(none)} of {len(mine)} targets have "
              "scans")
         if instrument is not None:
-            _say("  " + _instrument_text(instrument, project.run.picker))
+            _say("  " + _instrument_text(instrument))
         if profiles[-1] is not None:
             _say("  " + _profile_text(profiles[-1]))
         for label in none[:10]:

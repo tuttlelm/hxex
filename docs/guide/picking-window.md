@@ -3,14 +3,13 @@
 *hxex* turns each spectrum into sticks: one intensity per deuterium bin, taken at the m/z
 predicted for that bin from the peptide's composition and charge. The **picking window** is how
 far from the predicted m/z *hxex* looks for the peak: `resolution_ppm` in `[run.picker]`, a
-tolerance in ppm. Only with `pick = "window_max"` can it follow the instrument's resolving power
-instead.
+tolerance in ppm.
 
 ## What a bin takes: a peak
 
 ```toml
 [run.picker]
-pick = "peak"   # the default; "window_max" picks as pyHXExpress does
+pick = "peak"   # the default, and the only choice
 ```
 
 Each bin takes the tallest **peak** whose top lies inside its window. In a profile spectrum a
@@ -23,17 +22,17 @@ peak the export cut off. In a centroided spectrum every point is a peak.
 This matters when a brighter peak sits just outside a window, for example the peak of another
 peptide that comes off the column at the same time, a little away from where *hxex* expects this
 peptide's peaks. Its side slopes into the window. Taking the tallest point in the window, as
-pyHXExpress does (`pick = "window_max"`), picks that side as if it were this peptide's peak;
+pyHXExpress does, picks that side as if it were this peptide's peak;
 taking peaks does not, because a side has no top of its own. On coarse profile data (a Q-TOF
 records a point about every 20 ppm, so a ±50 ppm window holds only 4 or 5 points) and with
 narrow windows (±10 ppm on an Orbitrap) this happened often: on an Orbitrap digest, taking peaks
 removed 40 % of the undeuterated controls that seemed to hold two populations (which they
 cannot), without changing how well replicates agree.
 
-Set `pick = "window_max"` only to reproduce pyHXExpress's sticks, or results made with *hxex*
-before this change. With it, a window of ten or more points whose tallest point sits at its edge
-gives 0 (the "shoulder rule", `shoulder_min_points`); windows with fewer points keep their
-tallest point.
+Earlier versions of *hxex* could also pick as pyHXExpress does (`pick = "window_max"`, with its
+"shoulder rule" and a window from the resolving power). That choice was removed, because taking
+peaks was as good or better on every dataset measured. Results picked that way still open and
+show their settings; a project file that asks for it is refused, with the reason.
 
 ## A peak's height or its area
 
@@ -111,37 +110,20 @@ tenth of the spacing for a 2+ peptide (peaks 500 mDa apart) but the whole spacin
 protein (peaks 50 mDa apart). Without the cap each window would hold both neighbouring peaks,
 and *hxex* would discard the bins whose neighbour is taller. For peptides the cap never applies.
 
-## A window from the instrument's resolving power (pick = "window_max" only)
+## The instrument's resolving power
 
-```toml
-[run.picker]
-pick = "window_max"              # a resolving power is refused with pick = "peak"
-resolving_power = 60000.0        # R, quoted at resolving_power_mz
-resolving_power_mz = 200.0       # Thermo quotes R at m/z 200 (400 on the Elite/Velos generation)
-resolving_power_exponent = 0.5   # how R falls with m/z: 0.5 Orbitrap, 0 TOF, 1 FT-ICR
-window_fwhm = 1.0                # half-width in peak widths (full width at half maximum)
-mass_accuracy_ppm = 10.0         # the half-width never falls below this
+Thermo `.raw` files record the resolving power of every scan (MS1 and MS2 scans often differ)
+and the instrument model. `hxex check` shows them:
+
+```
+run sample_01.raw: sample WT, rep 1, scan times, 885 scans; 12 of 12 targets have scans
+  instrument Orbitrap Ascend; resolving power 120000 at MS1, 30000 at MS2 (quoted at m/z 200)
 ```
 
-With `resolving_power` set, the window follows the peak width. *hxex* takes the resolving power
-at each predicted m/z (`R(m) = R0 (m0 / m) ** exponent`, so an Orbitrap's R falls with the
-square root of m/z), computes the peak's width at half maximum (`m / R(m)`), and uses
-`window_fwhm` of those widths as the half-width. Two guards apply:
-
-- the half-width never falls below `mass_accuracy_ppm`, so a very high resolving power does not
-  shrink the window below the instrument's calibration error (series on a well-calibrated
-  Orbitrap sit within a few ppm of their predicted m/z; a series further away is moved and
-  flagged, [below](#a-series-whose-peaks-sit-off-its-mz));
-- the half-width never exceeds half the isotope spacing (`1.00235 / (2 z)` Da), so the windows
-  of neighbouring bins never overlap.
-
-For R = 60,000 at m/z 200 that gives a half-width of 29 ppm at m/z 600 and 46 ppm at m/z 1500,
-and at m/z 1000 with charge 20 the cap gives 25 mDa where the peak width would be 37 mDa.
-`resolution_ppm` is not used while `resolving_power` is set (it remains the fallback, below).
-
-This window suits `pick = "window_max"`, which takes the tallest point in the window and so needs
-the window to cover the peak. With `pick = "peak"`, *hxex* refuses a `resolving_power`, for two
-reasons found on an Orbitrap digest:
+*hxex* does not size the picking window from it. A bin takes a peak whose top lies in the
+window, so the window is a mass tolerance: how far a peak's top may sit from its predicted m/z.
+That distance is a few ppm whatever the peak width. Two findings on an Orbitrap digest, from
+earlier versions that could size the window from the resolving power:
 
 - a window one peak width either side accepts the top of a neighbouring peak one and a half peak
   widths away, which is a different peak. With the recorded resolving power, the undeuterated
@@ -151,30 +133,8 @@ reasons found on an Orbitrap digest:
   width of the peaks. On that digest the peaks were 1.5 times narrower than the recorded value
   implies, at every m/z.
 
-## Taking the resolving power from the raw files
-
-```toml
-[run.picker]
-pick = "window_max"
-resolving_power = "recorded"
-```
-
-Thermo `.raw` files record the resolving power of every scan (MS1 and MS2 scans often differ)
-and the instrument model. With `"recorded"`, *hxex* uses each spectrum's own value, and the
-model tells it whether the value is quoted at m/z 200 or 400. `hxex check` shows what a file
-records:
-
-```
-run sample_01.raw: sample WT, rep 1, scan times, 885 scans; 12 of 12 targets have scans
-  instrument Orbitrap Ascend; resolving power 120000 at MS1, 30000 at MS2 (quoted at m/z
-  200); [run.picker] resolving_power = "recorded" would use it with pick = "window_max"
-  (pick = "peak" keeps the resolution_ppm window)
-```
-
-mzML files (including those converted from `.raw` with ThermoRawFileParser) and the folder
-formats (SpecExport, HX-Express) carry no resolving power. Spectra without a recorded value keep
-the `resolution_ppm` window; `hxex run` logs how many. For those formats, set `resolving_power`
-to a number instead.
+The width of the peaks that *hxex* does use (for areas, above) is measured from the run's own
+undeuterated controls.
 
 ## A series whose peaks sit off its m/z
 
@@ -270,23 +230,22 @@ empty columns and no `off_mz` flag until they are run again.
 The spectrum figures (`hxex report --figures`, `hxex.report.plot_spectrum`) draw every picked
 bin as a shaded bar spanning the window *hxex* actually used for that spectrum (moved, for a
 series off its m/z), and the legend
-says where the window came from: "±50 ppm window", "window from R 60000 at m/z 200" or
-"window from the recorded R 120000".
+says where the window came from: "±50 ppm window" (results picked by earlier versions with a
+window from the resolving power say "window from R 60000 at m/z 200" or "window from the
+recorded R 120000").
 
 ## Which to choose
 
 - Intact peptides at low charge on a calibrated instrument: the default is fine.
 - High charge states (top-down, large fragments, intact proteins): the ppm window is capped at
-  half the isotope spacing, so the windows never overlap, whichever `pick` you use. With
-  `pick = "window_max"` you can size the window from the resolving power instead.
+  half the isotope spacing, so the windows never overlap.
 - An Orbitrap: a narrower ppm window, such as 10 ppm, keeps neighbouring peptides out.
-- Centroided data or coarse profile data: either works.
 - Do not narrow the window to sharpen the picking on deuterated data. A deuterated peak mixes
   molecules carrying deuterium and carbon-13, which differ slightly in mass, so it does not sit
   exactly where the undeuterated peaks do. On a Q-TOF dataset the undeuterated peaks sat within
   16 ppm of their predicted m/z, but the deuterated ones within 20 to 40 ppm, and a 16 ppm window
   lost real deuterated peaks.
 
-The two modes do not give identical sticks on the same spectrum, and neither do heights and
-areas, so compare runs made with the same settings. The results bundle records the picker settings, and `hxex info` shows them.
+Results picked by earlier versions with `pick = "window_max"` do not give the sticks of today's
+picking on the same spectrum, and heights and areas differ too, so compare runs made with the same settings. The results bundle records the picker settings, and `hxex info` shows them.
 

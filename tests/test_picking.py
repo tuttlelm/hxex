@@ -236,6 +236,37 @@ def test_a_peak_pick_keeps_the_ppm_window():
     assert PickerConfig.from_dict({}).pick == "peak"
 
 
+
+def test_window_max_is_not_a_project_setting(caplog):
+    """pyHXExpress's pick and its resolving-power window stay in PickerConfig (the comparison
+    tests, results picked with them) but a project file cannot ask for them: refused with the
+    reason; a line holding the old default is dropped with a note; neither the template nor
+    the settings reference (and so the project editor) offers them."""
+    from hxex._reference import tables
+    from hxex.config import ProjectError, run_config_from, template
+
+    with pytest.raises(ProjectError, match='pick = "window_max": .*was removed'):
+        run_config_from({"picker": {"pick": "window_max"}})
+    for key, value in (("resolving_power", "recorded"), ("resolving_power", 60000.0),
+                       ("resolving_power_mz", 400.0), ("resolving_power_exponent", 0.0),
+                       ("window_fwhm", 2.0), ("shoulder_min_points", 5)):
+        with pytest.raises(ProjectError, match=f"{key}: .*was removed"):
+            run_config_from({"picker": {key: value}})
+    with caplog.at_level("INFO", logger="hxex.config"):
+        got = run_config_from({"picker": {"resolving_power": False, "window_fwhm": 1.0,
+                                          "pick": "peak"}})
+    assert got.picker == PickerConfig()
+    assert "resolving_power, window_fwhm: no longer a setting" in caplog.text
+    text = template()
+    picker = [tb for tb in tables() if tb.name == "run.picker"][0]
+    for key in PickerConfig.NOT_SETTINGS:
+        assert key not in text
+        assert key not in {s.key for s in picker.settings}
+    assert "pick" in {s.key for s in picker.settings}
+    # a record that asks for them (results picked that way) still loads and is written out
+    old = PickerConfig(pick="window_max", resolving_power="recorded").to_dict()
+    assert PickerConfig.from_dict(old).uses_recorded
+
 def test_resolution_ppm():
     plan = plan_bins(PEPTIDE, 2, config=CFG)
     mz = np.array([plan.pred_mz[0] * (1 + 30e-6)])

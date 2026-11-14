@@ -9772,3 +9772,24 @@ CSVs or mzML if wanted.
     `KEPT_AT_ONE_REASON`), and tests that every name the code writes has an entry and every entry
     is written, that each placeholder resolves and names a real setting, and that each guide link
     reaches a heading. Tests: tests/test_flags.py.
+
+381. **pyHXExpress's pick is no longer a project setting (2026-11-13; owner).** `[run.picker]
+    pick = "window_max"` (the tallest point in each window, with the shoulder rule) and the
+    settings that only worked with it (`resolving_power`, `resolving_power_mz`,
+    `resolving_power_exponent`, `window_fwhm`, `shoulder_min_points`) are refused in a project
+    file with the reason: taking the tallest peak whose apex lies in the window (`pick =
+    "peak"`, item 172) was as good or better on every dataset measured (undeuterated sets
+    reading two 8.0 -> 7.0 % on the Q-TOF benchmark, 25.3 -> 15.8 % on an Orbitrap digest; the
+    known-answer K unchanged), and with it the window is a mass tolerance, which a window from
+    the resolving power is not (item 198). A line holding the value these settings had by
+    default (false, or the old default number) is dropped with a note instead, so project files
+    written by older templates still read. They stay in `PickerConfig` (`NOT_SETTINGS`), not
+    offered by the template, the settings reference or the project editor: the picker golden
+    file and the whole-run oracle still compare hxex with pyHXExpress's picks through them, and
+    results picked with them load and show their settings. `mass_accuracy_ppm` stays a setting:
+    it is the floor of the screens' position tolerance. `hxex check` no longer suggests
+    `resolving_power = "recorded"`; it still shows the recorded resolving power. Guide
+    picking-window.md (the resolving-power sections replaced by "The instrument's resolving
+    power", with the findings of item 198), experiments.md, inputs.md, install.md, README.md;
+    PEAK_PICKING.md, PLAN.md (deliberate differences); settings.md regenerated. Tests:
+    test_picking.py `test_window_max_is_not_a_project_setting`, test_thermo.py.

@@ -142,9 +142,8 @@ uv tool install "hxex[gui] @ https://github.com/tuttlelm/hxex/archive/refs/heads
 Microsoft (see [Input formats](inputs.md#thermo-raw-files)). The alternative is to convert the
 files to mzML first, with the free
 [ThermoRawFileParser](https://github.com/compomics/ThermoRawFileParser), and read the mzML
-files. Converted files lose the resolving power the instrument recorded for each scan. That
-matters only with `pick = "window_max"`, where the window can follow it; with the default
-`pick = "peak"` the window is the ppm tolerance either way (see [The picking
-window](picking-window.md)).
+files. Converted files lose the resolving power the instrument recorded for each scan. The
+picking window does not depend on it (see [The picking window](picking-window.md)); `hxex check`
+shows it, and the overlapping-ion check of fragment ions uses it to widen a fragment's reach.
 
 Next: [Your first project](first-project.md).

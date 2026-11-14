@@ -389,7 +389,6 @@ def test_the_recorded_resolving_power_travels_with_the_spectra(tmp_path, monkeyp
     spectra carry them (mzML has none), the read record lists them and hxex check shows them."""
     from hxex.cli import _instrument_text
     from hxex.io.mzml import instrument_record
-    from hxex.picking import PickerConfig
 
     scans = time_course(n=6, ms2_every=2)
     for s in scans:
@@ -406,11 +405,9 @@ def test_the_recorded_resolving_power_travels_with_the_spectra(tmp_path, monkeyp
         record = instrument_record(f)
     assert record == {"model": "Orbitrap Fake", "resolving_power_mz": 200.0,
                       "resolving_power": {"1": 120000.0, "2": 30000.0}}
-    text = _instrument_text(record, PickerConfig())
+    text = _instrument_text(record)
     assert "instrument Orbitrap Fake" in text and "120000 at MS1, 30000 at MS2" in text
-    assert "quoted at m/z 200" in text and 'resolving_power = "recorded"' in text
-    set_r = PickerConfig(pick="window_max", resolving_power=60000.0)
-    assert "recorded" not in _instrument_text(record, set_r)
+    assert "quoted at m/z 200" in text and "resolving_power" not in text  # no setting to suggest
     a = read_thermo([MzmlRun(raw, "WT")], targets, project="p", thermo_dir="dlls")
     ms1 = a.data_id == 0
     assert set(a.resolving_power[ms1]) == {120000.0} and set(a.resolving_power[~ms1]) == {30000.0}

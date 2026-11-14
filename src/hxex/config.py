@@ -243,6 +243,37 @@ def _section_defaults(name: str) -> dict:
     return _section_class(name)().to_dict()
 
 
+WINDOW_MAX_REMOVED = (
+    'pyHXExpress\'s pick ("window_max": the tallest point in each window) was removed: the '
+    'tallest peak whose apex lies in the window (pick = "peak", the default) was as good or '
+    "better on every dataset measured, and with it the window is a mass tolerance "
+    "(resolution_ppm), so the resolving-power window and the shoulder rule went with it. "
+    "Results picked with it still load")
+
+
+def _without_window_max(picker: Mapping) -> dict:
+    """``[run.picker]`` without the settings of the removed ``pick = "window_max"``: refused
+    when they ask for it, dropped with a note when they hold the value they had by default."""
+    from .picking.config import PROJECT_PICKS, PickerConfig
+
+    pick = picker.get("pick")
+    if pick is not None and pick not in PROJECT_PICKS:
+        if pick == "window_max":
+            raise ProjectError(f"[run.picker] pick = \"window_max\": {WINDOW_MAX_REMOVED}. "
+                               "Delete the setting")
+        return dict(picker)  # PickerConfig names the choices
+    defaults = PickerConfig().to_dict()
+    given = [k for k in PickerConfig.NOT_SETTINGS if k in picker]
+    asking = [k for k in given if picker[k] is not False and picker[k] != defaults[k]]
+    if asking:
+        raise ProjectError(f"[run.picker] {', '.join(asking)}: {WINDOW_MAX_REMOVED}. "
+                           f"Delete the setting{'s' if len(asking) > 1 else ''}")
+    if given:
+        log.info("[run.picker] %s: no longer a setting (they went with pick = \"window_max\"); "
+                 "the line%s can be deleted", ", ".join(given), "s" if len(given) > 1 else "")
+    return {k: v for k, v in picker.items() if k not in given}
+
+
 def run_config_from(data: Mapping) -> RunConfig:
     """The :class:`~hxex.pipeline.RunConfig` of a project file's ``[run]`` table (``false`` as None
     where a setting admits it; see the module docstring)."""
@@ -261,6 +292,8 @@ def run_config_from(data: Mapping) -> RunConfig:
         log.info("[run.picker] recentre = false is no longer needed (the windows are never "
                  "moved): it can be deleted")
         data = {**data, "picker": {k: v for k, v in picker.items() if k != "recentre"}}
+    if isinstance(data.get("picker"), Mapping):
+        data = {**data, "picker": _without_window_max(data["picker"])}
     if "undeut_time" in data:
         raise ProjectError("[run] undeut_time: the controls are no longer identified by a time; "
                            "the undeuterated controls (the noise references) are the spectra "
@@ -1780,31 +1813,19 @@ _COMMENTS: dict[str, str] = {
     "run.picker.nterm_subtract": "N-terminal residues without an exchanging amide (the amide "
                                  "count bounds the bins); none after an acetylated N-terminus "
                                  "(Ac-), whose residue 1 keeps its amide",
-    "run.picker.pick": 'what a bin takes: "peak" (the tallest peak whose apex is in the window) '
-                       'or "window_max" (the tallest point in the window, as pyHXExpress)',
+    "run.picker.pick": 'what a bin takes: "peak" (the tallest peak whose apex is in the window; '
+                       "pyHXExpress's \"window_max\", the tallest point in the window, was "
+                       "removed)",
     "run.picker.measure": 'the value a picked peak gives its bin: "auto" (areas when the run\'s '
                           "undeuterated controls show weak peaks wider than tall ones, as on "
                           "the Q-TOF data tested; heights otherwise, as on an Orbitrap; hxex "
                           'info says which), "height" (as pyHXExpress) or "area"',
     "run.picker.area_fwhm": "with areas: how far either side of a peak's apex its area is "
                             "taken, in peak widths at half maximum (measured from the run)",
-    "run.picker.shoulder_min_points": "with pick = \"window_max\": points in a window from which "
-                                      "a maximum at its edge counts as a neighbour's shoulder "
-                                      "(bin 0)",
     "run.picker.ladder": 'bin positions: "composition" (isotope clusters of the composition) '
                          'or "exms" (pyHXExpress\'s fixed steps)',
-    "run.picker.resolving_power": 'with pick = "window_max" only: window from the instrument '
-                                  "instead of resolution_ppm: R quoted at resolving_power_mz, "
-                                  'or "recorded" (each spectrum\'s value from Thermo raw '
-                                  "files; hxex check shows them); false: the resolution_ppm "
-                                  'window (always so with pick = "peak")',
-    "run.picker.resolving_power_mz": "m/z the resolving power is quoted at (Thermo: 200; 400 "
-                                     "on the first Orbitrap generation)",
-    "run.picker.resolving_power_exponent": "R falls as (m0/m)^e: 0.5 Orbitrap, 0 TOF, 1 FT-ICR",
-    "run.picker.window_fwhm": "half-width as a multiple of the peak width at half maximum, "
-                              "m/R(m); never below mass_accuracy_ppm, never above half the "
-                              "isotope spacing",
-    "run.picker.mass_accuracy_ppm": "floor (ppm) of the resolving-power window",
+    "run.picker.mass_accuracy_ppm": "floor (ppm) of the spectrum quality screens' position "
+                                    "tolerance (half the picking window, at least this)",
     "run.picker.off_mz_sd": "off_mz: a series whose undeuterated controls put its envelope "
                             "further than this many times the run's scatter from the run's "
                             "calibration (at least 3 ppm; needs five undeuterated controls "
@@ -2110,6 +2131,15 @@ def _unset_line(key: str, hint, note: tuple[str, str] | None = None, table: str 
     return _commented(f"# {key} = {note[0]}", note[1], prefix)
 
 
+def _not_settings(cls: type | None) -> dict[str, Any]:
+    """The fields of config class ``cls`` that are not project settings (its ``NOT_SETTINGS``),
+    with their defaults."""
+    names = getattr(cls, "NOT_SETTINGS", ())
+    if not names:
+        return {}
+    defaults = cls().to_dict()
+    return {k: defaults[k] for k in names}
+
 def _toml_table(name: str, data: Mapping, comment: bool = False, cls: type | None = None,
                 notes: Mapping[str, tuple[str, str]] | None = None,
                 quiet: frozenset[str] = frozenset()) -> list[str]:
@@ -2125,7 +2155,10 @@ def _toml_table(name: str, data: Mapping, comment: bool = False, cls: type | Non
     notes = notes or {}
     lines = _section_comment(name) + [f"{c}[{name}]"]
     later: list[str] = []
+    hidden = _not_settings(cls)
     for key, value in data.items():
+        if key in hidden and value == hidden[key]:
+            continue  # kept by the config class, not offered (written when a record differs)
         if isinstance(value, Mapping):
             later += [""] + _toml_table(f"{name}.{key}", value, comment,
                                         _config_class(hints.get(key)), quiet=quiet)

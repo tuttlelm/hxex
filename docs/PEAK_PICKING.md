@@ -154,7 +154,9 @@ outside. The reported m/z of the bin is the predicted one; where the peak was fo
 separately (see "Where the peaks were found").
 
 `pick = "window_max"` takes the tallest point in the window instead, with the shoulder rule below,
-as pyHXExpress does. On sparse profiles (a Q-TOF at about 23 ppm per point: 4 to 5 points in a +/- 50
+as pyHXExpress does. It is no longer a project setting (2026-11-13: refused in a project file with
+the reason; kept in `PickerConfig` for the comparison with pyHXExpress's picks and for results
+picked with it, which still load). On sparse profiles (a Q-TOF at about 23 ppm per point: 4 to 5 points in a +/- 50
 ppm window, too few for the shoulder rule) and on narrow windows (+/- 10 ppm on an Orbitrap) the
 window maximum is often the flank of a brighter peak just outside the window: another species' peak
 90 ppm below the predicted positions gave a picked envelope made of its flanks in every window
@@ -205,8 +207,9 @@ its centre by about 9 bins (HISTORY item 99). The cap binds only where m/z times
 about 10,000 at 50 ppm, which no peptide dataset reaches, so bottom-up results are unchanged;
 pyHXExpress has no cap (a deliberate difference, `docs/PLAN.md`).
 
-**A window from the resolving power (optional, `pick = "window_max"` only; refused with `pick =
-"peak"`, where the window is the mass tolerance `resolution_ppm`: HISTORY item 198).** With
+**A window from the resolving power (`pick = "window_max"` only, so no longer a project setting;
+refused with `pick = "peak"`, where the window is the mass tolerance `resolution_ppm`: HISTORY
+item 198).** With
 `resolving_power` set (R quoted at
 `resolving_power_mz`, 200 by default, falling with m/z as `(m0 / m) ** resolving_power_exponent`,
 0.5 for an Orbitrap) the half-width is
@@ -220,7 +223,7 @@ whether it is quoted at m/z 200 or 400 (`hxex check` prints both); mzML files re
 spectrum without a value keeps the `resolution_ppm` window (logged). The spectrum figures draw
 the window actually used.
 
-**Shoulder rule (from pyHXExpress; `pick = "window_max"` only).** If the window holds `shoulder_min_points` (10) or more points
+**Shoulder rule (from pyHXExpress; `pick = "window_max"` only, so no longer a project setting).** If the window holds `shoulder_min_points` (10) or more points
 and its tallest point is the first or the last of the window, the bin is set to 0, on the reasoning
 that the maximum is then the flank of a neighbouring peak. The rule assumes the predicted position
 is on the peak: when it is not, it removes real peaks. With the ExMS ladder on an intact protein it
@@ -359,13 +362,13 @@ changes nothing measurable, and it does not change fit accuracy there.
 | Bin positions | ExMS ladder | composition ladder (ExMS as an option) |
 | End of picking | after a running count of below-threshold bins | `zero_filling` bins after the last bin above the threshold |
 | Empty or signal-less spectra | dropped silently | flagged, dropped by the run and recorded |
-| Window half-width | `Peak_Resolution` ppm, no cap | `resolution_ppm`, capped at half the isotope spacing; or, with `pick = "window_max"`, from the resolving power (`resolving_power`, a value or `"recorded"`) |
-| What a bin takes | the tallest point in the window, with the shoulder rule | the tallest peak whose apex is in the window (`pick = "peak"`; `"window_max"` as pyHXExpress) |
+| Window half-width | `Peak_Resolution` ppm, no cap | `resolution_ppm`, capped at half the isotope spacing |
+| What a bin takes | the tallest point in the window, with the shoulder rule | the tallest peak whose apex is in the window (`pick = "peak"`; `"window_max"`, as pyHXExpress, kept for the comparison only) |
 | A bin's value | the height | the area when the run's weak peaks are wider than its tallest (`measure = "auto"`), else the height; `"height"` as pyHXExpress |
 | Threshold, predicted m/z reported | as here | unchanged |
 | A series whose undeuterated envelope sits off its m/z | not checked | flagged `off_mz` (`off_mz_sd`) and left out of the analysis (`[analysis.filters] off_mz`) |
 
-With `ladder="exms"`, `pick="window_max"` and `measure="height"` hxex reproduces pyHXExpress's picked bins exactly on its October 2026 runs
+With `ladder="exms"`, `pick="window_max"` (in `PickerConfig`, not a project setting) and `measure="height"` hxex reproduces pyHXExpress's picked bins exactly on its October 2026 runs
 (every bin both pickers produce identical in m/z and intensity); the cap never binds on peptide
 data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffected by it.
 
@@ -378,7 +381,7 @@ data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffect
   prediction belongs to the ion; the offsets are reported instead (see "Where the peaks were
   found"). Whole series are moved, from their undeuterated controls (whose isotope pattern is
   known), only when they sit off the run's calibration (see "A series off its m/z").
-- **The shoulder rule** (`pick = "window_max"` only) is unvalidated: it was designed against
+- **The shoulder rule** (`pick = "window_max"` only, not a project setting) is unvalidated: it was designed against
   overlapping species but cannot tell their flank from a real peak off its prediction; taking
   peaks (the default) does not need it. With the composition ladder and the capped
   window it mostly zeroes small tail bins; the high-charge failure (a window holding both
@@ -399,21 +402,20 @@ data (m/z times charge below about 10,000 at 50 ppm), so those runs are unaffect
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `pick` | `peak` | what a bin takes: the tallest peak whose apex is in the window, or `window_max` (the tallest point, with the shoulder rule, as pyHXExpress) |
+| `pick` | `peak` | what a bin takes: the tallest peak whose apex is in the window (the only choice in a project file; `window_max`, the tallest point with the shoulder rule as pyHXExpress, stays in `PickerConfig` for the comparison tests and results picked with it) |
 | `measure` | `auto` | a bin's value: `height`, `area`, or `auto` (areas when the run's weak peaks are wider than its tallest) |
 | `area_fwhm` | 1.5 | the area's half-range, in peak widths |
 | `ladder` | `composition` | bin positions: `composition` or `exms` |
 | `resolution_ppm` | 50 | half width (ppm) of the window around each predicted m/z, capped at half the isotope spacing |
-| `resolving_power` | None | with `pick = "window_max"` only: R quoted at `resolving_power_mz`, or `"recorded"`: the window from the peak width instead of `resolution_ppm` |
-| `resolving_power_mz` | 200 | m/z the resolving power is quoted at |
-| `resolving_power_exponent` | 0.5 | R falls as `(m0 / m) ** e` (Orbitrap 0.5, TOF 0, FT-ICR 1) |
-| `window_fwhm` | 1.0 | half width as a multiple of the peak width at half maximum |
-| `mass_accuracy_ppm` | 10 | floor of the resolving-power window |
+| `mass_accuracy_ppm` | 10 | floor of the screens' position tolerance (and of the resolving-power window) |
 | `off_mz_sd` | 6 | a series is off its m/z beyond this many times the run's scatter (at least 3 ppm); None: not checked |
 | `noise_threshold` | None | absolute threshold; None or 0 uses `noise_percent` (`noise` is its former name) |
 | `noise_percent` | 1.0 | threshold as a percent of the spectrum's maximum |
 | `zero_filling` | 4 | bins picked after the last bin above the threshold |
 | `env_threshold` | 0.1 | fraction of the tallest bin at which the envelope width is measured |
 | `nterm_subtract` | 1 | N-terminal residues whose amides are not counted |
-| `shoulder_min_points` | 10 | window size from which the shoulder rule applies (`window_max` only) |
 | `amide_rules` | default | which fragment ion types hold the amide at their cleavage site |
+
+Kept in `PickerConfig` for `pick = "window_max"` only, not project settings (`NOT_SETTINGS`):
+`resolving_power` (R quoted at `resolving_power_mz`, or `"recorded"`), `resolving_power_mz`
+(200), `resolving_power_exponent` (0.5), `window_fwhm` (1.0), `shoulder_min_points` (10).

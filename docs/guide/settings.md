@@ -223,7 +223,7 @@ Peak picking: the spectra become sticks at the predicted isotope positions (guid
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `pick` | text | `"peak"` | what a bin takes: "peak" (the tallest peak whose apex is in the window) or "window_max" (the tallest point in the window, as pyHXExpress) |
+| `pick` | text | `"peak"` | what a bin takes: "peak" (the tallest peak whose apex is in the window; pyHXExpress's "window_max", the tallest point in the window, was removed) |
 | `measure` | text | `"auto"` | the value a picked peak gives its bin: "auto" (areas when the run's undeuterated controls show weak peaks wider than tall ones, as on the Q-TOF data tested; heights otherwise, as on an Orbitrap; hxex info says which), "height" (as pyHXExpress) or "area" |
 | `area_fwhm` | number | `1.5` | with areas: how far either side of a peak's apex its area is taken, in peak widths at half maximum (measured from the run) |
 | `resolution_ppm` | number | `50.0` | half-width (ppm) of the window a peak is picked in around its predicted m/z (never above half the isotope spacing); not a resolving power |
@@ -232,13 +232,8 @@ Peak picking: the spectra become sticks at the predicted isotope positions (guid
 | `noise_percent` | number | `1.0` | noise threshold as percent of the spectrum's tallest point |
 | `env_threshold` | number | `0.1` | fraction of the tallest bin at which the envelope width is measured |
 | `nterm_subtract` | integer | `1` | N-terminal residues without an exchanging amide (the amide count bounds the bins); none after an acetylated N-terminus (Ac-), whose residue 1 keeps its amide |
-| `shoulder_min_points` | integer | `10` | with pick = "window_max": points in a window from which a maximum at its edge counts as a neighbour's shoulder (bin 0) |
 | `ladder` | text | `"composition"` | bin positions: "composition" (isotope clusters of the composition) or "exms" (pyHXExpress's fixed steps) |
-| `resolving_power` | number or text | unset | with pick = "window_max" only: window from the instrument instead of resolution_ppm: R quoted at resolving_power_mz, or "recorded" (each spectrum's value from Thermo raw files; hxex check shows them); false: the resolution_ppm window (always so with pick = "peak") |
-| `resolving_power_mz` | number | `200.0` | m/z the resolving power is quoted at (Thermo: 200; 400 on the first Orbitrap generation) |
-| `resolving_power_exponent` | number | `0.5` | R falls as (m0/m)^e: 0.5 Orbitrap, 0 TOF, 1 FT-ICR |
-| `window_fwhm` | number | `1.0` | half-width as a multiple of the peak width at half maximum, m/R(m); never below mass_accuracy_ppm, never above half the isotope spacing |
-| `mass_accuracy_ppm` | number | `10.0` | floor (ppm) of the resolving-power window |
+| `mass_accuracy_ppm` | number | `10.0` | floor (ppm) of the spectrum quality screens' position tolerance (half the picking window, at least this) |
 | `off_mz_sd` | number | `6.0` | off_mz: a series whose undeuterated controls put its envelope further than this many times the run's scatter from the run's calibration (at least 3 ppm; needs five undeuterated controls with a found offset, else no series is checked; peptide ions only; most likely another species, left out by [analysis.filters] off_mz; false: not checked) |
 
 ## `[run.picker.amide_rules]`

@@ -8,7 +8,7 @@ import math
 import numbers
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field, fields
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -18,6 +18,9 @@ log = logging.getLogger(__name__)
 
 RECORDED = "recorded"  # resolving_power: take each spectrum's value from the scan files
 PICKS = ("peak", "window_max")  # pick: what a bin takes from its window
+# what a project file may set: "window_max" (pyHXExpress's pick) stays for the comparison tests
+# and for results picked with it, not as a setting (owner, 2026-11-13)
+PROJECT_PICKS = ("peak",)
 MEASURES = ("auto", "height", "area")  # measure: what value a picked peak gives its bin
 ISOTOPE_STEP = 1.00235  # Da, the average spacing of a peptide's isotope peaks
 
@@ -48,11 +51,14 @@ class PickerConfig:
     """Settings of :func:`hxex.picking.pick_spectra` (the ``[run.picker]`` table): how a
     spectrum becomes sticks at the predicted isotope positions. See docs/PEAK_PICKING.md.
 
-    - ``pick``: what a bin takes from its window. ``'peak'`` (the default): the tallest peak of the
-      raw spectrum whose apex lies in the window (in profile data a local maximum, its apex the
-      vertex of the parabola through it and its neighbours; in centroided data every point), so
-      the flank of a peak outside the window is never picked. ``'window_max'``: the tallest point
-      in the window, with the shoulder rule (``shoulder_min_points``), as pyHXExpress picks.
+    - ``pick``: what a bin takes from its window. ``'peak'`` (the default and the only choice a
+      project file has): the tallest peak of the raw spectrum whose apex lies in the window (in
+      profile data a local maximum, its apex the vertex of the parabola through it and its
+      neighbours; in centroided data every point), so the flank of a peak outside the window
+      is never picked. ``'window_max'``: the tallest point in the window, with the shoulder
+      rule (``shoulder_min_points``), as pyHXExpress picks; kept for the comparison with
+      pyHXExpress's picks and for results picked with it, not as a project setting (it was
+      as good or worse on every dataset measured; HISTORY 172 and the removal's item).
     - ``measure``: what value the picked peak gives its bin (:mod:`hxex.picking.measure`).
       ``'height'``: its height, as pyHXExpress. ``'area'``: its area over ``area_fwhm`` peak
       widths either side of its apex, divided by the area of a Gaussian of the run's peak width
@@ -80,10 +86,11 @@ class PickerConfig:
       (:class:`hxex.chem.AmideRules`).
 
     With ``pick = 'window_max'`` the window can instead follow the instrument's resolving power
-    (:meth:`half_width`). With ``pick = 'peak'`` the window is always ``resolution_ppm``: it
-    only accepts or rejects a peak's apex, and apexes scatter from their predicted m/z by a
-    few ppm whatever the m/z or the peak width (calibration and signal, not resolution), so a
-    window from R would only let in neighbouring peaks (HISTORY 198):
+    (:meth:`half_width`). These settings, like ``window_max``, are not project settings any
+    more (:attr:`NOT_SETTINGS`). With ``pick = 'peak'`` the window is always
+    ``resolution_ppm``: it only accepts or rejects a peak's apex, and apexes scatter from their
+    predicted m/z by a few ppm whatever the m/z or the peak width (calibration and signal, not
+    resolution), so a window from R would only let in neighbouring peaks (HISTORY 198):
 
     - ``resolving_power``: R quoted at ``resolving_power_mz`` (200 by default, Thermo's
       convention since the Q Exactive), or ``'recorded'`` to take each spectrum's value from
@@ -110,6 +117,12 @@ class PickerConfig:
 
     ``noise`` is the former name of ``noise_threshold`` and is still accepted.
     """
+
+    # fields kept for ``pick = 'window_max'`` (the comparison tests, results picked with it) but
+    # not offered in a project file, the settings reference, or the template
+    NOT_SETTINGS: ClassVar[tuple[str, ...]] = (
+        "shoulder_min_points", "resolving_power", "resolving_power_mz",
+        "resolving_power_exponent", "window_fwhm")
 
     pick: str = "peak"
     measure: str = "auto"

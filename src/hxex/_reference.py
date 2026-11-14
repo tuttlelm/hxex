@@ -552,8 +552,9 @@ def _settings(cls, table: str, *, keys=None, skip=(), defaults: Mapping | None =
     by_name = {f.name: f for f in fields(cls)}
     instance_defaults = defaults or {}
     out = []
+    hidden = getattr(cls, "NOT_SETTINGS", ())  # kept by the class, not project settings
     for name in (by_name if keys is None else keys):
-        if name in skip:
+        if name in skip or name in hidden:
             continue
         f = by_name[name]
         default = instance_defaults.get(name, _field_default(f))

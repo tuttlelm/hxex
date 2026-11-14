@@ -618,7 +618,10 @@ Peak picking (`docs/PEAK_PICKING.md` "The intensity of a bin"):
 
 - Each bin takes the tallest peak (a local maximum of the raw spectrum, its apex inside the
   window) instead of the tallest point in the window, so a neighbour's flank is never picked;
-  `pick = "window_max"` picks as pyHXExpress, shoulder rule included (HISTORY 172).
+  pyHXExpress's pick (`"window_max"`, shoulder rule included; HISTORY 172) is not a project
+  setting any more: taking peaks was as good or better on every dataset measured. It stays in
+  `PickerConfig` for the comparison with pyHXExpress's picks and for results picked with it
+  (2026-11-13).
 - A bin takes the peak's area instead of its height when the run's undeuterated controls show
   weak peaks wider than tall ones (`[run.picker] measure = "auto"`, the default; Q-TOF exports
   do, an Orbitrap does not); `measure = "height"` picks as pyHXExpress (HISTORY 181, 185).
@@ -699,11 +702,9 @@ Peak picker (HISTORY "Phase 1 status: picker" and item 34; `docs/PEAK_PICKING.md
   constant ppm window spans a whole spacing at high charge, and its shoulder rule then zeroes
   the envelope's flanks (a third of the bins and a 9-bin centre shift on a top-down example at
   charge 20; no peptide dataset reaches the cap) (items 99 and 100).
-- Opt-in picking window from the instrument's resolving power (`resolving_power`, a value or
-  `"recorded"` from Thermo raw files), with `pick = "window_max"` only: the half-width is
-  `window_fwhm` peak widths `m / R(m)`, floored at `mass_accuracy_ppm`; pyHXExpress has only
-  the constant ppm window, which hxex keeps as the default and the only window of `pick =
-  "peak"` (items 98 and 198).
+- The picking window from the instrument's resolving power (items 98 and 198) went with
+  `pick = "window_max"`: no longer a project setting (kept in `PickerConfig` for results
+  picked with it). The window is the constant ppm window, as in pyHXExpress, capped as above.
 - A peptide-ion series whose undeuterated controls put its envelope off the run's calibration
   (a Theil-Sen line in m/z per undeuterated injection; beyond `off_mz_sd` = 6 times the
   injection's robust scatter, at least 3 ppm) is flagged `off_mz` and left out of the analysis,
