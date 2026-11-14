@@ -450,7 +450,8 @@ and asks before replacing anything. What each export holds is in
 ## Reviewing spectra
 
 The **Review** panel under the tree records your decision on what is selected: one spectrum,
-or every spectrum of a time point or a charge.
+or every spectrum of a time point, a charge, or a peptide (all the charges the tree shows under
+it; its figures are those of its first charge).
 
 - **◀** and **▶** (top right) go to the previous and next spectrum, time point, or charge
   (the list beside them), through everything the tree shows (with the list above the tree,

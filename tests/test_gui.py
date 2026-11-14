@@ -317,6 +317,34 @@ def test_the_status_line_shows_what_the_panel_is_doing(qtbot):
     assert panel.status.text().endswith("…") and "un2.mzML" in panel.status.toolTip()
 
 
+def test_a_peptide_row_reviews_every_series_under_it(qtbot, window, bundle):
+    """Selecting a peptide gives the review panel (its flags and any decision) the spectra of
+    every series the tree shows under it, as the row's counts do (owner, 2026-11-13: it had
+    taken its first series only); its first series then takes that series alone, although
+    the figures do not change."""
+    import numpy as np
+
+    from hxex.gui.results_workspace import COLUMN
+
+    window.open_path(bundle)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.results_page
+    top = page.tree.topLevelItem(0)
+    data_id = np.asarray(page.results.fit.data_id)
+    page.tree.setCurrentItem(top)
+    assert len(page.review.rows) == len(data_id) == int(top.text(COLUMN["spectra"]))
+    # the synthetic run's two series share the charge: named as series
+    assert ", 2 series (" in page.review.heading.text()
+    assert page.review.flags.isEnabled() == bool(top.text(COLUMN["flagged"]))
+    first = top.child(0)
+    page.tree.setCurrentItem(first)
+    rows = page.review.rows
+    assert rows and len(rows) == int(first.text(COLUMN["spectra"])) < len(data_id)
+    assert len(set(data_id[rows])) == 1
+    page.tree.setCurrentItem(top)
+    assert len(page.review.rows) == len(data_id)
+
+
 def test_the_window_opens_results_draws_a_series_and_saves_the_session(qtbot, window, bundle,
                                                                         tmp_path):
     assert [window.tabs.tabText(i) for i in range(4)] == ["Project", "Run", "Results",

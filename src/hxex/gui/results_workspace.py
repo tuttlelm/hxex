@@ -1200,6 +1200,7 @@ class ResultsWorkspace(QWidget):
             return
         kind = item.data(0, KIND)
         payload = item.data(0, PAYLOAD)
+        whole = payload if kind == "peptide" else None
         if kind == "peptide":  # its first charge's pages
             pep = payload
             series = next((s for s in pep.series if self._shown(pep, s)), pep.series[0])
@@ -1207,6 +1208,10 @@ class ResultsWorkspace(QWidget):
         if kind == "point" and len(payload[2].spectra) == 1:
             # one replicate: its own view, so stepping into it draws nothing new (owner)
             kind, payload = "spectrum", (*payload, payload[2].spectra[0])
+        # the review panel takes what the row covers: a peptide row every series the tree shows
+        # under it (owner, 2026-11-13: the flags and decisions had covered its first one only),
+        # also when the figures stay as they are
+        self._show_review(*(("peptide", whole) if whole is not None else (kind, payload)))
         results = self.results
         series = payload[1]
         data_id = series.data_id
@@ -1221,7 +1226,6 @@ class ResultsWorkspace(QWidget):
         self._drawn = drawn
         config = self._plot_config()
         self._show_tabs(kind)
-        self._show_review(kind, payload)
         # one m/z axis for the series at every level: its pages, a time point, a spectrum
         mz_range = series_mz_range(results, data_id) if kind != "series" else None
 
@@ -1362,6 +1366,18 @@ class ResultsWorkspace(QWidget):
         return None
 
     def _show_review(self, kind: str, payload) -> None:
+        if kind == "peptide":  # every charge state the tree shows under it
+            pep = payload
+            shown = [s for s in pep.series if self._shown(pep, s)]
+            ids = np.array([s.data_id for s in shown])
+            rows = list(np.flatnonzero(np.isin(self.results.fit.data_id, ids)))
+            name = f"{pep.sample} {pep.peptide_range} {pep.peptide}"
+            if len(shown) > 1:
+                apart = (not any(s.fragment for s in shown)
+                         and len({s.charge for s in shown}) == len(shown))
+                name += f", {len(shown)} {'charge states' if apart else 'series'}"
+            self.review.show_spectra(rows, name)
+            return
         pep, series = payload[0], payload[1]
         name = f"{pep.sample} {pep.peptide_range} {pep.peptide} {series.name}"
         if kind == "series":

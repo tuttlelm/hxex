@@ -9761,8 +9761,12 @@ CSVs or mzML if wanted.
     flags, and for a screen the spectra the default `loose` level acts on) when anything is
     flagged; `hxex analyse` writes one for the left-out reasons and population-test flags
     found. The window: a cell or column header naming a flag, note, screen, or reason shows its
-    meaning on hover (Results tree, flat list, every data table), and the review panel lists the
-    selected spectra's flags with their meanings in a box of fixed height. To keep the list
+    meaning on hover (Results tree, flat list, every data table), and the review panel's
+    **Flags (N)** button (N = the number of different flags) lists the selected spectra's flags,
+    each with how many of them carry it and its meaning, on hover. A peptide row of the tree now
+    gives the review panel every series the tree shows under it (owner, 2026-11-13: its flags and
+    decisions had covered its first charge only, while the row's counts covered all; its figures
+    stay those of its first charge). To keep the list
     complete: `controls.CONTROL_FLAGS` (every control flag), named constants for the left-out
     reasons (`analysis.species.LEFT_OUT_REASONS`, `analysis.screening.screen_reason`,
     `KEPT_AT_ONE_REASON`), and tests that every name the code writes has an entry and every entry
