@@ -745,7 +745,11 @@ def test_the_results_panel_counts_on_a_status_line_and_its_search_fills_the_row(
     # made the panel 522 px wide with Windows' font)
     assert w.left_tabs.minimumSizeHint().width() <= w.search.minimumWidth() + 20
     radios = w.review.status.buttons()
-    assert w.review.minimumSizeHint().width() < sum(b.sizeHint().width() for b in radios)
+    in_one_line = sum(b.sizeHint().width() for b in radios)
+    assert w.review.status_row.minimumSizeHint().width() < in_one_line
+    # the panel's narrowest is less than the choices in one line beside the Flags button (which
+    # shares their row: with Windows' font the panel alone was wider than the choices in one line)
+    assert w.review.minimumSizeHint().width() < in_one_line + w.review.flags.width()
     w.review.resize(w.review.minimumSizeHint().width(), 400)
     QApplication.processEvents()
     inside = w.review.status_row.rect()
