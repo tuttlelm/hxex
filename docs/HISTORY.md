@@ -9817,3 +9817,27 @@ CSVs or mzML if wanted.
     are. The built code gives the scratch counts and series exactly. Private record:
     hxex_private/analysis_examples/mz_check_two_of_three (README, two_of_three.py, tops.py,
     built_check.py). Tests: tests/test_mz_check.py.
+
+383. **PLAN 31 evaluated to the end; the profile fit for Q-TOF data, no position tolerance
+    (2026-11-12/13; docs/PLAN.md Next steps 31 "The rest of the evaluation" and "Design").**
+    After item 368 the scratch profile fit (one peak per bin at the position the envelope
+    supports, each run's measured peak shape, NNLS with free stray peaks one peak width from
+    every bin, areas) was measured on the remaining yardsticks. Precision (odd vs even scans of one
+    elution, Q-TOF raw): centroid difference 0.087 → 0.070 D. Simulated profiles with known answers:
+    Q-TOF error against the truth 0.033 → 0.023, centroid q90 0.70 → 0.42 D (isobaric neighbour:
+    halved; nothing else in the spectrum: a tie); Orbitrap better overall, worse on dim spectra.
+    Full runs on the fitted values: undeuterated controls reading two 7.0 → 3.4 % (benchmark),
+    3.9 → 2.3 % (tutorial), 11.2 → 5.5 % (noisy set); benchmark K = 1 misses 98 → 55; calibration
+    as good or better; known-answer K correct 83.2 → 84.2 %; on the Orbitrap mixed against the
+    hand-set ± 10 ppm (misses 1,684 → 1,281, controls reading two 21 → 30 %). The fit hardly
+    depends on the window (centroid moved > 0.5 D between ± 10 and ± 50 ppm: 2.3 % of spectra
+    against 30 % for the pick). Drift gating halves the charge-state disagreement on the raw Q-TOF
+    and the fit's gain adds to it. A position tolerance inside the fit, from the run's own apex
+    scatter (multipliers 3 and 5, and a floor + counting form), was dropped: no gain at 5, b1 × 1.5-2.3
+    at 3, and wherever a spectrum's offset is wrong it empties bright bins (known-answer set: K
+    correct 84 → 51 %). The floor + counting form cut saturated bright peaks (tutorial charge
+    disagreement 7 → 28). Also measured (owner's observation): apexes of today's pick against the
+    window edge are weak bins (< 5 % of the tallest, spread nearly evenly over the window), in
+    undeuterated controls as much as in labelled spectra, so not a deuterium stretch; weak bins on
+    the heavy side read 4-10 ppm light on average, cause open. Private records:
+    hxex_private/analysis_examples/envelope_positions (README 7a-7k), window_edge (README).

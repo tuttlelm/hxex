@@ -1566,6 +1566,114 @@ Planned, not built:
      - **Next:** the two remaining yardsticks; then full runs with the profile-fit values (K,
        calibration, known answer); then a design note. Formats that arrive already picked keep
        today's route.
+   - *The rest of the evaluation (2026-11-12/13, HISTORY 383).* Scratch record:
+     hxex_private/analysis_examples/envelope_positions (README steps 7a-7k).
+     - **Precision** (odd vs even scans of one elution): the centroid is more precise with the
+       profile fit on the Q-TOF (median difference 0.087 → 0.070 D). Single weak bins scatter a
+       little more, the price of the stray peaks.
+     - **Simulated profiles with known answers** (the run's peak shapes, point noise measured
+       from odd vs even scans, strays and chemical background): on the Q-TOF the error against
+       the truth falls 0.033 → 0.023 and the centroid error q90 0.70 → 0.42 D. With an isobaric
+       neighbour the error halves. With nothing else in the spectrum the two methods tie.
+     - **Full runs on the profile-fit values** (benchmark, tutorial, noisy set):
+       - undeuterated controls read two: 7.0 → 3.4 %, 3.9 → 2.3 %, 11.2 → 5.5 %;
+       - the benchmark's K = 1 misses: 98 → 55;
+       - replicate and charge calibration as good or better;
+       - the known-answer set: K correct 83.2 → 84.2 %.
+     - **Window dependence:** the profile fit hardly depends on the window. Spectra whose
+       centroid moves > 0.5 D between ± 10 and ± 50 ppm: 2.3 % against 30 % for the pick.
+     - **Drift gating** (raw Q-TOF with ion mobility) halves the charge-state disagreement on its
+       own, and the profile fit's gain adds to it.
+     - **Orbitrap: mixed.** The fit is better than ± 50 ppm everywhere. Against the hand-set
+       ± 10 ppm it misses fewer K = 1 fits (1,684 → 1,281) but more controls read two
+       (21 → 30 %), and dim spectra's centroids are worse: other species sit 10-50 ppm away,
+       inside one peak width, where a narrow window rejects them better.
+     - **A position tolerance inside the fit was dropped** (7g, 7k: multipliers 3 and 5 of the
+       run's apex scatter, and a floor + counting form). On the Q-TOF it gains nothing at 5 and
+       costs reproducibility at 3 (noise curve b1 × 1.5-2.3). Any tolerance empties a bright
+       bin wherever the spectrum's offset is wrong (2-34 % of spectra by dataset; the
+       known-answer set's K correct 84 → 51 %).
+   - *Design (draft, 2026-11-13, for the owner to review; nothing built).*
+     - **Scope of the first build.**
+       - Peptide ions (MS1, ion type M) from profile data: SpecExport, pooled, mzML, Thermo.
+       - Fragment ions keep the pick. Their ion-type mixtures and the per-scan cut
+         (`scan_cut`) are separate problems, untested with the fit.
+       - Centroided data and formats that arrive picked keep the pick.
+     - **A choice of `pick`, opt-in** (owner, 2026-11-13: one setting for how the bins are
+       read, and pyHXExpress's `"window_max"` removed from the project file first).
+       - `[run.picker] pick = "peak"` (today, the default) or `"profile_fit"`. With
+         `"profile_fit"`, `measure` and `area_fwhm` do not apply (the values are areas).
+       - The guide recommends `profile_fit` for Q-TOF data (resolving power ~20,000-25,000,
+         flat in m/z), where it was measured to help.
+       - On an Orbitrap the hand-set window (`resolution_ppm`) stays the advice.
+       - An `"auto"` choice by instrument is not proposed. The measured difference is not one
+         quantity that hxex can read from a run: on the Orbitrap it is other species resolved
+         inside one peak width. Revisit after users' Q-TOF results.
+     - **What the fit does, per spectrum** (as the scratch prototype, profile_core.py):
+       1. Today's pick runs first. Its bin values give a deuterium distribution: a
+          non-negative fit of the natural-abundance shape shifted along the deuterium grid,
+          any shape and any number of populations.
+       2. Each bin's position is the abundance-weighted mass of its isotopologues (deuterium
+          and the fine structure of 13C, 15N, 18O, 34S by nominal shell). The peak is widened
+          by those isotopologues' mass spread.
+       3. The spectrum's m/z offset is scanned about its injection's median offset (± 3 robust
+          sd, at least ± 3 ppm). The injection is defined as in the m/z check.
+       4. Non-negative least squares on the profile points within 1.5 widths of the bins: one
+          peak per bin, with the run's measured shape. Free stray peaks sit at the profile's
+          local maxima (above 0.2 % of the tallest) more than one peak width from every bin
+          position.
+       5. Two passes: the second takes its positions from the first pass's values.
+       6. A bin's value is its peak's area, in units of the height of a peak of the run's
+          width. A bin with no profile point within ~0.6 widths of its position reads 0
+          (sparse profiles leave zero points out).
+     - **The run's peak shape.**
+       - Measured from the undeuterated controls' picked peaks in three height classes
+         (≥ 60 %, 20-60 %, 5-20 % of the tallest), as a median profile in units of the run's
+         peak width.
+       - Stored in the manifest beside `peak_measure` and shown by `hxex info`.
+       - A Gaussian of the run's width when there are too few controls; the threshold is to
+         be set as `measure = "auto"`'s 20 controls was.
+     - **New outputs, per spectrum** (binned.parquet and spectra.csv):
+       - `fit_offset_ppm`;
+       - `unexplained`: the share of the fitted region's intensity that neither the bins nor
+         the strays account for. A candidate interference measure; reported, not used.
+     - **What changes downstream.**
+       - `measure` (heights or areas, HISTORY 185) does not apply to fitted values; `hxex
+         check` and `hxex info` say so.
+       - The noise curve, fits, population test, and bootstrap read the values as today. b1 rose
+         10-17 % in the scratch runs: the curve measures the fitted values' own scatter.
+       - Screens, `off_mz`, and drift gating are computed from the profile as today.
+       - Stored picking is reused only with the same `pick` (as today: any picker setting).
+     - **Figures: the owner's call.** Today's spectrum panels draw each bin's window and
+       picked apex; with fitted values a window means nothing. Proposed: draw the fitted peaks
+       and the strays over the profile, as the scratch pages did (envelope_positions
+       compare_pages_*.pdf). Shown side by side before anything is settled.
+     - **Speed (measured 2026-11-13, one core, 300-400 spectra per dataset).** Today's pick
+       takes 1.1-1.3 ms per spectrum and runs in one process (the benchmark's 26,000 spectra in
+       38 s). The prototype took 98-149 ms per spectrum (25 offsets × two passes, each an NNLS).
+       Two changes, same model:
+       - NNLS on the Gram matrix (a Cholesky factor of the few columns' cross products) instead
+         of the ~1,000-point profile matrix: identical values (differences ~1e-11), 41-58 ms;
+       - offset search coarse then fine (every third offset, then the step around the best;
+         pass two only the best ± one step): 14-19 ms on the three Q-TOF datasets, where 0-1 in
+         300-400 spectra lands on another offset. On the Orbitrap 8 % do (its residual has
+         narrow minima): there the full grid stays (about 30 ms, estimated, not measured).
+
+       The benchmark then takes ~7 CPU-min to pick instead of 38 s: under a minute when split
+       across 8 processes, as the fits are. Small against a CPU run's fits (~10 min) and
+       bootstrap (hours); the largest stage of a GPU quick run unless split. A stored picking
+       is reused on reruns with unchanged picker settings, so the cost is paid once. Not tried:
+       a warm-started active set from the neighbouring offset (the remaining time is mostly the
+       small NNLS calls).
+     - **Built check:** reproduce the scratch results within run-to-run variation:
+       - the K-independent tests (step5_tests.py) on the benchmark, tutorial, and noisy set;
+       - 7c's full-run table;
+       - the known-answer score;
+       - the pick's results unchanged with `pick = "peak"`;
+       - the heavy-side weak-bin shift of the window pick (window_edge README) checked on the
+         fitted positions.
+     - **Not in the first build:** a position tolerance (dropped); fragments; the Orbitrap
+       question; the spectrum-level identity flag (separate, upstream).
 
 32. **Exporting a series: HX-Express spreadsheets and the data behind the figures** (owner,
    2026-11-12; BUILT the same day, HISTORY 373: `hxex.report.export`,
