@@ -148,7 +148,11 @@ off_mz = true     # leave such series out of the analysis
 
 Before picking, *hxex* looks at the undeuterated controls. In each one it finds where the tops
 of the three lightest peaks (M, M+1, and M+2) actually are, searching well beyond the picking
-window (at least 40 ppm either side). On a calibrated instrument the peptides of one injection
+window (at least 40 ppm either side). The tops have to agree (within 5 ppm, or a quarter of the
+picking window's half-width if that is more) to place the envelope. When one of the three lands
+on a peak of something else and the other two agree, those two place it. Such a control counts
+for its own series, but not for the injection's calibration below, which uses only controls whose
+three tops agree, so that the limit stays as tight as the data allow. On a calibrated instrument the peptides of one injection
 sit together: their peaks are all off by about the same small amount, the instrument's
 calibration, give or take a little scatter. With scan files (mzML or Thermo raw) an injection is
 one undeuterated control file; with the other formats, which do not say which file a spectrum came

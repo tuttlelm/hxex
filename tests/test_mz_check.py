@@ -28,10 +28,12 @@ OFF = 20.0  # ppm: the off series' envelope, beyond the run's calibration
 CALIBRATION = 1.0  # ppm: the run's own offset
 
 
-def spectra_set(n=12, off=OFF, labelled=True, samples=False) -> SpectrumSet:
+def spectra_set(n=12, off=OFF, labelled=True, samples=False, moved=()) -> SpectrumSet:
     """An undeuterated control and a labelled spectrum for each of ``n`` series of one run
     (``samples``: each series in a sample of its own, so each run has one control); series 0
-    sits ``off`` ppm from the others, which scatter by about 0.5 ppm."""
+    sits ``off`` ppm from the others, which scatter by about 0.5 ppm. The controls of the
+    series in ``moved`` have their monoisotopic peak 25 ppm lighter (its top, still within the
+    search, then disagrees with M+1 and M+2)."""
     rng = np.random.default_rng(1)
     out = []
     for s in range(n):
@@ -42,7 +44,10 @@ def spectra_set(n=12, off=OFF, labelled=True, samples=False) -> SpectrumSet:
             if role == "" and not labelled:
                 continue
             pos, h = envelope(level)
-            out.append(Spectrum(*profile((pos * (1 + shift * 1e-6), h)), entry, time, 1,
+            pos = pos * (1 + shift * 1e-6)
+            if role == "undeut" and s in moved:
+                pos[0] *= 1 - 25e-6
+            out.append(Spectrum(*profile((pos, h)), entry, time, 1,
                                 data_id=s, spectrum_id=f"{s}:{level}", role=role))
     return SpectrumSet.from_spectra(out)
 
@@ -78,6 +83,34 @@ def test_an_envelope_whose_peaks_disagree_has_no_offset():
     pos = pos.copy()
     pos[0] *= 1 + 25e-6  # only the monoisotopic peak moved: not one envelope
     assert np.isnan(envelope_offset(*profile((pos, h)), PLAN.pred_mz, Z, 10.0))
+    # with pairs, M+1 and M+2 still agree and place it
+    assert envelope_offset(*profile((pos, h)), PLAN.pred_mz, Z, 10.0,
+                           pairs=True) == pytest.approx(0, abs=1.0)
+    pos[1] *= 1 - 25e-6  # no two tops agree: nothing, with pairs or without
+    assert np.isnan(envelope_offset(*profile((pos, h)), PLAN.pred_mz, Z, 10.0, pairs=True))
+
+
+def test_a_series_whose_controls_agree_in_two_tops_is_assessed():
+    """The off series' control has a third top on another peak: today's all-three rule gave it
+    no offset (not assessed, never flagged); its agreeing pair places it off its m/z."""
+    b = pick_spectra(spectra_set(moved={0}), NARROW)
+    off = series_rows(b, 0)
+    assert b.envelope_offset_ppm[off] == pytest.approx(OFF, abs=1.0)
+    assert np.all(np.abs(b.envelope_offset_ppm[off]) > b.envelope_offset_limit_ppm[off])
+
+
+def test_pairs_do_not_enter_the_runs_calibration():
+    """The run's calibration and scatter come from controls whose tops all agree: controls
+    placed by a pair only are assessed against it but leave it as it was."""
+    moved = {1, 2, 3}
+    raw = spectra_set(moved=moved)
+    checked = series_offsets(raw, NARROW)
+    assert set(moved) <= set(checked.data_id)  # assessed through their pairs
+    agreeing = ~(np.isin(np.asarray(raw.data_id), list(moved))
+                 & (np.asarray(raw.role) == "undeut"))
+    without = series_offsets(raw.select(agreeing), NARROW)
+    assert checked.calibration == without.calibration
+    assert not set(moved) & set(without.data_id)
 
 
 def test_a_series_off_its_mz_is_flagged_and_its_windows_stay():

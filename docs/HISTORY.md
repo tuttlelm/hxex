@@ -9793,3 +9793,27 @@ CSVs or mzML if wanted.
     power", with the findings of item 198), experiments.md, inputs.md, install.md, README.md;
     PEAK_PICKING.md, PLAN.md (deliberate differences); settings.md regenerated. Tests:
     test_picking.py `test_window_max_is_not_a_project_setting`, test_thermo.py.
+
+382. **The m/z check takes two agreeing peak tops (owner, 2026-11-13).** A series whose
+    undeuterated envelope sat about 90-100 ppm below its grid in all four samples of the private
+    noisy unimodal dataset was flagged `off_mz` in three of them; in the fourth, both controls had
+    one of their M, M+1, M+2 tops on another peak, so neither gave an offset (the check required
+    every top found to agree) and the series was never assessed. Now, when three tops are found and
+    only two agree (within the larger of 5 ppm and a quarter of the picking half-width), the mean of
+    the closest agreeing two places that control's envelope. Such controls count for their series
+    only: each injection's calibration line and scatter still come from controls whose tops all
+    agree. Using the pairs there too was measured and rejected: it widened every run's scatter by
+    7-10 % and with it every limit, unflagging borderline series that sit off (the tutorial's one
+    peptide at -19 ppm in two samples, a pooled raw project's two peptides at +20 to +50 ppm).
+    Measured on seven datasets' stored spectra (benchmark, tutorial, noisy set, known-answer set,
+    Orbitrap digest, the benchmark's raw Q-TOF read, the pooled raw project): series assessed
+    +0 to +7 %; newly flagged 3, 4, 0, 0, 10, 6, 6; no longer flagged 3 in the pooled raw project
+    (one peptide at 24 against 24-25 ppm either way, its tops spread from +4 to +44 ppm). Judged by
+    each control's three tops: the clear new flags (at least twice the limit) are the intended
+    catches (that series; a five-residue 1+ ion -29 ppm off in four samples; a 2+ ion -61 to -67 ppm
+    off in five pooled samples; a benchmark 2+ ion at +32, flagged in the raw read too; six Orbitrap
+    series with another species 10-16 ppm from the prediction); five are borderline (within 1.3
+    times the limit) with the peptide's own peaks near the prediction, as today's borderline flags
+    are. The built code gives the scratch counts and series exactly. Private record:
+    hxex_private/analysis_examples/mz_check_two_of_three (README, two_of_three.py, tops.py,
+    built_check.py). Tests: tests/test_mz_check.py.

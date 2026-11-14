@@ -15,20 +15,26 @@ out (``[analysis.filters] off_mz``).
   prediction (from the profile point nearest it, uphill through evenly spaced points and across
   runs of equal ones; a flat, clipped top at its centre, a pointed one refined to the vertex of
   a parabola), searched within the larger of ``SEARCH_PPM`` and twice the picking
-  half-width, never beyond ``SPACING_SHARE`` of the isotope spacing; the median of the three
-  when they agree within the larger of ``AGREE_PPM`` and a quarter of the half-width (else the
-  spectrum has none). Unlike the picker's ``mz_offset_ppm``, measured inside the window, this
-  finds an envelope wherever its peaks are. Centroided spectra give the nearest stick.
+  half-width, never beyond ``SPACING_SHARE`` of the isotope spacing; the median of the tops
+  found (at least two) when they agree within the larger of ``AGREE_PPM`` and a quarter of the
+  half-width. When three are found and only two agree (the third search landed on another
+  peak), the mean of the closest agreeing two places the envelope for its series' offset, but
+  not for the run's calibration below. Unlike the picker's ``mz_offset_ppm``, measured inside
+  the window, this finds an envelope wherever its peaks are. Centroided spectra give the
+  nearest stick.
 - A run is one undeuterated injection: a scan file of undeuterated controls (mzML, Thermo
   raw), or for the other formats the controls of one sample and replicate. Its calibration is
   a straight line in m/z through its controls' offsets (Theil-Sen, robust to the off series; a
   TOF's calibration drifts by about 1 ppm per 100 m/z within a run, an Orbitrap's hardly at
   all) and its scatter the robust sd of the offsets about that line (1.4826 times the median
-  absolute deviation); a run with fewer than ``MIN_RUN_CONTROLS`` offsets takes the line and
-  scatter of every control, and fewer than ``MIN_SCATTER_OFFSETS`` in all give no scatter (the
-  line through three points passes through two of them): then no series is assessed.
-- A series' offset is the median over its controls of (offset minus the run's calibration at
-  the control's monoisotopic m/z);
+  absolute deviation), from the controls whose tops all agree (a pair's offset is less
+  certain and would widen the scatter, and every limit with it: by 7-10 % on six datasets,
+  unflagging borderline off series); a run with fewer than ``MIN_RUN_CONTROLS`` such offsets
+  takes the line and scatter of every control, and fewer than ``MIN_SCATTER_OFFSETS`` in all
+  give no scatter (the line through three points passes through two of them): then no series
+  is assessed.
+- A series' offset is the median over its controls (agreeing pairs included) of (offset minus
+  the run's calibration at the control's monoisotopic m/z);
   the series is off its m/z when that is beyond ``off_mz_sd`` times its runs' scatter, and at
   least ``MIN_LIMIT_PPM``.
 
@@ -112,28 +118,47 @@ def _peak_top(mz: np.ndarray, y: np.ndarray, target: float, limit: float,
 
 
 def envelope_offset(mz: np.ndarray, intensity: np.ndarray, pred: np.ndarray, charge: int,
-                    half_width_ppm: float) -> float:
+                    half_width_ppm: float, *, pairs: bool = False) -> float:
     """The offset (ppm) of an undeuterated spectrum's envelope from its predicted m/z ``pred``
-    (M first): the median of the M, M+1 and M+2 peak tops' offsets when they agree, else NaN
-    (see the module docstring)."""
+    (M first): the median of the M, M+1 and M+2 peak tops' offsets when they agree, else NaN;
+    with ``pairs``, when three tops are found and only two of them agree, the mean of the
+    closest agreeing two (see the module docstring)."""
+    return _agreed(_tops(mz, intensity, pred, charge, half_width_ppm), half_width_ppm,
+                   pairs=pairs)
+
+
+def _tops(mz: np.ndarray, intensity: np.ndarray, pred: np.ndarray, charge: int,
+          half_width_ppm: float) -> np.ndarray:
+    """The offsets (ppm) of the M, M+1 and M+2 peak tops from ``pred`` (NaN where none)."""
     from .pick import clean_profile
 
     mz, y = clean_profile(mz, intensity)
     pred = np.asarray(pred, dtype=np.float64)[:3]
     if not len(pred):
-        return float("nan")
+        return np.array([], dtype=np.float64)
     reach = min(max(SEARCH_PPM, 2.0 * half_width_ppm),
                 SPACING_SHARE * 1e6 * ISOTOPE_STEP / max(int(charge), 1) / pred[0])
     d = np.diff(mz)
     spacing = float(np.median(d[d > 0])) if (d > 0).any() else np.inf
     if (ISOTOPE_STEP / max(int(charge), 1)) / spacing < STICK_POINTS:
         spacing = np.inf  # centroided (as the picker and the screens tell them)
-    offsets = np.array([1e6 * (_peak_top(mz, y, p, reach * 1e-6 * p, spacing) - p) / p
-                        for p in pred])
+    return np.array([1e6 * (_peak_top(mz, y, p, reach * 1e-6 * p, spacing) - p) / p
+                     for p in pred], dtype=np.float64)
+
+
+def _agreed(offsets: np.ndarray, half_width_ppm: float, *, pairs: bool) -> float:
+    """The envelope offset from the peak tops' ``offsets`` (NaN where none was found)."""
     found = offsets[np.isfinite(offsets)]
-    if len(found) < 2 or np.ptp(found) > max(AGREE_PPM, half_width_ppm / 4.0):
+    agree = max(AGREE_PPM, half_width_ppm / 4.0)
+    if len(found) < 2:
         return float("nan")
-    return float(np.median(found))
+    if np.ptp(found) <= agree:
+        return float(np.median(found))
+    if not pairs:
+        return float("nan")
+    close = [(abs(a - b), 0.5 * (a + b)) for j, a in enumerate(found) for b in found[j + 1:]
+             if abs(a - b) <= agree]
+    return float(min(close)[1]) if close else float("nan")
 
 
 @dataclass(frozen=True)
@@ -208,7 +233,7 @@ def series_offsets(spectra, config: PickerConfig, *,
     data_id = np.asarray(spectra.data_id)
     rows = [i for i in np.flatnonzero(role == "undeut") if int(data_id[i]) not in skip]
     plans: dict[tuple, np.ndarray] = {}
-    offsets, run_of, mono = [], [], []
+    offsets, paired, run_of, mono = [], [], [], []
     for i in rows:
         series = int(data_id[i])
         own = series if series in clusters else None
@@ -222,7 +247,9 @@ def series_offsets(spectra, config: PickerConfig, *,
         half = float(np.atleast_1d(config.half_width(
             pred[:1], key[1], resolving_power=float(spectra.resolving_power[i]),
             resolving_power_mz=float(spectra.resolving_power_mz[i])))[0])
-        offsets.append(envelope_offset(mz, y, pred, key[1], 1e6 * half / pred[0]))
+        tops = _tops(mz, y, pred, key[1], 1e6 * half / pred[0])
+        offsets.append(_agreed(tops, 1e6 * half / pred[0], pairs=False))
+        paired.append(_agreed(tops, 1e6 * half / pred[0], pairs=True))
         run_of.append(injection(spectra, i))
         mono.append(float(pred[0]))
     offsets_arr = np.asarray(offsets, dtype=np.float64)
@@ -250,9 +277,13 @@ def series_offsets(spectra, config: PickerConfig, *,
     runs = {run: calibration(np.asarray(at)) if len(at) >= MIN_RUN_CONTROLS else whole
             for run, at in run_index.items()}
     by_series: dict[int, list[tuple[float, float, float]]] = defaultdict(list)
-    for j, (i, o, run) in enumerate(zip(rows, offsets_arr, run_of, strict=True)):
+    # each series from its controls' offsets with pairs (HISTORY pending: a control whose third
+    # top lands on another peak still places the envelope), against its runs' calibration and
+    # scatter, which come from controls whose tops all agree only (pairs would widen it)
+    for j, (i, o, run) in enumerate(zip(rows, np.asarray(paired, dtype=np.float64), run_of,
+                                        strict=True)):
         if np.isfinite(o):
-            intercept, slope, scatter = runs[run]
+            intercept, slope, scatter = runs.get(run, whole)
             by_series[int(data_id[i])].append((o, o - intercept - slope * mono_arr[j], scatter))
     ids = np.array(sorted(by_series), dtype=np.int64)
     take = lambda k: np.array([float(np.median([v[k] for v in by_series[d]]))  # noqa: E731
