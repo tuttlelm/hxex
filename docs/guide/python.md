@@ -100,6 +100,18 @@ Both refuse to replace what is there unless given `overwrite=True`. `write_plot_
 spectrum; `write_plot_data(..., name="...")` sets the start of the file names (by default the
 series' name, as `plot_data_name(results, d)` gives it).
 
+What a flag, control note, screen, or left-out reason means is in `hxex.flags`, the same text
+as [Flags and reasons](flags.md) and `hxex explain`:
+
+```python
+from hxex import flags
+
+e = flags.entry("off_mz")                    # also "fd_multimodal (retention agrees)", ...
+print(flags.describe(e)["meaning"])          # Markdown, thresholds at the defaults
+values = flags.setting_values(results.settings.run)   # the thresholds these results used
+print(flags.plain(flags.describe(e, values)["action"]))
+```
+
 ## Reviewing spectra
 
 A bundle's review layer records, per spectrum, a status (`accepted` or `rejected`), a chosen K

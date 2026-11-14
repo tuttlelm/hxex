@@ -447,7 +447,12 @@ def test_uptake_leaves_fd_empty_for_a_series_the_controls_leave_uncorrected(resu
 
 def test_csv_files(results, tmp_path):
     files = write_tables(results, tmp_path / "t")
-    assert [f.name for f in files] == ["series.csv", "spectra.csv", "components.csv", "uptake.csv"]
+    names = ["series.csv", "spectra.csv", "components.csv", "uptake.csv"]
+    # flags.csv when anything is flagged: what each flag found means (hxex.flags)
+    from hxex.flags import run_counts
+
+    flagged = any(run_counts(results)[0].values())
+    assert [f.name for f in files] == names + (["flags.csv"] if flagged else [])
     with files[2].open() as fh:
         rows = list(csv.DictReader(fh))
     comp = components_table(results)

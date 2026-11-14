@@ -1413,9 +1413,26 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
                 controls=config.controls, left_out=tables.get("left_out_spectra"),
                 exclude_times=config.exclude_times,
                 population_test=config.populations == "population_test")
+            found = _flags_found(tables, config, runs)
+            if len(found["name"]):
+                tables["flags"] = found
     tables.update(frag_tables)
     jobs += frag_jobs
     return AnalysisOutputs(_with_pooled_identities(tables, runs), jobs, config)
+
+
+def _flags_found(tables: Mapping, config: AnalysisConfig, runs: Mapping) -> dict:
+    """``flags.csv`` of an analysis: what each left-out reason and population-test flag found
+    in its tables means (:mod:`hxex.flags`), with how often, and the thresholds of this
+    analysis and of the (first) run read."""
+    from .. import flags
+
+    counts, units = flags.analysis_counts(tables)
+    first = next(iter(runs.values()), None)
+    settings = getattr(first, "settings", None)
+    values = flags.setting_values(settings.run if settings is not None else None, config)
+    level = config.filters.spectrum_quality_filtering if config.filters is not None else None
+    return flags.table(counts, values, level=level, units=units)
 
 
 def _with_pooled_identities(tables: dict, runs: Mapping) -> dict:

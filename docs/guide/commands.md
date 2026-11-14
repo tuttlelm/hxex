@@ -147,6 +147,17 @@ Which figures report --figures and analyse would draw with the project's setting
 | `hxex.toml` | the project file; its results are read when they exist (counts, and what only the results can tell) |
 | `--settings-only` | judge by the settings alone, without reading the results |
 
+## hxex explain
+
+What a flag, control note, population-test flag, spectrum quality score, or left-out reason means (every one, without a name).
+
+`hxex explain NAME [options]`
+
+| Argument | Meaning |
+|---|---|
+| `NAME` | the word as the tables write it (off_mz, fd_median, "stand-in control"); none: list them all |
+| `--project` `hxex.toml` | give the thresholds with this project's settings (default: the defaults) |
+
 ## hxex gui
 
 Open hxex's window (needs the gui extra: pip install "hxex[gui]").

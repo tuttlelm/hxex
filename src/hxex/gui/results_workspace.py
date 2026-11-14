@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .data_table import DataPanel, cell_text
+from .data_table import DataPanel, cell_text, flag_tip
 from .figure_view import FigurePanel
 from .order import natural_key
 from .results_tree import FILTERS, Peptide, left_out, left_out_counts, peptides, points, shown
@@ -86,7 +86,8 @@ COLUMN_TIPS = {
     "K > 1": "spectra fitted with more than one population (rejected ones not counted)",
     "K": "the number of populations of each replicate's fit",
     "review": "the review's decision: accepted, rejected or none yet",
-    "flags": "the quality flags of the spectrum"}
+    "flags": "the quality flags of the spectrum (hover one for its meaning; the guide's "
+             "flags.md, or hxex explain NAME, has them all)"}
 KIND, PAYLOAD = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
 DEPTH = {"peptide": 0, "series": 1, "point": 2, "spectrum": 3}  # a kind of row's level
 
@@ -1090,6 +1091,7 @@ class ResultsWorkspace(QWidget):
                 leaf.setText(COLUMN["flagged"], "yes" if spectrum.flags else "")
                 leaf.setText(COLUMN["K"], str(spectrum.K))
                 leaf.setText(COLUMN["flags"], spectrum.flags.replace(";", ", "))
+                leaf.setToolTip(COLUMN["flags"], flag_tip(spectrum.flags))
                 leaf.setData(0, KIND, "spectrum")
                 leaf.setData(0, PAYLOAD, (pep, series, point, spectrum))
                 leaf.setToolTip(0, tip(spectrum.spectrum_id))
@@ -1487,7 +1489,7 @@ class ResultsWorkspace(QWidget):
     @staticmethod
     def _show_left_out(leaf: QTreeWidgetItem, why: str) -> None:
         leaf.setText(COLUMN["left out"], why)
-        leaf.setToolTip(COLUMN["left out"], tip(why))
+        leaf.setToolTip(COLUMN["left out"], flag_tip(why) or tip(why))
 
     @staticmethod
     def _sum_children(item: QTreeWidgetItem,

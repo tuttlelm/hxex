@@ -198,7 +198,7 @@ def _quiet_here():
 
 def _left_out(results, config) -> list[str]:
     from ..analysis import AnalysisConfig, left_out_spectra
-    from ..analysis.screening import screening
+    from ..analysis.screening import KEPT_AT_ONE_REASON, screening
 
     config = config or AnalysisConfig()
     n = len(results.fit)
@@ -208,7 +208,7 @@ def _left_out(results, config) -> list[str]:
         screen = screening(results, config.filters.spectrum_quality_filtering,
                            config.filters.off_mz)
         one = np.asarray(screen.one_population, dtype=bool) & (status == "unreviewed")
-        why[one] = "kept at K = 1 (spectrum quality)"
+        why[one] = KEPT_AT_ONE_REASON
         table = left_out_spectra(results, config.filters, exclude_flagged=config.exclude_flagged,
                                  controls=config.controls)
         at = {str(sid): i for i, sid in enumerate(results.fit.spectrum_id)}

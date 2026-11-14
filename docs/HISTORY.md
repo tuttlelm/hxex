@@ -9740,3 +9740,31 @@ CSVs or mzML if wanted.
     column. Empty for the population rows, whose errors include the K=2 positions'. Guide
     outputs.md "Making a volcano or fissure plot yourself" says how to draw both from the table.
     Tests: tests/test_analysis.py.
+
+380. **A dictionary of flags and reasons: `hxex.flags`, `hxex explain`, `flags.md`,
+    `flags.csv` (owner, 2026-11-13).** The meanings of the ~60 names *hxex* writes into its tables
+    were spread over five families and as many places (quality flags in `quality.py`'s docstring
+    and a hand-written table in outputs.md, whose defaults nothing checked; control flags in one
+    long `series.csv` cell; population-test flags; spectrum quality screens; left-out reasons
+    as free strings in the analysis), and the window showed only the names (the flag review of
+    2026-11-09 noted the scatter). Owner's choices: all five families in one dictionary; a
+    `flags.csv` beside the results; the command named `hxex explain NAME` (my recommendation:
+    users look a word up without knowing its family, and table columns could join later). BUILT:
+    `hxex.flags` holds one entry per name (where it appears, its level, a one-sentence meaning
+    and more, what *hxex* does, what to look at, the guide section); thresholds are written as
+    setting placeholders, filled in from the defaults, a project's settings
+    (`hxex explain NAME --project hxex.toml`), or the settings the results were made with, and
+    the screens' thresholds per level from `analysis.screening.THRESHOLDS`. The guide's
+    `flags.md` is generated from it (`python -m hxex._reference docs/guide`); outputs.md's flag
+    table and the `control_notes` list in the `series.csv` row now link to it. `hxex report`
+    writes `flags.csv` (one row per name found, with its count: spectra, series for control
+    flags, and for a screen the spectra the default `loose` level acts on) when anything is
+    flagged; `hxex analyse` writes one for the left-out reasons and population-test flags
+    found. The window: a cell or column header naming a flag, note, screen, or reason shows its
+    meaning on hover (Results tree, flat list, every data table), and the review panel lists the
+    selected spectra's flags with their meanings in a box of fixed height. To keep the list
+    complete: `controls.CONTROL_FLAGS` (every control flag), named constants for the left-out
+    reasons (`analysis.species.LEFT_OUT_REASONS`, `analysis.screening.screen_reason`,
+    `KEPT_AT_ONE_REASON`), and tests that every name the code writes has an entry and every entry
+    is written, that each placeholder resolves and names a real setting, and that each guide link
+    reaches a heading. Tests: tests/test_flags.py.

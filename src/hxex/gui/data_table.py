@@ -29,8 +29,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import flags
 from .order import natural_key
-from .tips import tip
+from .tips import rich_tip, tip
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +97,13 @@ def _sort_key(value):
     return (1, 0.0, natural_key(value))
 
 
+def flag_tip(text: str) -> str:
+    """The meanings of the flags, control notes, and left-out reasons a cell holds
+    (:mod:`hxex.flags`), as a rich tooltip; empty when it holds none."""
+    meaning = flags.tooltip(flags.names_in(text)) if text else ""
+    return rich_tip(meaning) if meaning else ""
+
+
 class RowsModel(QAbstractTableModel):
     """Rows of values (dicts) under named columns, read only, sortable."""
 
@@ -123,7 +131,7 @@ class RowsModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return cell_text(value)
         if role == Qt.ItemDataRole.ToolTipRole:
-            return tip(cell_text(value))
+            return flag_tip(cell_text(value)) or tip(cell_text(value))
         if role == Qt.ItemDataRole.TextAlignmentRole and isinstance(
                 value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -135,8 +143,13 @@ class RowsModel(QAbstractTableModel):
         name = self.columns[section]
         if role == Qt.ItemDataRole.DisplayRole:
             return f"{name} ▼" if name in self.marked else name  # a filter on it
-        if role == Qt.ItemDataRole.ToolTipRole and name in self.marked:
-            return tip(f"filtered: {self.marked[name]} (right-click to change)")
+        if role == Qt.ItemDataRole.ToolTipRole:
+            parts = [tip(f"filtered: {self.marked[name]} (right-click to change)")
+                     ] if name in self.marked else []
+            meaning = flags.tooltip([name])  # a column named after a flag or a screen
+            if meaning:
+                return rich_tip("\n".join([*parts, meaning]))
+            return parts[0] if parts else None
         return None
 
     def sort(self, column, order=Qt.SortOrder.AscendingOrder):

@@ -61,6 +61,9 @@ a short text file.
 - [Command-line reference](commands.md): every command and option (generated from the code).
 - [Figures](figures.md): every figure, the command that draws it, and the settings it
   needs and that change it (generated from the code).
+- [Flags and reasons](flags.md): every flag, control note, population-test flag, spectrum
+  quality screen, and reason a spectrum is left out: what it means, what *hxex* does, and
+  what to look at (generated from the code; `hxex explain NAME` gives one).
 - [The results bundle](../BUNDLE.md): the bundle's files and their columns.
 - [Analysis methods](../ANALYSIS.md): how the post-fitting analysis computes its values.
 - [Using *hxex* from Python](python.md): for programmers.

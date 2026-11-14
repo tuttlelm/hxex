@@ -107,6 +107,13 @@ FD_FALLBACKS = ("d2o", "median", "kint")
 CONTROL_NOTES = ("fd_disagrees", "fd_multimodal", "m0_multimodal", "data_below_m0",
                  "fd_retention_agrees", "fd_charges_disagree", "m0_replicate_left_out",
                  "fd_replicate_left_out", "fd_charges_agree", "fd_deamidated")
+# every name a series' control flags can hold (the ``flags`` of a ControlTable, ";"-separated;
+# ``series.csv`` shows them in ``controls`` and ``control_notes``): each has an entry in
+# hxex.flags, and a test keeps this list complete against the names written in this module
+CONTROL_FLAGS = ("uncorrected", "m0_missing", "m0_high", "m0_unreplicated", "fd_unreplicated",
+                 "no_amides", "fd_missing", "retention_low", "retention_high", "fd_below_data",
+                 "retention_outlier", "fd_off_model", "fd_charges_combined", "fd_other_charge",
+                 "fd_other_sample", "fd_map", "fd_median", "fd_kint", *CONTROL_NOTES)
 
 
 @dataclass(frozen=True)

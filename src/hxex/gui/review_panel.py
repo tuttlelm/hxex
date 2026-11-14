@@ -25,12 +25,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QToolButton,
+    QToolTip,
     QWidget,
 )
 
 from .flow_layout import FlowLayout
 from .review import Decision, make_review_table, table_path, table_stamp, write_decisions
-from .tips import tip
+from .tips import rich_tip, tip
 from .user_tables import TableLocked
 
 log = logging.getLogger(__name__)
@@ -106,10 +108,24 @@ class ReviewPanel(QGroupBox):
         top.addWidget(self.level)
         top.addWidget(self.previous)
         top.addWidget(self.next)
+        # the selected spectra's quality flags (hxex.flags): a button at the end of the Status
+        # row, their meanings on hover and, on a click, in a box that closes on a click elsewhere
+        # (owner, 2026-11-13: a line of its own took the panel's room)
+        self.flags = FlagsButton()
+        status_line = QHBoxLayout()
+        status_line.setContentsMargins(0, 0, 0, 0)
+        status_line.addWidget(self.status_row, 1)
+        status_line.addWidget(self.flags, 0, Qt.AlignmentFlag.AlignTop)
+        # the label as tall as one line of the choices, its text in the middle: it stays beside
+        # the first line when they wrap (owner, 2026-11-13: it sat above the choices' middle)
+        status_label = QLabel("Status")
+        status_label.setFixedHeight(max(self.status.buttons()[0].sizeHint().height(),
+                                        self.flags.sizeHint().height()))
+        status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         grid = QGridLayout(self)
         grid.addLayout(top, 0, 0, 1, 2)
-        grid.addWidget(QLabel("Status"), 1, 0, Qt.AlignmentFlag.AlignTop)  # by its first line
-        grid.addWidget(self.status_row, 1, 1)
+        grid.addWidget(status_label, 1, 0, Qt.AlignmentFlag.AlignTop)
+        grid.addLayout(status_line, 1, 1)
         grid.addWidget(QLabel("K"), 2, 0)
         grid.addWidget(self.k, 2, 1)
         grid.addWidget(QLabel("Note"), 3, 0)
@@ -170,14 +186,21 @@ class ReviewPanel(QGroupBox):
         usable = bool(self.rows) and results is not None and self.project is not None
         for widget in (*self.status.buttons(), self.k, self.note):
             widget.setEnabled(usable)
+        n = len(self.rows)
+        self.heading.setText(what + (f" ({n} spectra: a decision applies to each)" if n > 1
+                                     else ""))
+        # results opened without their project file: nowhere to record a decision, said under
+        # the Note row, apart from what is selected (owner, 2026-11-13: once in the heading)
         if results is not None and self.rows and self.project is None:
-            self.heading.setText(f"{what}. Decisions go in the project's review table: open the "
-                                 "results through the project file (File > Open project file) "
-                                 "to record them.")
-        else:
-            n = len(self.rows)
-            self.heading.setText(what + (f" ({n} spectra: a decision applies to each)" if n > 1
-                                         else ""))
+            self.message.setText(RESULTS_ONLY)
+            self.message.setStyleSheet("color: gray")
+            self.message.setToolTip(tip("decisions go in the project's review table: open the "
+                                        "results through their project file (File > Open "
+                                        "project file)"))
+        elif self.message.text() == RESULTS_ONLY:
+            self.message.setText("")
+            self.message.setStyleSheet("")
+            self.message.setToolTip("")
         self._show_values()
 
     def _show_values(self) -> None:
@@ -191,6 +214,7 @@ class ReviewPanel(QGroupBox):
         self.note.blockSignals(True)
         self.note.setText("")
         self._shown_note = ""
+        self.flags.show_flags(flag_items(results, self.rows), len(self.rows))
         if results is None or not self.rows:
             self.k.blockSignals(False)
             self.note.blockSignals(False)
@@ -353,6 +377,57 @@ class ReviewPanel(QGroupBox):
         status = {key.lower(): value for value, _, key in STATUS_WORDS}.get(letter.lower())
         if status is not None and self.status.buttons()[0].isEnabled():
             self.decide(status=status)
+
+
+# the message line when results are open without their project file
+RESULTS_ONLY = "Session is results only: open the project toml file to record decisions."
+
+
+def flag_items(results, rows: list[int]) -> list[tuple[str, int, str]]:
+    """The quality flags of the spectra at ``rows``: each flag's name, how many of them carry it,
+    and its meaning (:mod:`hxex.flags`), in the order of the flags."""
+    from .. import flags
+    from ..quality import FLAG_NAMES
+
+    q = getattr(results, "quality", None) if results is not None else None
+    if q is None or not rows:
+        return []
+    items = []
+    for name in FLAG_NAMES:
+        n = int(np.sum(np.asarray(getattr(q, name))[rows]))
+        if n:
+            e = flags.entry(name)
+            items.append((name, n, flags.plain(flags.render(e.short)) if e is not None else ""))
+    return items
+
+
+class FlagsButton(QToolButton):
+    """'Flags (N)': the N quality flags of the spectra shown, each with its meaning on hover (a
+    click shows it at once); greyed 'Flags' without any. Its width fits the widest text, so a
+    count changing moves nothing. (A box that stayed open on a click added nothing, as it
+    closed at the next click anywhere: owner, 2026-11-13.)"""
+
+    def __init__(self):
+        super().__init__()
+        self.setText("Flags (99)")
+        self.setFixedWidth(self.sizeHint().width())
+        self.clicked.connect(lambda: QToolTip.showText(
+            self.mapToGlobal(self.rect().bottomLeft()), self.toolTip(), self))
+        self.show_flags([])
+
+    def show_flags(self, items: list[tuple[str, int, str]], n_spectra: int = 1) -> None:
+        """``items`` (:func:`flag_items`) of ``n_spectra`` spectra."""
+        self.items = items
+        if not items:
+            self.setText("Flags")
+            self.setEnabled(False)
+            self.setToolTip(tip("no quality flags on these spectra"))
+            return
+        of = (lambda n: f" ({n} of {n_spectra})") if n_spectra > 1 else (lambda n: "")
+        self.setText(f"Flags ({len(items)})")
+        self.setEnabled(True)
+        self.setToolTip(rich_tip("\n".join(f"**{name}**{of(n)}: {meaning}"
+                                           for name, n, meaning in items)))
 
 
 def counts(results, data_id: int) -> tuple[int, int]:

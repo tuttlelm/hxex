@@ -677,12 +677,25 @@ TABLE_NAMES = ("series.csv", "spectra.csv", "components.csv", "uptake.csv", "rev
                "retention_suggestions.csv")
 
 
+def flags_table(results: Results) -> dict[str, np.ndarray]:
+    """``flags.csv``: what each flag, control flag, population-test flag and spectrum quality
+    screen found in these results means (:mod:`hxex.flags`), one row per name that occurs,
+    with how many spectra (series, for the control flags) carry it (a screen: those the
+    default ``loose`` level acts on) and the thresholds of the run that made them."""
+    from .. import flags
+
+    counts, units = flags.run_counts(results)
+    run = results.settings.run if results.settings is not None else None
+    return flags.table(counts, flags.setting_values(run), units=units)
+
+
 def write_tables(results: Results, directory: str | Path, *, created: str | None = None
                  ) -> list[Path]:
     """Write ``series.csv``, ``spectra.csv``, ``components.csv`` and ``uptake.csv`` into
-    ``directory``, ``review.csv`` when the review layer (or an exclusion rule) has entries and
+    ``directory``, ``review.csv`` when the review layer (or an exclusion rule) has entries,
     ``retention_suggestions.csv`` when the read searched for retention times
-    (:func:`retention_suggestions_table`), replacing the tables hxex wrote there before (its
+    (:func:`retention_suggestions_table`) and ``flags.csv`` when anything is flagged
+    (:func:`flags_table`), replacing the tables hxex wrote there before (its
     listing, :func:`hxex.io.replace_outputs`: a ``review.csv`` with nothing left to list goes)
     and never a file of your own. The listing
     records the results they were made from (``created``, the bundle's stamp; default the
@@ -694,6 +707,9 @@ def write_tables(results: Results, directory: str | Path, *, created: str | None
         tables["review.csv"] = review_table
     if retention_suggestions_table(results) is not None:
         tables["retention_suggestions.csv"] = retention_suggestions_table
+    found = flags_table(results)
+    if len(found["name"]):
+        tables["flags.csv"] = lambda _: found
     made = {"": created if created is not None else results.settings.created
             if results.settings is not None else ""}
     with replace_outputs(directory, tables, made=made) as written:

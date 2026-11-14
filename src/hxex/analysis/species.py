@@ -43,12 +43,34 @@ from .. import chem
 from ..controls import ControlConfig, apply_control_roles, correct_means, fit_controls
 from ..io.times import format_time
 from ..spectra import point_order_key
+from .screening import (
+    KEPT_AT_ONE_REASON,
+    OFF_MZ_REASON,
+    Screening,
+    screen_reason,
+    screening,
+    spectra_source,
+)
 from .screening import LEVELS as SCREEN_LEVELS
-from .screening import OFF_MZ_REASON, Screening, screening, spectra_source
 
-# the reasons an undeuterated control spectrum leaves the analysis (left_out_spectra.csv)
+# the reasons a spectrum leaves the analysis (left_out_spectra.csv): an undeuterated control
+# spectrum the controls left out, a series with a stand-in control, and the filters
 UNDEUT_HIGH_REASON = "undeuterated control above m0_max"
 UNDEUT_LEFT_OUT_REASON = "undeuterated replicate the controls left out"
+STAND_IN_REASON = "stand-in control"
+STAND_IN_SCREENED_REASON = "stand-in control (screened)"
+STAND_IN_UNDEUT_REASON = "stand-in control (undeuterated)"
+ABOVE_AMIDES_REASON = "above the amide count"
+REPLICATE_OUTLIER_REASON = "replicate outlier"
+# the reasons the spectrum quality screens remove a spectrum, in the order of the summary
+_SCREEN_REMOVE = ("screen_below_mono", "screen_off_position", "screen_between",
+                  "screen_beyond_reach")
+# every reason (each has an entry in hxex.flags), with the window's note for a spectrum the
+# screens keep at one population
+LEFT_OUT_REASONS = (OFF_MZ_REASON, *(screen_reason(x) for x in _SCREEN_REMOVE),
+                    KEPT_AT_ONE_REASON, UNDEUT_HIGH_REASON, UNDEUT_LEFT_OUT_REASON,
+                    STAND_IN_REASON, STAND_IN_SCREENED_REASON, STAND_IN_UNDEUT_REASON,
+                    ABOVE_AMIDES_REASON, REPLICATE_OUTLIER_REASON)
 
 log = logging.getLogger(__name__)
 
@@ -630,9 +652,6 @@ def left_out_spectra(results, filters: SpeciesFilters | None = SpeciesFilters(),
 # control flags that mean a fully deuterated control was measured but not used
 _FD_REJECTED = ("retention_low", "retention_high", "retention_outlier", "fd_below_data",
                 "fd_off_model")
-# the reasons the spectrum quality screens remove a spectrum, in the order of the summary
-_SCREEN_REMOVE = ("screen_below_mono", "screen_off_position", "screen_between",
-                  "screen_beyond_reach")
 
 
 def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),  # noqa: B008
@@ -743,22 +762,21 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
                    else np.array([], dtype=str))
         listed = [OFF_MZ_REASON] if filters.off_mz else []
         listed += [UNDEUT_HIGH_REASON, UNDEUT_LEFT_OUT_REASON]
-        listed += [f"spectrum quality ({x})" for x in _SCREEN_REMOVE] if level != "none" else []
+        listed += [screen_reason(x) for x in _SCREEN_REMOVE] if level != "none" else []
         if filters.stand_in_controls != "include":
-            listed += ["stand-in control", "stand-in control (screened)",
-                       "stand-in control (undeuterated)"]
+            listed += [STAND_IN_REASON, STAND_IN_SCREENED_REASON, STAND_IN_UNDEUT_REASON]
         if filters.above_amides:
-            listed.append("above the amide count")
+            listed.append(ABOVE_AMIDES_REASON)
         if filters.replicate_outlier is not None:
-            listed.append("replicate outlier")
+            listed.append(REPLICATE_OUTLIER_REASON)
         listed += sorted(set(reasons) - set(listed))
         where = {OFF_MZ_REASON: "off_mz = true",
                  UNDEUT_HIGH_REASON: "[run.controls] m0_max",
                  UNDEUT_LEFT_OUT_REASON: "[run.controls] m0_max, replicate_outlier",
                  "spectrum quality": f"spectrum_quality_filtering = \"{level}\"",
-                 "stand-in control": f"stand_in_controls = \"{filters.stand_in_controls}\"",
-                 "above the amide count": "above_amides = true",
-                 "replicate outlier": f"replicate_outlier = {filters.replicate_outlier:g}"
+                 STAND_IN_REASON: f"stand_in_controls = \"{filters.stand_in_controls}\"",
+                 ABOVE_AMIDES_REASON: "above_amides = true",
+                 REPLICATE_OUTLIER_REASON: f"replicate_outlier = {filters.replicate_outlier:g}"
                  if filters.replicate_outlier is not None else ""}
         for reason in listed:
             setting = next((v for k, v in where.items() if reason.startswith(k)), "")
@@ -872,12 +890,12 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
             if unscreened is not None and unscreened is not controls:
                 lost = np.asarray(unscreened.fd_measured, dtype=bool)[
                     unscreened.rows(fit.data_id)] & stand_in
-            mark(lost & np.isin(sample, list(has)), "stand-in control (screened)")
-            mark(stand_in & np.isin(sample, list(has)), "stand-in control")
+            mark(lost & np.isin(sample, list(has)), STAND_IN_SCREENED_REASON)
+            mark(stand_in & np.isin(sample, list(has)), STAND_IN_REASON)
             # an undeuterated control above m0_max holds another species: no sample exception
             heavy = np.char.find(np.asarray(controls.flags, dtype=str)[at], "m0_high") >= 0
             heavy &= ~raw
-            mark(heavy, "stand-in control (undeuterated)")
+            mark(heavy, STAND_IN_UNDEUT_REASON)
             data_id = np.asarray(fit.data_id)
             for s in (() if values else np.unique(sample)):  # once per analysis
                 mine = sample == s
@@ -889,7 +907,7 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
                                 "is a labelled file marked as undeuterated?", s, n_heavy,
                                 n_series, filters.stand_in_controls)
     if filters.above_amides:
-        mark(np.isfinite(k1) & (k1 > n_amides + 1e-9) & ~raw, "above the amide count")
+        mark(np.isfinite(k1) & (k1 > n_amides + 1e-9) & ~raw, ABOVE_AMIDES_REASON)
     fd = k1.copy()
     if controls is not None:
         fd = correct_means(controls, fit.data_id, k1[:, None]).mean[:, 0]
@@ -919,7 +937,7 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
                 centre = float(np.median(fd[g]))
                 for i in g:
                     far[i] = abs(fd[i] - centre) > limit
-            mark(far, "replicate outlier")
+            mark(far, REPLICATE_OUTLIER_REASON)
     if values:
         return out, why, fd
     return out, why

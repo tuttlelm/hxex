@@ -400,7 +400,12 @@ def test_a_bundle_opened_alone_cannot_be_reviewed(qtbot, window_on):
     _, leaf = _first_spectrum(page)
     page.tree.setCurrentItem(leaf)
     assert not page.review.status.buttons()[0].isEnabled()
-    assert "open the results through the project file" in page.review.heading.text()
+    # said under the Note row, apart from what is selected (owner, 2026-11-13)
+    from hxex.gui.review_panel import RESULTS_ONLY
+
+    assert page.review.message.text() == RESULTS_ONLY
+    assert "Decisions" not in page.review.heading.text()
+    assert "File > Open project file" in page.review.message.toolTip()
 
 
 def test_back_and_forward_step_through_every_spectrum(qtbot, window_on):

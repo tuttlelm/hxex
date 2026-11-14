@@ -11,6 +11,7 @@
     hxex report PROJECT|BUNDLE [--figures]  the tables (and the figures) from a saved bundle
     hxex info PROJECT|BUNDLE                what a bundle holds
     hxex analyse PROJECT|BUNDLE...          the post-fitting analysis: tables and figures
+    hxex explain [NAME] [--project PROJECT] what a flag, control note or left-out reason means
 
 The project file is described in :mod:`hxex.config`. Progress and messages go to stderr through
 ``logging`` (``-q`` for warnings only, ``-v`` for more); results and summaries go to stdout.
@@ -195,6 +196,16 @@ def build_parser() -> argparse.ArgumentParser:
                         "what only the results can tell)")
     p.add_argument("--settings-only", action="store_true",
                    help="judge by the settings alone, without reading the results")
+
+    p = sub.add_parser("explain", help="what a flag, control note, population-test flag, "
+                                       "spectrum quality score, or left-out reason means "
+                                       "(every one, without a name)")
+    p.add_argument("name", nargs="*", metavar="NAME",
+                   help="the word as the tables write it (off_mz, fd_median, "
+                        "\"stand-in control\"); none: list them all")
+    p.add_argument("--project", metavar="hxex.toml",
+                   help="give the thresholds with this project's settings (default: the "
+                        "defaults)")
 
     p = sub.add_parser("gui", help="open hxex's window (needs the gui extra: pip install "
                                    "\"hxex[gui]\")")
@@ -2477,9 +2488,72 @@ def cmd_gui(args) -> int:
     return gui.launch(args.path)
 
 
+def cmd_explain(args) -> int:
+    """What a flag, control note, population-test flag, spectrum quality score, or left-out
+    reason means (:mod:`hxex.flags`), with the thresholds of the defaults or of ``--project``;
+    without a name, every one, by family."""
+    import textwrap
+
+    from . import flags
+
+    values, level = None, None
+    if args.project:
+        from .config import load_project
+
+        path = Path(args.project)
+        if path.suffix != ".toml" or not path.exists():
+            log.error("%s: give the project file (hxex.toml)", path)
+            return EXIT_ERROR
+        project = load_project(path, analysis_only=True)
+        values = flags.setting_values(project.run, project.analysis)
+        filters = getattr(project.analysis, "filters", None)
+        level = filters.spectrum_quality_filtering if filters is not None else None
+    if level is None:
+        from .analysis import AnalysisConfig
+
+        level = AnalysisConfig().filters.spectrum_quality_filtering
+
+    def wrapped(label: str, text: str) -> None:
+        if text:
+            _say(textwrap.fill(flags.plain(text), width=88, initial_indent=f"  {label:<14}",
+                               subsequent_indent=" " * 16, break_on_hyphens=False,
+                                break_long_words=False))
+
+    name = " ".join(args.name).strip()
+    if not name:
+        for family, (title, _, words) in flags.FAMILIES.items():
+            _say(title)
+            _say(textwrap.fill(flags.plain(words), width=88, initial_indent="  ",
+                               subsequent_indent="  ", break_on_hyphens=False))
+            for e in flags.of_family(family):
+                _say(textwrap.fill(flags.plain(flags.render(e.short, values, level=level)),
+                                   width=88, initial_indent=f"    {e.name}: ",
+                                   subsequent_indent="      ", break_on_hyphens=False))
+            _say()
+        _say("hxex explain NAME gives one in full (what hxex does, what to look at); the guide's "
+             "flags.md has them all.")
+        return 0
+    e = flags.entry(name)
+    if e is None:
+        close = flags.near(name)
+        log.error("%s: not a name hxex writes%s; hxex explain lists them all", name,
+                  f" (did you mean {' or '.join(close)}?)" if close else "")
+        return EXIT_ERROR
+    d = flags.describe(e, values, level=level)
+    _say(f"{e.name} ({flags.FAMILIES[e.family][1]}, per {e.level})")
+    wrapped("where", d["where"])
+    wrapped("meaning", d["meaning"])
+    wrapped("hxex does", d["action"])
+    wrapped("look at", d["check"])
+    wrapped("settings", d["settings"] + (f" (from {args.project})" if args.project and
+                                         d["settings"] else ""))
+    wrapped("guide", f"docs/guide/{e.guide}" if e.guide else "")
+    return 0
+
+
 COMMANDS = {"init": cmd_init, "set": cmd_set, "check": cmd_check, "run": cmd_run,
             "resume": cmd_resume, "report": cmd_report, "info": cmd_info, "figures": cmd_figures,
-            "analyse": cmd_analyse, "analyze": cmd_analyse, "gui": cmd_gui}
+            "explain": cmd_explain, "analyse": cmd_analyse, "analyze": cmd_analyse, "gui": cmd_gui}
 
 
 def main(argv: Sequence[str] | None = None) -> int:

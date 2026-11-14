@@ -189,7 +189,9 @@ counts its spectra, how many have a quality flag, how many are rejected, how man
 leaves out, and how many have more than one population; a time point lists the K of its
 replicates. A replicate's row says "yes" when it is flagged or rejected, why the analysis
 leaves it out, its K, its review status, and its flags. Rest the pointer on a column's header
-to see what it counts.
+to see what it counts, and on a flag or a reason it is left out to see what it means (every one
+is in [Flags and reasons](flags.md)). The same works in the List tab and in every table shown
+in the window.
 
 For results with fragment ions (read from mzML or Thermo files with fragment lists), a charge
 row also names its fragment, its condition (the fragment list's label), and its MS level, for
@@ -456,6 +458,12 @@ or every spectrum of a time point or a charge.
 - The line under the tree says how many series it shows of all the results' (under the list,
   how many spectra); the rows of choices above the tree and the list wrap onto more lines when
   you make that side of the window narrow.
+- **Flags (N)**, at the end of the Status row: how many different quality flags the selected
+  spectra carry (greyed when none). Rest the pointer on it (or click it) to see each flag with
+  what it means (with several spectra, how many carry it). `hxex explain NAME` and
+  [Flags and reasons](flags.md) say what *hxex* does about each and what to look at.
+- When the results are open without their project file, the line under **Note** says so:
+  decisions go in the project's review table, so open the project file to record them.
 - **Status**: not reviewed, accepted, or rejected. In the tree, the keys **A**, **R**, and **U**
   do the same, so you can review with the arrow keys and those three letters.
 - **K**: the fit's choice, or the number of populations to use (as far as the run fitted).

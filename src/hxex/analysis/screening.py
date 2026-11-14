@@ -37,6 +37,13 @@ import numpy as np
 
 LEVELS = ("none", "loose", "strict")
 OFF_MZ_REASON = "off its m/z"
+# the window's "left out" column for a spectrum the screens keep at one population (not left out)
+KEPT_AT_ONE_REASON = "kept at K = 1 (spectrum quality)"
+
+
+def screen_reason(score: str) -> str:
+    """The reason a spectrum the score ``score`` removes is left out for."""
+    return f"spectrum quality ({score})"
 
 # level -> action -> ((score, threshold), ...); a spectrum at or above a threshold takes the
 # action (the first removing score names the reason)
@@ -142,7 +149,7 @@ def _actions(binned, rows: np.ndarray, eligible: np.ndarray, level: str,
         reason[remove] = OFF_MZ_REASON
     for score, threshold in rules["remove"]:
         hit = over(score, threshold) & ~remove
-        reason[hit] = f"spectrum quality ({score})"
+        reason[hit] = screen_reason(score)
         remove |= hit
     one = np.zeros(n, dtype=bool)
     for score, threshold in rules["one_population"]:

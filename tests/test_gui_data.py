@@ -286,3 +286,48 @@ def test_the_hdx_summary_table_tab_shows_the_analysis_summary(qtbot, tmp_path, p
     with open(summary.save(tmp_path / "s.csv"), newline="", encoding="utf-8") as f:
         saved = [r["item"] for r in csv.DictReader(f)]
     assert saved == [str(x) for x in page.outputs.tables["summary"]["item"]]  # notes too
+
+
+def test_cells_and_headers_naming_a_flag_say_what_it_means(qtbot):
+    """A cell holding flags, control notes, or a left-out reason, and a column named after a
+    flag or a screen, show their meanings on hover (hxex.flags); other cells their text."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from hxex.gui.data_table import RowsModel
+    from hxex.gui.review_panel import flag_items
+    from hxex.quality import FLAG_NAMES
+
+    model = RowsModel()
+    model.set_rows(["flags", "reason", "screen_between", "sample"],
+                   [{"flags": "off_mz;poor_fit", "reason": "stand-in control (screened)",
+                     "screen_between": 0.5, "sample": "S"}])
+    tip = Qt.ItemDataRole.ToolTipRole
+    cell = model.data(model.index(0, 0), tip)
+    assert "<b>off_mz</b>" in cell and "<b>poor_fit</b>" in cell and "hxex explain" not in cell
+    assert "only a stand-in was left" in model.data(model.index(0, 1), tip)
+    assert model.data(model.index(0, 3), tip) == "S"
+    header = model.headerData(2, Qt.Orientation.Horizontal, tip)
+    assert "<b>screen_between</b>" in header
+    assert model.headerData(3, Qt.Orientation.Horizontal, tip) is None
+    q = {name: np.zeros(3, dtype=bool) for name in FLAG_NAMES}
+    q["poor_fit"][[0, 2]] = True
+    results = SimpleNamespace(quality=SimpleNamespace(**q))
+    # the review panel's Flags button: the flags with their meanings, counted over several
+    # spectra, on hover; greyed without any
+    from hxex.gui.review_panel import FlagsButton
+
+    assert flag_items(results, [0]) == [
+        ("poor_fit", 1, "The fit is much worse than the other fits of its series.")]
+    assert flag_items(results, [0, 1, 2])[0][:2] == ("poor_fit", 2)
+    assert flag_items(results, [1]) == [] and flag_items(results, []) == []
+    button = FlagsButton()
+    qtbot.addWidget(button)
+    width = button.width()
+    button.show_flags(flag_items(results, [0, 1, 2]), 3)
+    assert button.text() == "Flags (1)" and button.isEnabled() and button.width() == width
+    assert "<b>poor_fit</b> (2 of 3)" in button.toolTip()
+    assert "hxex explain" not in button.toolTip()
+    button.show_flags([], 1)
+    assert button.text() == "Flags" and not button.isEnabled()
