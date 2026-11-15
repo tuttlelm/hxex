@@ -90,11 +90,15 @@ def collection() -> _Collection:
 
 
 class _Job(QRunnable):
-    def __init__(self, ticket: int, work: Callable[[], Any], signals: _Signals):
+    def __init__(self, ticket: int, work: Callable[[], Any], signals: _Signals,
+                 current: Callable[[], int] | None = None):
         super().__init__()
         self.ticket, self.work, self.signals = ticket, work, signals
+        self.current = current  # the ticket wanted now (None: always this one)
 
     def run(self):
+        if self.current is not None and self.current() != self.ticket:
+            return  # replaced or dropped before it started: nobody wants it (audit C-12)
         try:
             result = self.work()
         except Exception as exc:  # noqa: BLE001 - reported to the window, details logged
@@ -126,7 +130,9 @@ def drawing_pool() -> QThreadPool:
 
 class Latest(QObject):
     """Runs ``work`` in the thread pool and calls ``done(result)`` or ``failed(message)`` in the
-    window's thread, for the latest request only."""
+    window's thread, for the latest request only. A request replaced or dropped before its
+    work started never runs (a held arrow key had queued a hundred drawings nobody would see,
+    done 44 s after the last key; audit of 2026-11-15, C-12); one already running finishes."""
 
     def __init__(self, parent=None, pool: QThreadPool | None = None):
         super().__init__(parent)
@@ -144,11 +150,11 @@ class Latest(QObject):
         self._ticket += 1
         self._callbacks = (done, failed)
         self.running = True
-        self.pool.start(_Job(self._ticket, work, self._signals))
+        self.pool.start(_Job(self._ticket, work, self._signals, current=lambda: self._ticket))
 
     def drop(self) -> None:
         """Forget the request still running: neither of its callbacks is called (its work runs
-        to its end in the pool)."""
+        to its end in the pool when it has started; otherwise it never starts)."""
         self._ticket += 1
         self._callbacks = None
         self.running = False

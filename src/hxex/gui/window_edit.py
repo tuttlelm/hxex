@@ -193,6 +193,7 @@ class SavedWindow:
     added: bool
     own: tuple[str, ...] = ()
     samples: tuple[str, ...] = ()  # every sample a row was written for (the key's first)
+    project: Path | None = None  # the project file the window was saved for
 
     @property
     def path(self) -> Path:
@@ -534,7 +535,7 @@ def align_files(reader, results, spectrum_id: str, data_id: int, *, peptide: str
     if not others:
         return None
     ranges = None if drift is None else {spectrum_id: drift}
-    ref = reader.traces([spectrum_id], data_id, drift_ranges=ranges).traces
+    ref = reader.traces([spectrum_id], data_id, drift_ranges=ranges, cancel=cancel).traces
     if not ref:
         raise ValueError("the edited spectrum's trace could not be read")
     ref = ref[0]
@@ -545,8 +546,8 @@ def align_files(reader, results, spectrum_id: str, data_id: int, *, peptide: str
         found = reader.locate(sid, d)
         run = reader.runs[found[0]]
         file, samples = run_name(run), samples_reading(reader, sid, d, ions, peptide)
-        got = reader.traces([sid], d,
-                            drift_ranges=None if drift is None else {sid: drift}).traces
+        got = reader.traces([sid], d, drift_ranges=None if drift is None else {sid: drift},
+                            cancel=cancel).traces
         if not got:
             plans.append(FilePlan(file, str(run.path), samples, None, None,
                                   why="its trace could not be read"))
@@ -751,7 +752,7 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
             raise
         files.append((project_path, project_before, project_path.read_bytes()))
     return SavedWindow(tuple(files), {c: v for c, v in zip(table.columns, row, strict=True)},
-                       added, own_rows, written)
+                       added, own_rows, written, project=project_path.absolute())
 
 
 def _restore(path: Path, before: bytes | None) -> None:

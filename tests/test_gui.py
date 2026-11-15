@@ -811,3 +811,112 @@ def test_tooltips_are_padded_on_a_cream_background(qtbot):
         assert "QToolTip" in app.styleSheet() and "padding" in app.styleSheet()
     finally:
         app.setStyleSheet(before)
+
+
+def test_results_still_loading_never_show_under_another_project(qtbot, window, bundle, tmp_path,
+                                                                monkeypatch):
+    """Results loading for one project arrived after another project without results was
+    opened, and were shown under it (audit of 2026-11-15, A-1): the load is dropped."""
+    import time
+
+    import hxex.report.notebook as notebook
+    from hxex.config import template
+
+    real = notebook.load_results
+    monkeypatch.setattr(notebook, "load_results", lambda path: (time.sleep(1.0), real(path))[1])
+    window.open_path(bundle)
+    assert window.loading and window.statusBar().currentMessage().startswith("loading")
+    project = tmp_path / "fresh" / "hxex.toml"
+    project.parent.mkdir()
+    project.write_text(template(), encoding="utf-8")
+    assert window.open_asking(project)
+    assert not window.loading and window.results_path is None
+    assert not window.statusBar().currentMessage().startswith("loading")
+    qtbot.wait(1500)  # the first load ends meanwhile
+    assert window.results_path is None and window.results_page.results is None
+    assert window.project == project.absolute() and window.session().results is None
+
+
+def test_reopening_the_project_open_asks_nothing(window, tmp_path):
+    """Open recent or the Project tab's button on the project already open replaced the
+    session and asked to stop its command (audit of 2026-11-15, A-12)."""
+    from hxex.config import template
+
+    project = tmp_path / "hxex.toml"
+    project.write_text(template(), encoding="utf-8")
+    assert window.open_asking(project)
+    from PySide6.QtWidgets import QMessageBox
+
+    asked = []
+    window.run_page.may_close = lambda: (asked.append(1), True)[1]
+    window.ask_to_save = lambda: (asked.append(1), QMessageBox.StandardButton.Discard)[1]
+    assert window.open_asking(project) and not asked
+    assert window.project == project.absolute()
+
+
+def test_closing_asks_about_the_session_before_stopping_a_command(qtbot, window, bundle):
+    """A command was stopped before the session question; Cancel there kept the window open
+    with the command gone (audit of 2026-11-15, A-2): the command is stopped last."""
+    from PySide6.QtWidgets import QMessageBox
+
+    window.open_path(bundle)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    assert window.modified()
+    order = []
+    window.ask_to_save = lambda: (order.append("session"), QMessageBox.StandardButton.Cancel)[1]
+    window.run_page.may_close = lambda: (order.append("stop"), True)[1]
+    window.show()
+    assert not window.close() and order == ["session"]
+    window.ask_to_save = lambda: (order.append("session"), QMessageBox.StandardButton.Discard)[1]
+    assert window.close() and order == ["session", "session", "stop"]
+
+
+def test_a_new_session_starts_with_the_default_residues_a_line(window, tmp_path):
+    """The residues-a-line choice carried into a new project's session (audit of 2026-11-15,
+    E-24)."""
+    from hxex.config import template
+    from hxex.gui.sequence_view import PER_LINE
+
+    project = tmp_path / "hxex.toml"
+    project.write_text(template(), encoding="utf-8")
+    window.project_page.sequence.set_per_line(70)
+    assert window.open_asking(project)
+    assert window.project_page.sequence.per_line == PER_LINE and not window.modified()
+
+
+def test_closing_the_window_leaves_collection_taken_over_until_it_is_gone(window):
+    """Automatic garbage collection was given back inside closeEvent, with the window and its
+    queued results still alive: the state of HISTORY 365's deadlock (audit of 2026-11-15,
+    A-6). It comes back after the event loop (hxex.gui.launch) and, in the tests, after every
+    widget is gone (conftest)."""
+    import gc
+
+    from hxex.gui.tasks import collection
+
+    assert collection().active
+    window.show()
+    assert window.close()
+    assert collection().active and not gc.isenabled()
+
+
+def test_results_whose_bundle_was_replaced_say_so_instead_of_reading_it(bundle):
+    """Open results read their raw spectra from whatever bundle now has the name (audit of
+    2026-11-15, C-16): a bundle made since is refused."""
+    import json
+
+    from hxex.report.notebook import load_results
+
+    results = load_results(bundle)
+    ids = [str(results.fit.spectrum_id[0])]
+    assert results.loader(ids) is not None
+    manifest = bundle / "manifest.json"
+    text = manifest.read_text(encoding="utf-8")
+    data = json.loads(text)
+    data["created"] = "2000-01-01T00:00:00.000+00:00"
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    try:
+        with pytest.raises(ValueError, match="replaced"):
+            results.loader(ids)
+    finally:
+        manifest.write_text(text, encoding="utf-8")
+    assert results.loader(ids) is not None

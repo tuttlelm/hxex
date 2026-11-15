@@ -252,3 +252,65 @@ def test_a_running_command_shows_outside_the_run_tab(qtbot, stand_in, tmp_path):
     assert not w.tabs.tabBar().tabTextColor(run_tab).isValid()
     w.tabs.setCurrentIndex(run_tab)  # seen: the title is the usual one again
     assert w.tabs.tabText(run_tab) == "Run"
+
+
+def test_a_command_that_ends_for_another_project_asks_nothing(qtbot, stand_in, tmp_path):
+    """New session or New project file... switched the project under a running command, and
+    its refusal to overwrite then asked to rerun it on the new project (audit of 2026-11-15,
+    A-3)."""
+    page = RunWorkspace(program=[sys.executable, str(stand_in)])
+    qtbot.addWidget(page)
+    a, b = tmp_path / "a" / "hxex.toml", tmp_path / "b" / "hxex.toml"
+    for p in (a, b):
+        p.parent.mkdir()
+        p.write_text("")
+    page.show_project(a)
+    page.run_command("run")
+    qtbot.waitUntil(lambda: "working" in page.console.toPlainText(), timeout=20000)
+    page.show_project(b)
+    asked, changed = [], []
+    page.ask_output_exists = lambda: (asked.append(1), "overwrite")[1]
+    page.results_changed.connect(lambda: changed.append(1))
+    page._tail.append("run again with 'hxex run --overwrite' (or --keep-previous)")
+    with qtbot.waitSignal(page.runner.finished, timeout=20000):
+        page.stop()
+    assert not asked and not changed and not page.runner.running
+    assert page.command.text() == "hxex run hxex.toml"  # not run again on b
+
+
+def test_closing_with_a_stubborn_command_keeps_the_window_alive_and_kills_it(
+        qtbot, stand_in, monkeypatch, tmp_path):
+    """The close waited 45 s in the window's thread with nothing painted, then aborted and
+    killed a command whose step had not ended, which the question did not say (audit of
+    2026-11-15, A-5): the window's events are handled while it waits, and the question says
+    what follows."""
+    import time
+
+    from PySide6.QtCore import QTimer
+
+    from hxex.gui import run_workspace as module
+
+    monkeypatch.setattr(module, "STOP_WAIT_MS", 400)
+    monkeypatch.setattr(module, "ABORT_WAIT_MS", 400)
+    monkeypatch.setattr(module, "KILL_WAIT_MS", 4000)
+    monkeypatch.setattr(runner_module, "GRACE", 0.3)
+    page = RunWorkspace(program=[sys.executable, str(stand_in), "stubborn"])
+    qtbot.addWidget(page)
+    project = tmp_path / "hxex.toml"
+    project.write_text("")
+    page.show_project(project)
+    page.run_command("run")
+    qtbot.waitUntil(lambda: "working" in page.console.toPlainText(), timeout=20000)
+    ticks = []
+    timer = QTimer(page)
+    timer.timeout.connect(lambda: ticks.append(1))
+    timer.start(20)
+    page.ask_stop_to_close = lambda: True
+    began = time.monotonic()
+    assert page.may_close()
+    assert time.monotonic() - began < 8 and not page.runner.running
+    assert len(ticks) > 5  # the window's events were handled while it waited
+    assert "killed" in page.console.toPlainText() and not page._closing
+    page.ask_stop_to_close = RunWorkspace.ask_stop_to_close.__get__(page)
+    text = page.ask_stop_to_close.__func__.__code__.co_consts
+    assert any("is aborted, and killed" in str(c) for c in text)

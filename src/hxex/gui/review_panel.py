@@ -179,6 +179,18 @@ class ReviewPanel(QGroupBox):
             return None
         return window.project
 
+    def forget_pending(self) -> None:
+        """Other results are shown: decisions still waiting for a held table were the results
+        before's, and Try again would have written them into the new project's table (audit
+        of 2026-11-15, D-7)."""
+        if self.pending:
+            log.warning("%d review decision(s) waiting for a held table dropped: other "
+                        "results are shown (%s)", len(self.pending), ", ".join(self.pending))
+        self.pending = {}
+        self.retry.hide()
+        if self.message.text().startswith("Not saved"):
+            self.message.setText("")
+
     def show_spectra(self, rows: list[int], what: str) -> None:
         """The decision of the spectra at ``rows`` (``what`` names them)."""
         self.rows = [int(r) for r in rows]

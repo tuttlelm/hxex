@@ -23,7 +23,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer, Signal
 from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -65,6 +65,12 @@ COMMANDS = (("Check", "check", "check the project file and show what would be re
 CHANGES_RESULTS = ("run", "resume", "report")  # the window shows the results again after these
 DEVICE_SETTING = "[run.fit.backend] device"  # the project file's device setting, by its name
 REFUSED = "--keep-previous"  # in the message of a command refusing to write over its output
+# before the window closes (or shows another project) with a command running: stopped after
+# its step, aborted when the step has not ended after STOP_WAIT_MS, killed ABORT_WAIT_MS
+# after that; the window's events are handled meanwhile (audit of 2026-11-15, A-5)
+STOP_WAIT_MS = 30000
+ABORT_WAIT_MS = 10000
+KILL_WAIT_MS = 5000
 
 
 class RunWorkspace(QWidget):
@@ -85,6 +91,8 @@ class RunWorkspace(QWidget):
         self.log_file = None  # the open log of the command running
         self.log_path: Path | None = None
         self._began = 0.0
+        self._ran_on: Path | None = None  # the project the command running was started for
+        self._closing = False  # waiting for the command to end before the window goes on
         self.runner.line.connect(self._line)
         self.runner.progress.connect(self._progress)
         self.runner.finished.connect(self._finished)
@@ -202,9 +210,11 @@ class RunWorkspace(QWidget):
     def ask_stop_to_close(self) -> bool:
         return QMessageBox.question(
             self, "A command is running",
-            f"{shown_command(self.args)} is still running. Stop it and close? (Stopped after "
-            "its current step, as Stop does; a bootstrap stopped part way can be finished "
-            "with Resume.)", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+            f"{shown_command(self.args)} is still running. Stop it and close? (It is stopped "
+            "after its current step, as Stop does, and the window waits for it; a step not "
+            f"over after {STOP_WAIT_MS // 1000} s is aborted, and killed {ABORT_WAIT_MS // 1000} "
+            "s later. A bootstrap stopped part way can be finished with Resume.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
         ) == QMessageBox.StandardButton.Yes
 
     # --- the project -----------------------------------------------------------------------
@@ -300,6 +310,7 @@ class RunWorkspace(QWidget):
         self._tick()
         self._clock.start()
         self._tail: list[str] = []
+        self._ran_on = self.project
         self._open_log(typed)
         self.runner.start(self.args, self.project.parent)
         self._enable()
@@ -407,6 +418,15 @@ class RunWorkspace(QWidget):
         self._enable()
         self.activity.emit("")
         self.ended.emit(how)
+        if self._closing:  # the window is on its way out, or to another project
+            return
+        if self.project != self._ran_on:
+            # the project changed under the command (New session, New project file...):
+            # its output is not this project's, so no question and no new results here
+            # (audit of 2026-11-15, A-3)
+            log.info("%s ended for another project (%s): nothing to show here",
+                     shown_command(self.args), self._ran_on)
+            return
         if code != 0 and any(REFUSED in line for line in self._tail):
             choice = self.ask_output_exists()
             if choice is not None:
@@ -416,20 +436,41 @@ class RunWorkspace(QWidget):
             self.results_changed.emit()
 
     def may_close(self) -> bool:
-        """Before the window closes: a running command is stopped (after asking), and the
-        window waits for it to end (aborted, then killed, if it does not stop in time)."""
+        """Before the window closes or shows another project: a running command is stopped
+        (after asking), and the window waits for it to end, handling its events meanwhile
+        (the status line says what is happening; before, the window froze for up to 45 s
+        with nothing painted: audit of 2026-11-15, A-5), aborting it after
+        :data:`STOP_WAIT_MS` and killing it :data:`ABORT_WAIT_MS` later."""
         if not self.runner.running:
             return True
         if not self.ask_stop_to_close():
             return False
-        self.runner.stop()
-        process = self.runner.process
-        if not process.waitForFinished(30000):
+        self._closing = True
+        try:
             self.runner.stop()
-            if not process.waitForFinished(10000):
-                self.runner.kill()
-                process.waitForFinished(5000)
+            self.state.setText("stopping after the current step… (the window waits for it; "
+                               f"aborted after {STOP_WAIT_MS // 1000} s)")
+            self._tell()
+            if not self._wait_for_end(STOP_WAIT_MS):
+                self.runner.stop()
+                self.state.setText("aborting…")
+                self._tell()
+                if not self._wait_for_end(ABORT_WAIT_MS):
+                    self.runner.kill()
+                    self._wait_for_end(KILL_WAIT_MS)
+        finally:
+            self._closing = False
         return True
+
+    def _wait_for_end(self, ms: int) -> bool:
+        """Wait up to ``ms`` for the command to end, the window's events handled meanwhile
+        (so it paints, and the command's output and end are seen); True when it ended."""
+        deadline = time.monotonic() + ms / 1000.0
+        while self.runner.running and time.monotonic() < deadline:
+            QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)
+            if self.runner.running:
+                self.runner.process.waitForFinished(50)
+        return not self.runner.running
 
 
 

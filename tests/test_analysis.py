@@ -3276,3 +3276,26 @@ def test_a_quiet_recomputation_keeps_the_controls_lines_for_the_first_caller_not
         caplog.clear()
         analysis_controls(results, changes)
         assert lines() == []  # shown once
+
+
+def test_the_analysis_listens_to_its_cancel_hook(two_sample_bundle):
+    """The window stops a computation nobody wants any more (audit of 2026-11-15, E-1): the
+    hook is asked between the steps, and a yes stops it."""
+    from hxex.analysis import AnalysisConfig
+    from hxex.hooks import Cancelled
+    from hxex.io import open_bundle
+    from hxex.report import analysis_outputs
+
+    with open_bundle(two_sample_bundle) as b:
+        results = Results.from_bundle(b)
+    with pytest.raises(Cancelled):
+        analysis_outputs(results, AnalysisConfig(reference="S"), cancel=lambda: True)
+    asked = []
+    out = analysis_outputs(results, AnalysisConfig(reference="S"),
+                           cancel=lambda: asked.append(1) and False)
+    assert len(asked) >= 6 and "compare_peptides" in out.tables
+    # the last step asked: stopped there, nothing returned
+    n = len(asked)
+    with pytest.raises(Cancelled):
+        analysis_outputs(results, AnalysisConfig(reference="S"),
+                         cancel=lambda: asked.append(1) or len(asked) == 2 * n)

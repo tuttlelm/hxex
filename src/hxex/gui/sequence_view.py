@@ -37,6 +37,7 @@ log = logging.getLogger(__name__)
 
 PER_LINE = 50  # residues a line: five blocks of ten
 PER_LINE_CHOICES = (30, 40, 50, 60, 70, 80, 90, 100)  # the view's choice: blocks of ten
+ABOUT = "Click a residue to see what it is."  # the line under the sequences, at the start
 REGION_COLOURS = ("#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#76b7b2", "#edc948", "#9c755f")
 DIFFERS, PROLINE, SITE = "#ffd54f", "#9e9e9e", "#c62828"
 COVER, UNCOVERED = "#546e7a", "#e57373"  # coverage blocks, and the dot of a residue not covered
@@ -497,7 +498,7 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         self.text = QTextBrowser()
         self.text.setOpenLinks(False)
         self.text.anchorClicked.connect(self._clicked)
-        self.about = QLabel("Click a residue to see what it is.")
+        self.about = QLabel(ABOUT)
         self.about.setWordWrap(True)
         refresh = QPushButton("Read again")
         refresh.setToolTip(tip("read the FASTA files again (after editing one)"))
@@ -536,14 +537,21 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         self.project = project
         if project is None:
             self.rows, self.annotations = [], None
-            self.text.setPlainText("No project file open.")
+            self._clear("No project file open.")
             return
         self.rows, self.annotations, message = project_sequences(project)
         if not self.rows:
-            self.text.setPlainText(message)
+            self._clear(message)
             return
         self._message = message
         self._draw()
+
+    def _clear(self, text: str) -> None:
+        """No sequences to show: ``text`` instead, and nothing left of the project before (its
+        counts under the text, its message)."""
+        self.text.setPlainText(text)
+        self._message = ""
+        self.about.setText(ABOUT)
 
     def show_coverage(self, coverage: dict | None) -> None:
         """The peptides of the project's results (:func:`coverage_of`; None: no results), drawn

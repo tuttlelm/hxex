@@ -238,3 +238,32 @@ def test_the_residues_a_line_are_chosen_in_the_view(qtbot, tmp_path):
     view.set_per_line(None)
     assert view.per_line == PER_LINE
 
+
+
+def test_a_project_without_sequences_leaves_nothing_of_the_one_before(qtbot, tmp_path):
+    """E-13: a project without sequences (or none open) after one with: the line under the
+    text no longer gives the previous project's counts, nor its message."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from hxex.gui.sequence_view import ABOUT, SequenceView
+
+    first = tmp_path / "first"
+    first.mkdir()
+    view = SequenceView()
+    qtbot.addWidget(view)
+    view.show_project(_project(first, ""))
+    assert "distinct sequence(s)" in view.about.text()
+    view._message = "a message about the first project"
+    bare = tmp_path / "bare"
+    (bare / "SpecExport").mkdir(parents=True)
+    path = bare / "hxex.toml"
+    path.write_text('project = "seq"\n\n[input]\nformat = "specexport"\n'
+                    'data_dir = "SpecExport"\n', encoding="utf-8")
+    view.show_project(path)
+    assert "[analysis] fasta" in view.text.toPlainText()
+    assert view.about.text() == ABOUT and view._message == ""
+    view.show_project(first / "hxex.toml")
+    assert "distinct sequence(s)" in view.about.text()
+    view.show_project(None)
+    assert view.text.toPlainText() == "No project file open."
+    assert view.about.text() == ABOUT and view._message == ""

@@ -91,6 +91,7 @@ def launch(path: str | Path | None = None, argv: Sequence[str] | None = None) ->
         else:
             window.open_path(path)
     code = app.exec()
+    collection().release()  # the window is gone: automatic collection again (gui.tasks)
     if dotnet:  # Python's own exit would wait on .NET's shutdown
         end_process(code, window.settings)
     return code

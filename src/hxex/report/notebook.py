@@ -45,16 +45,29 @@ def load_results(path: str | Path = "hxex.toml") -> Results:
                         ", ".join(b.pending))
         results = dataclasses.replace(apply_view(Results.from_bundle(b), review), figures=figures)
     if results.loader is not None:  # the bundle is closed now (a zip cannot be read closed)
-        results = dataclasses.replace(results, loader=_reopening(bundle))
+        created = results.settings.created if results.settings is not None else ""
+        results = dataclasses.replace(results, loader=_reopening(bundle, created))
     return results
 
 
-def _reopening(bundle: Path):
+def _reopening(bundle: Path, created: str = ""):
     """A raw-spectra loader that opens the bundle for each request (the results outlive the
-    bundle they were loaded from)."""
+    bundle they were loaded from). ``created``: the stamp of the bundle these results came
+    from; a bundle replaced since (a run in a terminal, ``--overwrite``) is refused, not read
+    under the old fits (audit of 2026-11-15, C-16)."""
     from ..io import open_bundle
+    from ..io.bundle import bundle_manifest
 
     def load(ids):
+        if created:
+            try:
+                now = (bundle_manifest(bundle) or {}).get("created", "")
+            except (OSError, ValueError):
+                now = ""
+            if now and now != created:
+                raise ValueError(f"the results bundle {bundle} was replaced (made {now}) since "
+                                 f"these results were opened (made {created}): open the "
+                                 "results again")
         with open_bundle(bundle) as b:
             return b.spectra(ids)
 

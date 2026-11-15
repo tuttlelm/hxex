@@ -359,8 +359,9 @@ say yes. The table is then named in the project file (`[input] rt_elution_window
 again for the same peptide or ion and file changes its row. Your peptide table is never changed. When you open a spectrum whose peptide
 or ion already has a saved window in that file, the boxes show it and the choice is set to
 match. **Undo** puts the table (and the project file, after the first save) back as it was
-before the last save. Saving needs the results opened from their project file, and the table
-opens in **Tables** like the others. The saved windows are used when you run the project again with overwrite enabled: **Run** on
+before the last save; it covers the saves made while these results are shown, and opening
+other results leaves the earlier saves as they are. Saving needs the results opened from
+their project file, and the table opens in **Tables** like the others. The saved windows are used when you run the project again with overwrite enabled: **Run** on
 the Run tab with `overwrite = true` in the project file's `[output]` part, or **Replace** when
 it asks about the earlier results (on the command line, `hxex run --overwrite`). That run reads every file again but fits again only the series whose spectra
 changed, so it takes a fraction of the first run's time, and your review decisions are kept; each spectrum stays in its series (see [A peptide's own window in one
@@ -499,7 +500,8 @@ in a spreadsheet), the window reads the results again with it, at the same place
 
 Decisions need the project file: open the results through it (**File > Open project file**).
 A table open in a spreadsheet cannot be written (Excel locks it on Windows): the panel says so
-and keeps the decision; close the table there and press **Try again**.
+and keeps the decision; close the table there and press **Try again**. A decision still
+waiting when you open other results is dropped, and the Messages pane says so.
 
 ## Analysis
 
@@ -633,8 +635,10 @@ would type it. One command runs at a time.
   the window, shows the command, its step, and its run time (click it to open **Run**). When
   the command ends while you are elsewhere, the tab says how it ended (**Run (done)**,
   **(stopped)**, or **(failed)**) until you open it.
-- Closing the window, or opening another project, while a command runs asks first, and stops
-  the command if you agree.
+- Closing the window, or opening another project, while a command runs asks first (after the
+  session question), and stops the command if you agree: the window waits for it to end,
+  saying so on the Run tab; a step not over after 30 s is aborted, and the command is killed
+  10 s after that. Opening the project file already open changes nothing and asks nothing.
 
 ## Figures
 

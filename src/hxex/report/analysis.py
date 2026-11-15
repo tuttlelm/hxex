@@ -415,6 +415,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                             two_population_peptides=gate and 2 in config.ks,
                             population_test=config.populations == "population_test")
                 if on else None)
+    check_cancel(cancel)
     # modified forms kept apart are states of their own (e.g. 'WT pS12'), after their sample
     state_pairs = ([s for s in _states(residues) if s not in wanted]
                    if residues is not None else [])
@@ -449,6 +450,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                      tiers=config.populations == "population_test")
                   if 2 in config.ks else None)
         length = int(residues.residue.max())
+    check_cancel(cancel)
     # the per-time figures: every time point (the controls are not times; a control that is
     # also a time point is one)
     times = list(config.times) or sorted({float(t) for t in up.time if np.isfinite(t)})
@@ -479,6 +481,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             filters=config.filters, controls=config.controls,
             min_population=config.choice_limits.min_population, populations="best_set")
         tables["run_identity"] = check_identity(unmerged).columns()
+    check_cancel(cancel)
     comparisons = {}
     raw_comparisons: dict = {}
     counts_raw = None
@@ -513,6 +516,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             for name, values in cols.items():
                 rows.setdefault(name, []).append(values)
         tables["compare_peptides"] = {name: np.concatenate(v) for name, v in rows.items()}
+        check_cancel(cancel)
         if 2 in config.ks and gate:
             test_p = None
             if config.populations == "population_test":
@@ -575,6 +579,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                              "residue_significance_K2 shows where the number of populations "
                              "differs")
                 tables["compare_choices"] = choices_cmp.columns()
+        check_cancel(cancel)
         raw_comparisons = dict(comparisons)  # the forms take them by their own names
         if pooled and 2 in config.ks and gate:  # the forms' K=2 tests need every spectrum
             k2_tested = all(r.bootstraps_every_spectrum(2) for r in (
@@ -594,6 +599,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                 for r, c in k2_positions.items()}
     protection = prot_cmp = None
     if config.protection:
+        check_cancel(cancel)
         if scale == "order":
             raise ValueError("[analysis] protection needs real labelling times, and [input] "
                              "time_scale = \"order\" says the times only order the points")
@@ -640,6 +646,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
         form_jobs += _head_to_head_outputs(
             results, pools, up, up_d, pooled, tables, config, labels=labels, styles=styles,
             order=pooled_order, times=times, scale=scale, top=form_top)
+    check_cancel(cancel)  # the tables made: the figures planned next
     up, residues, coverage, choice = up_d, residues_d, coverage_d, choice_d
     states = states_shown
 
@@ -812,6 +819,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 jobs.append((f"regions_{_time_label(t, scale)}", lambda t=t: plot_region_bars(
                     regions, t, samples=in_order, styles=styles, **when)))
     jobs.extend(form_jobs)
+    check_cancel(cancel)
     # the HDX data summary table of Masson et al. 2019, one column per sample (the reference
     # first): from the tables above and [analysis.summary]
     tables["summary"] = dataset_summary(
@@ -1346,7 +1354,8 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
                      cancel: CancelHook | None = None) -> AnalysisOutputs:
     """Compute the analysis :func:`write_analysis` writes, without writing it (the window draws
     its figures one at a time, from the same list): ``review`` and ``config.exclude`` applied
-    first, in memory, as there."""
+    first, in memory, as there. ``cancel`` is asked between the steps (raising
+    :class:`hxex.hooks.Cancelled`), so the window stops a computation nobody wants any more."""
     if not config.single_reference:
         raise ValueError(f"one reference at a time: {', '.join(config.references)} make an "
                          "analysis each (analysis_references, AnalysisConfig.with_reference; "
@@ -1367,6 +1376,7 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
             results = view(results)
     if config.exclude_times:
         results = _without_times(results, config.exclude_times)
+    check_cancel(cancel)  # the window stops a computation nobody wants any more
     config = _fitted_ks(config, results.runs if isinstance(results, RunSet) else {"": results})
     _check_names(results, config)
     rule = population_rule(config.populations, results)
@@ -1392,6 +1402,7 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
             raise ValueError("the fragment analysis (ladder kinetics) needs real times, and "
                              "[input] time_scale = \"order\" says the times only order the "
                              "points (fragments = false leaves it out)")
+        check_cancel(cancel)
         frag_tables, frag_jobs = fragment_outputs(results, config.fragments,
                                                   page_size=config.page_size)
     tables, jobs = {}, []
@@ -1405,6 +1416,7 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
                             filters=config.filters, controls=config.controls,
                             min_population=config.choice_limits.min_population,
                             populations=config.populations)
+        check_cancel(cancel)
         if len(up):
             tables, jobs = _peptide_outputs(results, config, base, up, cancel=cancel)
             # what was left out on the way, step by step, for people

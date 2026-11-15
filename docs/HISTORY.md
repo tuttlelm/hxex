@@ -9969,3 +9969,40 @@ CSVs or mzML if wanted.
     (test sessions). The owner's decisions and the fix sessions follow; the new-user evaluation
     of the window runs after the fixes. Evidence (scripts, logs, measurements, no data):
     hxex_private/audit_gui_2026-11/ (README there).
+
+388. **The window's project switches and cancellation (2026-11-15; fix Session 1 of
+    docs/AUDIT_GUI_2026-11-15.md).** Results still loading for one project arrived after
+    another project without results was opened and were shown under it, saveable into a session
+    (A-1): every reset of the session drops the load (`MainWindow._drop_load`), and a result
+    arriving for a path no longer asked for is ignored. A command was stopped before the
+    session question, so Cancel there lost it (A-2): unsaved tables, then the session, then
+    the command (`_may_replace`); New session and New project file go through the same gate,
+    and a command that ends after the project changed under it neither asks to rerun on the
+    new project nor shows results there (A-3). Reopening the project open changes nothing
+    (A-12). The close with a command running froze the window for up to 45 s with nothing
+    painted and then aborted and killed the command unsaid (A-5): the window handles its events
+    while it waits (`RunWorkspace._wait_for_end`, the status line saying so; `STOP_WAIT_MS` 30 s,
+    `ABORT_WAIT_MS` 10 s, `KILL_WAIT_MS` 5 s), the question says what follows, and the Replace
+    question is not asked during a close (A-16). Automatic garbage collection is no longer
+    given back inside `closeEvent` with the window alive (HISTORY 365's state; A-6): `launch`
+    releases it after the event loop (the tests' conftest after every widget is gone), and the
+    close drops the window's background work first (`ResultsWorkspace.drop_background`,
+    `AnalysisWorkspace.cancel`; A-13, E-11). A request replaced or dropped before it started
+    never runs (`tasks._Job`; C-12: a held arrow key had queued a hundred drawings done 44 s
+    after the last key). The elution tab's Undo after a project switch rewrote the previous
+    project's table and project file (D-5, F-4): the editor's history belongs to the results
+    shown (`WindowEditor.reset`), `SavedWindow.project` names the project, and an undo of
+    another project's save is refused, naming it. Decisions waiting for a held table followed
+    into the next project's review table (D-7): dropped with a warning when other results are
+    shown (`ReviewPanel.forget_pending`). The Analysis page kept the old project's computation
+    (E-1, E-3) and a Recompute asked before a switch started for the next project (E-23):
+    `_computed` keeps only a result for the results path shown, `results_changed` cancels and
+    drops a computation started for another path, and `analysis_outputs` / `_peptide_outputs`
+    now poll their cancel hook (eleven checks; `report/fragments.py` still runs its ladder
+    fits to the end). The export folder (E-10) and the sequence view's line (E-13) and
+    residues-a-line choice (E-24) no longer carry over. Trace reads take a cancel hook polled
+    per file (`TraceReader.traces`, `ion_traces`, F-6): a read for the spectrum before stops at
+    its next file instead of holding the reader's lock. Open results refuse to read raw spectra
+    from a bundle replaced since they were opened (`created` stamp; C-16). Tests: one per item
+    (tests/test_gui_tasks.py new; the others in their files). Guide gui.md: closing with a
+    command running, Undo's scope, dropped waiting decisions.

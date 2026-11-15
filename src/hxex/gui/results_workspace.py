@@ -345,6 +345,7 @@ class ResultsWorkspace(QWidget):
         # (PLAN Next steps 26): the file first, then the files compared behind it
         self._trace_task = Latest(self)
         self._trace_reader = None  # (read record, TraceReader) for the results shown
+        self._trace_cancel = threading.Event()  # set: the trace read in progress not wanted
         self._trace_for = None  # (results, spectrum id) the elution tab shows
         self._shown_traces = None  # (results, spectrum id, data id, traces, title) drawn there
         self.window_editor = None  # the elution tab's window editing (made with its panel)
@@ -403,6 +404,7 @@ class ResultsWorkspace(QWidget):
                 panel.add_row(self.compare_box)
                 self.window_editor = WindowEditor(panel, self._trace_context,
                                                   self._draw_plain_trace, self)
+                self.window_editor.reset(getattr(self, "results_path", None))
                 if self.window is not None:
                     self.window_editor.message.connect(
                         lambda text: self.window.statusBar().showMessage(text, 15000))
@@ -465,7 +467,16 @@ class ResultsWorkspace(QWidget):
         self.left_bar.hide()  # worked out as the results were read
         self._selection, self._table_for = (None, None), None  # the table: nothing selected
         self._trace_for, self._drawn, self._shown_traces = None, None, None
+        self._trace_cancel.set()  # a trace read for the results before is not wanted
         self._drop_reader()  # the files of the results shown before
+        if path != getattr(self, "results_path", None):
+            # other results: what belonged to the ones before goes (audit of 2026-11-15:
+            # the export folder E-10, decisions waiting for a held table D-7, the elution
+            # editor's Undo history D-5, which rewrote the previous project's files)
+            self.export_folder = None
+            self.review.forget_pending()
+            if self.window_editor is not None:
+                self.window_editor.reset(path)
         self.results_path = path
         self.kind = None  # the tabs again: the elution tab follows the results
         self.table_view.clear()
@@ -531,6 +542,18 @@ class ResultsWorkspace(QWidget):
                              thermo_dir=thermo_dir)
         self._trace_reader = (source, reader)
         return reader
+
+    def drop_background(self) -> None:
+        """The window is closing: nothing still running or queued for this workspace is
+        wanted (its results would arrive in a closed window, and queued work never starts)."""
+        self._trace_cancel.set()
+        for task in (self._left_task, self._table_task, self._list_task, self._trace_task):
+            task.drop()
+        if self.window_editor is not None:
+            self.window_editor.forget()
+        for panel in self.panels.values():
+            panel.clear()
+        self._drop_reader()
 
     def _drop_reader(self) -> None:
         """Close the trace reader's files, off the window's thread: a read still running holds
@@ -625,6 +648,10 @@ class ResultsWorkspace(QWidget):
                 drift[s] = (float(binned.drift_start[j]), float(binned.drift_end[j]))
         title = f"{payload[0].sample} {payload[0].peptide_range} {payload[0].peptide} " \
                 f"{payload[1].name}, {payload[2].label} rep {payload[3].rep}"  # which file
+        # a read for the spectrum shown before stops at its next file (audit of 2026-11-15,
+        # F-6: it held the reader's lock, and this spectrum's own trace waited for it)
+        self._trace_cancel.set()
+        cancel = self._trace_cancel = threading.Event()
 
         def failed(message: str) -> None:
             self._trace_for = None  # tried again when next in view
@@ -660,7 +687,8 @@ class ResultsWorkspace(QWidget):
                 show(first, "; reading this peptide's other ions in this run…")
                 self._trace_task.submit(
                     lambda: dataclasses.replace(first, ions=reader.ion_traces(
-                        sid, data_id, ions, span, drift_ranges=ranges)), show, failed)
+                        sid, data_id, ions, span, drift_ranges=ranges, cancel=cancel.is_set)),
+                    show, failed)
                 return
             if not (same or groups):
                 show(first, f"; no other file: {others_label} hold no spectrum of it"
@@ -669,18 +697,19 @@ class ResultsWorkspace(QWidget):
             show(first, f"; reading {others_label}…")
 
             def read_all():  # this series' files with this one; the sample's other series after
-                got = reader.traces([sid, *same], data_id, drift_ranges=drift)
+                got = reader.traces([sid, *same], data_id, drift_ranges=drift,
+                                    cancel=cancel.is_set)
                 extra = []
                 for d, ids_ in groups.items():
-                    more = reader.traces(ids_, d, drift_ranges=drift).traces
+                    more = reader.traces(ids_, d, drift_ranges=drift, cancel=cancel.is_set).traces
                     extra += [dataclasses.replace(t, selected=False) for t in more]
                 return dataclasses.replace(got, traces=[*got.traces, *extra])
 
             self._trace_task.submit(read_all, show, failed)
 
         panel.clear("reading the elution trace…")
-        self._trace_task.submit(lambda: reader.traces([sid], data_id, drift_ranges=drift),
-                                others, failed)
+        self._trace_task.submit(lambda: reader.traces([sid], data_id, drift_ranges=drift,
+                                                      cancel=cancel.is_set), others, failed)
 
     def _draw_plain_trace(self) -> None:
         """The elution tab without editing: the traces last read."""

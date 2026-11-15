@@ -304,3 +304,116 @@ def test_a_reference_set_shows_no_warning(qtbot, tmp_path, project):
     window.open_project(project)
     qtbot.waitUntil(lambda: not window.loading, timeout=30000)
     assert not window.analysis_page.no_reference.isVisibleTo(window.analysis_page)
+
+
+def _held_analysis(monkeypatch, *, listens: bool = True):
+    """hxex.report.analysis_outputs (as the window imports it) held until released; returns
+    (started, release, outcome), outcome["end"] = "done" / "cancelled" once it ended."""
+    import threading
+
+    import hxex.report
+    from hxex.hooks import Cancelled
+
+    real = hxex.report.analysis_outputs
+    started, release, outcome = threading.Event(), threading.Event(), {}
+
+    def held(results, config, **kw):
+        started.set()
+        release.wait(60)
+        if not listens:  # a computation that does not ask its hook
+            kw["cancel"] = None
+        try:
+            out = real(results, config, **kw)
+        except Cancelled:
+            outcome["end"] = "cancelled"
+            raise
+        outcome["end"] = "done"
+        return out
+
+    monkeypatch.setattr(hxex.report, "analysis_outputs", held)
+    return started, release, outcome
+
+
+def _nothing_computed(page) -> None:
+    assert page.outputs is None and page.shared_outputs is None and not page.computing
+    assert not page._analyses and not page.busy.isVisibleTo(page)
+    assert all(page.list.topLevelItem(i).childCount() == 0
+               for i in range(page.list.topLevelItemCount()))
+    assert page.status.text().startswith("Not computed yet")
+    assert page.compute_button.isEnabled()
+
+
+def test_another_project_opened_during_a_compute_shows_nothing_of_the_first(
+        qtbot, tmp_path, project, two_sample_bundle, monkeypatch):  # noqa: F811
+    """E-1: project A's analysis, computed while project B was opened, is stopped and never
+    shown as B's (both compare against a reference, the usual case)."""
+    other = tmp_path / "b"
+    other.mkdir()
+    b = other / "hxex.toml"
+    b.write_text(f'project = "b"\n\n[output]\nbundle = "{two_sample_bundle.as_posix()}"\n\n'
+                 '[analysis]\nreference = "V"\nresidue_level = true\n', encoding="utf-8")
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    started, release, outcome = _held_analysis(monkeypatch)
+    page.compute()
+    assert started.wait(30) and page.computing
+    assert window.open_asking(b)
+    qtbot.waitUntil(lambda: not window.loading and window.results_path == b.absolute(),
+                    timeout=30000)
+    release.set()
+    qtbot.waitUntil(lambda: "end" in outcome, timeout=120000)
+    qtbot.wait(300)  # anything the computation sent back has arrived
+    assert outcome["end"] == "cancelled"  # the library stopped at its next step
+    _nothing_computed(page)
+    assert page.shown_reference in ("", "V")
+
+
+def test_a_bundle_opened_during_the_first_compute_shows_nothing_of_the_project(
+        qtbot, tmp_path, project, two_sample_bundle, monkeypatch):  # noqa: F811
+    """E-3: nothing computed yet, a bundle opened while the first Compute runs: the Compute is
+    dropped (here one that does not ask its hook: it runs to its end, unseen)."""
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    started, release, outcome = _held_analysis(monkeypatch, listens=False)
+    page.compute()
+    assert started.wait(30) and page.computing and not page._analyses
+    window.open_results(two_sample_bundle)
+    qtbot.waitUntil(lambda: not window.loading
+                    and window.results_path == two_sample_bundle.absolute(), timeout=30000)
+    assert not page.computing  # dropped as soon as the bundle is shown
+    release.set()
+    qtbot.waitUntil(lambda: "end" in outcome, timeout=120000)
+    qtbot.wait(300)
+    assert outcome["end"] == "done"
+    _nothing_computed(page)
+    # and an analysis of other results arriving is never stored as this one's
+    page._computed(object(), page.results, None, project.absolute(), "S", None)
+    assert page.outputs is None and not page._analyses
+
+
+def test_a_recompute_waiting_for_its_results_does_not_start_for_others(
+        qtbot, tmp_path, project, two_sample_bundle):  # noqa: F811
+    """E-23: a Recompute reads the project's results again first; a bundle opened meanwhile
+    is shown, and nothing is computed for it."""
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    window.results_review_stamp = ("a review table", "changed since")  # read again first
+    page.compute()
+    assert window.loading and not page.computing  # the project's results read again first
+    window.open_results(two_sample_bundle)  # before the project's results are read again
+    qtbot.waitUntil(lambda: not window.loading
+                    and window.results_path == two_sample_bundle.absolute(), timeout=30000)
+    qtbot.wait(300)
+    _nothing_computed(page)  # not started for the bundle

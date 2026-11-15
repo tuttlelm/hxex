@@ -425,3 +425,42 @@ def test_the_replicates_are_drawn_only_once_matched(qtbot, project, monkeypatch)
     gate.set()
     qtbot.waitUntil(lambda: editor.alignment is not None and not panel.drawing, timeout=30000)
     assert f"trace:{other}" in shown[-1]  # drawn once, matched
+
+
+def test_undo_stays_with_the_results_the_window_was_saved_in(qtbot, project, tmp_path):  # noqa: F811
+    """Undo after opening another project rewrote the previous project's elution-window table
+    and project file, naming only the file's name (audit of 2026-11-15, D-5 and F-4): the
+    history belongs to the results shown, and a save of another project is refused."""
+    from hxex.gui.window_edit import save_window
+
+    spectra = _read(project)
+    results = _results(spectra)
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, project)
+    editor = w.panel("elution") and w.window_editor  # made with its panel
+    sid = next(s for s in spectra.spectrum_id if "/un2.mzML/" in s)
+    k = list(spectra.spectrum_id).index(sid)
+    saved = save_window(project, ("S", "un2.mzML", sid.split("/")[2]),
+                        (spectra.rt_start[k] + 0.01, spectra.rt_end[k]))
+    table, before, project_text = saved.path, saved.path.read_bytes(), project.read_bytes()
+    assert saved.project == project.absolute()
+    editor.history.append(saved)
+    editor.undo.setEnabled(True)
+    w.show_results(results, project)  # the same results read again: the history stays
+    assert editor.history and editor.undo.isEnabled()
+    other = tmp_path / "other" / "hxex.toml"
+    other.parent.mkdir()
+    other.write_text(project.read_text())
+    w.show_results(results, other)
+    assert not editor.history and not editor.undo.isEnabled()
+    messages = []
+    editor.message.connect(messages.append)
+    editor.history.append(saved)  # as if it had survived the switch
+    editor._undo()
+    assert messages[-1].startswith("not undone") and str(project) in messages[-1]
+    assert table.read_bytes() == before and project.read_bytes() == project_text
+    w.show_results(results, project.parent / "out")  # the same project's bundle on its own
+    editor.history.append(saved)
+    editor._undo()
+    assert messages[-1].startswith("not undone") and table.read_bytes() == before

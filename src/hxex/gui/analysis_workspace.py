@@ -93,7 +93,9 @@ class AnalysisWorkspace(QWidget):
         self._analyses: dict[str, tuple] = {}
         self._cancel: threading.Event | None = None
         self._computing = Latest(self)
-        self._compute_when_loaded = False  # Recompute waits for results read again
+        self._computing_path = None  # the results path the running computation is of
+        # Recompute waits for these results (a project file) read again (None: nothing waits)
+        self._compute_when_loaded: Path | None = None
         self.render = getattr(window, "render", "matplotlib")
 
         self.status = QLabel("No results open.")
@@ -769,7 +771,7 @@ class AnalysisWorkspace(QWidget):
                 and stamp != getattr(self.window, "results_review_stamp", stamp):
             # the review table changed since the results were read: read them again first
             log.info("the review table changed: the results are read again before the analysis")
-            self._compute_when_loaded = True
+            self._compute_when_loaded = self._project()
             self.status.setText("Reading the results again with the review table's changes…")
             self.busy.show()
             self.compute_button.setEnabled(False)
@@ -786,6 +788,7 @@ class AnalysisWorkspace(QWidget):
         self.busy.show()
         self.compute_button.setEnabled(False)
         self.fit_rates.setEnabled(False)  # the settings stay as computed until it is done
+        self._computing_path = path
         log.info("computing the analysis (as hxex analyse, nothing written)")
         self._computing.submit(
             lambda: analysis_outputs(results, config, base=base, cancel=cancel.is_set),
@@ -796,7 +799,25 @@ class AnalysisWorkspace(QWidget):
     def computing(self) -> bool:
         return self._computing.running
 
+    def cancel(self) -> None:
+        """Stop the computation running, if any (other results are shown, or the window
+        closes): the library stops at its next step, and its result is never shown."""
+        if self._cancel is not None:
+            self._cancel.set()
+        if self._computing.running:
+            log.info("the analysis being computed is stopped")
+        self._computing.drop()
+        self._computing_path = None
+        self.busy.hide()
+        self.compute_button.setEnabled(self.results is not None)
+        self.fit_rates.setEnabled(self._project() is not None)
+
     def _computed(self, outputs, results, text, path, ref, stamp) -> None:
+        if self.results is None or path != getattr(self.window, "results_path", None):
+            # an analysis of results no longer shown (another project or bundle opened while it
+            # was computed): never shown as this one's
+            log.info("the analysis of %s is not shown: other results are open now", path)
+            return
         self.busy.hide()
         self._analyses[ref] = (outputs, (results, text, path, stamp))
         self._latest = ref  # the figures the same for every reference come from it now
@@ -813,8 +834,12 @@ class AnalysisWorkspace(QWidget):
                     break
 
     def _failed(self, message: str) -> None:
-        self._compute_when_loaded = False
+        self._compute_when_loaded = None
         self.busy.hide()
+        if self._cancel is not None and self._cancel.is_set():  # stopped as the window asked
+            log.info("the analysis was stopped")
+            self.refresh()
+            return
         self.compute_button.setEnabled(True)
         self.fit_rates.setEnabled(self._project() is not None)
         self._error = message
@@ -828,24 +853,28 @@ class AnalysisWorkspace(QWidget):
         project) is dropped; one of the same results, made again, is marked out of date."""
         path = getattr(self.window, "results_path", None)
         made = {entry[1][2] for entry in self._analyses.values()}
-        if self.results is None or (made and path not in made):
-            if self._cancel is not None:
-                self._cancel.set()
+        # the computation running is of other results (also the first, with nothing made yet)
+        elsewhere = self._computing.running and path != self._computing_path
+        if self.results is None or (made and path not in made) or elsewhere:
+            self.cancel()
             self._analyses.clear()
             self._clear_figure()
         self._error = None
+        # a Recompute asked for its own results read again, not for whatever opens next
+        wanted, self._compute_when_loaded = self._compute_when_loaded, None
+        if wanted is not None and path != wanted:
+            log.info("the Recompute asked for %s is not made: other results are open now",
+                     wanted)
         if not self.computing:
             self.busy.hide()
         self.refresh()
-        if self._compute_when_loaded:  # Recompute asked for the results read again
-            self._compute_when_loaded = False
-            if self.results is not None:
-                self.compute()
+        if wanted is not None and path == wanted and self.results is not None:
+            self.compute()
 
     def load_failed(self) -> None:
         """The results could not be read again (for a Recompute): nothing is computed."""
-        if self._compute_when_loaded:
-            self._compute_when_loaded = False
+        if self._compute_when_loaded is not None:
+            self._compute_when_loaded = None
             self.busy.hide()
             self.refresh()
 

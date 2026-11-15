@@ -533,3 +533,27 @@ def test_a_decision_made_from_the_list_updates_its_row(qtbot, window_on):
     page.review.decide(status="accepted")
     assert other["review_status"] == "accepted"
     assert any(r is other for r in page.list.model.rows)
+
+
+def test_decisions_waiting_for_a_held_table_do_not_follow_other_results(qtbot, window_on,
+                                                                      monkeypatch, caplog):
+    """Decisions kept waiting by a held table were written into the next project's review
+    table by its next decision or Try again (audit of 2026-11-15, D-7)."""
+    import hxex.gui.review as review_module
+    from hxex.gui.user_tables import TableLocked
+
+    window, project, open_ = window_on
+    page = open_(project)
+    _, leaf = _first_spectrum(page)
+    page.tree.setCurrentItem(leaf)
+
+    def held(table, path):
+        raise TableLocked(f"{path} could not be written: another program holds it")
+
+    monkeypatch.setattr(review_module, "write_table", held)
+    assert not page.review.decide(status="rejected") and page.review.pending
+    caplog.set_level("WARNING", logger="hxex")
+    page.show_results(page.results, project.parent / "elsewhere" / "hxex.toml")
+    assert not page.review.pending and page.review.retry.isHidden()
+    assert not page.review.message.text().startswith("Not saved")
+    assert any("waiting for a held table dropped" in r.message for r in caplog.records)

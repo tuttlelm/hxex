@@ -301,3 +301,20 @@ def test_a_match_moves_the_runs_traces_and_changes_none(lc):
     rows = plot_each_file(traces, aligned, edit=mine.window).axes
     assert rows[0].get_lines()[0].get_ydata() == pytest.approx(mine.intensity)
     assert rows[1].get_lines()[0].get_ydata() == pytest.approx(other.intensity)
+
+
+def test_a_trace_read_stops_when_its_cancel_hook_says_so(lc):
+    """Trace reads could not be stopped: a read for the spectrum before held the reader's lock
+    and the next spectrum's trace waited for it, and the window's close waited too (audit of
+    2026-11-15, F-6)."""
+    from hxex.hooks import Cancelled
+
+    spectra, _ = lc
+    reader = TraceReader(spectra.source)
+    sid = _ids(spectra, "un2.mzML")[0]
+    with pytest.raises(Cancelled):
+        reader.traces([sid], 0, cancel=lambda: True)
+    with pytest.raises(Cancelled):
+        reader.ion_traces(sid, 0, [(s, 0) for s in _ids(spectra, "un2.mzML")], (0.0, 10.0),
+                          cancel=lambda: True)
+    assert reader.traces([sid], 0, cancel=lambda: False).traces  # not stopped: read

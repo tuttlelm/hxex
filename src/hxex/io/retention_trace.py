@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import chem
+from ..hooks import CancelHook, check_cancel
 from ..picking import PickerConfig, plan_bins
 from ..spectra import Spectrum, split_spectrum_id
 from .drift_gate import drift_times, isotope_peaks, scan_profile
@@ -216,18 +217,20 @@ class TraceReader:
         return None
 
     def traces(self, spectrum_ids: Sequence[str], data_id: int, *,
-               drift_ranges: Mapping[str, tuple[float, float]] | None = None
-               ) -> RetentionTraces:
+               drift_ranges: Mapping[str, tuple[float, float]] | None = None,
+               cancel: CancelHook | None = None) -> RetentionTraces:
         """The retention traces of ``spectrum_ids`` (the selected spectrum first, then the
         others of its series ``data_id`` to draw behind it), each run's around the windows of
         all of them (:data:`MARGIN` minutes, or a window's width, either side). A run with
         several spectra of the series (a kinetics run) gives one trace, with the window of the
         first of them listed. ``drift_ranges`` (ms, by spectrum id) are the ranges the spectra
-        were summed over (spectra.csv ``drift_start``, ``drift_end``)."""
+        were summed over (spectra.csv ``drift_start``, ``drift_end``). ``cancel`` is polled
+        before each file (:class:`hxex.hooks.Cancelled` when it says stop: the window moved
+        on, and a read holding the lock made the next spectrum wait)."""
         with self._lock:
-            return self._traces(spectrum_ids, data_id, drift_ranges or {})
+            return self._traces(spectrum_ids, data_id, drift_ranges or {}, cancel)
 
-    def _traces(self, spectrum_ids, data_id, drift_ranges) -> RetentionTraces:
+    def _traces(self, spectrum_ids, data_id, drift_ranges, cancel=None) -> RetentionTraces:
         t_i = self.of_series[int(data_id)]
         target = self.targets[t_i]
         e = target.entry
@@ -252,6 +255,7 @@ class TraceReader:
         missing = []
         scanned = {}
         for run_i, (sid, first, last) in found.items():
+            check_cancel(cancel)
             try:
                 f = self._file(run_i)
             except FileNotFoundError as exc:
@@ -275,6 +279,7 @@ class TraceReader:
         traces: list[Trace] = []
         profile = None
         for run_i in [selected_run, *[r for r in scanned if r != selected_run]]:
+            check_cancel(cancel)
             sid, f, table, window = scanned[run_i]
             run = self.runs[run_i]
             factor = 1.0 + self.offsets[run_i] * 1e-6
@@ -313,18 +318,21 @@ class TraceReader:
 
     def ion_traces(self, spectrum_id: str, data_id: int, others: Sequence[tuple[str, int]],
                    span: tuple[float, float], *,
-                   drift_ranges: Mapping[str, tuple[float, float]] | None = None
-                   ) -> list[IonTrace]:
+                   drift_ranges: Mapping[str, tuple[float, float]] | None = None,
+                   cancel: CancelHook | None = None) -> list[IonTrace]:
         """The traces of the peptide's other ions in the selected spectrum's run, over ``span``
         (minutes): ``others`` are their spectra (id, series) in that run. A charge state of the
         peptide in MS1 gives a trace of its own; the fragments of one channel (the same scans:
         activation, MS level, precursor charge) give one, summed over their ions, so that the
         selected ion is compared with its peptide's whole ladder. Each ion within its spectrum's
-        drift range (``drift_ranges``, ms, by id) for files with ion mobility bins."""
+        drift range (``drift_ranges``, ms, by id) for files with ion mobility bins. ``cancel``
+        as for :meth:`traces`, polled before each group of ions."""
         with self._lock:
-            return self._ion_traces(spectrum_id, data_id, others, span, drift_ranges or {})
+            return self._ion_traces(spectrum_id, data_id, others, span, drift_ranges or {},
+                                    cancel)
 
-    def _ion_traces(self, spectrum_id, data_id, others, span, drift_ranges) -> list[IonTrace]:
+    def _ion_traces(self, spectrum_id, data_id, others, span, drift_ranges,
+                    cancel=None) -> list[IonTrace]:
         from .mzml import _channel
 
         where = self.locate(spectrum_id, data_id)
@@ -350,6 +358,7 @@ class TraceReader:
         r_mz = float(getattr(f, "resolving_power_mz", np.nan))
         out = []
         for key, members in sorted(groups.items(), key=lambda kv: _group_order(kv[1][0][1])):
+            check_cancel(cancel)
             first = members[0][1]
             rows = target_scans(table, run, replace(first, rt_window=(60.0 * span[0],
                                                                       60.0 * span[1])),

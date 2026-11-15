@@ -242,6 +242,7 @@ class MainWindow(QMainWindow):
         self._saved_text: str | None = None
         self._restoring = False  # results of the session just opened are still loading
         self._loading = Latest(self)
+        self._loading_path: Path | None = None  # the results being loaded (None: none)
         self._pending_selection: dict = {}
         self.setWindowTitle("hxex")
         self.resize(1200, 800)
@@ -458,10 +459,13 @@ class MainWindow(QMainWindow):
         session shows, so a session that changed is offered for saving first (results open
         within the session). A project file starts a new session. False when the user
         cancels."""
+        if path.suffix == ".toml" and path.absolute() == self.project:
+            # the project already open (Open recent, the Project tab's button): nothing to
+            # replace, and no reason to stop its command (audit of 2026-11-15, A-12)
+            self.statusBar().showMessage(f"{path} is the project open", 5000)
+            return True
         replaces = path.suffix in (SUFFIX, ".toml")
-        if replaces and not (self.run_page.may_close()
-                             and self.project_page.tables.editor.may_leave()
-                             and self._may_discard()):
+        if replaces and not self._may_replace():
             return False
         if path.suffix == ".toml":
             self._new_session_with(path)
@@ -469,12 +473,29 @@ class MainWindow(QMainWindow):
             self.open_path(path)
         return True
 
+    def _may_replace(self) -> bool:
+        """Before what the window shows is replaced (another project or session, a new one):
+        unsaved table edits, then the session, then a command running (asked last: a command
+        stopped before a cancelled question was gone for nothing; audit of 2026-11-15, A-2).
+        False when the user cancels."""
+        return (self.project_page.tables.editor.may_leave() and self._may_discard()
+                and self.run_page.may_close())
+
+    def _drop_load(self) -> None:
+        """Results still loading are not wanted any more: another project's results arrived
+        later and were shown under it (audit of 2026-11-15, A-1)."""
+        self._loading.drop()
+        self._loading_path = None
+        self.statusBar().clearMessage()
+
     def _new_session_with(self, project: Path) -> None:
         """A new session (not yet saved) showing ``project``: what it shows now counts as
         unchanged, so only later changes ask to be saved."""
         self.session_path = None
         self._pending_selection = {}
+        self._drop_load()
         self.results_path = None
+        self.project_page.sequence.set_per_line(None)  # a new session: its default (E-24)
         self.results_page.show_results(None, None)
         self._show_coverage()
         self.analysis_page.results_changed()
@@ -485,7 +506,7 @@ class MainWindow(QMainWindow):
     def new_project_dialog(self) -> None:
         """Ask for the input format, a project name and where to save, then write the project
         file (as ``hxex init`` does) and open it."""
-        if not (self.project_page.tables.editor.may_leave() and self._may_discard()):
+        if not self._may_replace():
             return
         dialog = NewProjectDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -551,6 +572,7 @@ class MainWindow(QMainWindow):
         self._pending_selection = dict(session.selection)
         self.project_page.sequence.set_per_line(
             self._pending_selection.pop("residues_per_line", None))
+        self._drop_load()
         self.results_path = None
         self.results_page.show_results(None, None)
         self._show_coverage()
@@ -601,6 +623,7 @@ class MainWindow(QMainWindow):
 
         path = path.absolute()
         project = self.project if path == self.project else None
+        self._loading_path = path
         self.statusBar().showMessage(f"loading {path}…")
 
         def load():
@@ -617,6 +640,9 @@ class MainWindow(QMainWindow):
         return self._loading.running
 
     def _results_loaded(self, results, analysis, left, stamp, path: Path) -> None:
+        if path != self._loading_path:  # not the results asked for last (A-1)
+            return
+        self._loading_path = None
         self.results_path = path
         self.results_review_stamp = stamp
         self._watch_review_table()
@@ -749,6 +775,9 @@ class MainWindow(QMainWindow):
             self.open_results(self.project)
 
     def _results_failed(self, path: Path, message: str) -> None:
+        if path != self._loading_path:
+            return
+        self._loading_path = None
         self.statusBar().clearMessage()
         self.analysis_page.load_failed()
         log.error("cannot open the results %s: %s", path, message)
@@ -794,7 +823,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{name} – hxex")
 
     def new_session(self) -> None:
-        if not (self.project_page.tables.editor.may_leave() and self._may_discard()):
+        if not self._may_replace():
             return
         self.session_path = None
         self._apply(GuiSession())
@@ -854,19 +883,22 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Discard or self.save_session()
 
     def closeEvent(self, event: QCloseEvent):  # noqa: N802 - Qt's name
-        if self.run_page.may_close() and self.project_page.tables.editor.may_leave() \
-                and self._may_discard():
+        if self._may_replace():
             logging.getLogger("hxex").removeHandler(self.handler)
             self.table_zoom.stop()
-            # drawings and loads still running finish first (their results are dropped)
-            from .tasks import collection, drawing_pool
+            # work still running is dropped (nothing arrives in the closed window; what has
+            # not started never does) and what is running finishes first, with a limit;
+            # automatic garbage collection comes back only once the window is gone
+            # (hxex.gui.launch, the tests' conftest), not here with the window and its
+            # queued results alive (audit of 2026-11-15, A-6)
+            from .tasks import drawing_pool
 
-            stopped = True
+            self._drop_load()
+            self.results_page.drop_background()
+            self.analysis_page.cancel()
             for pool in (drawing_pool(), QThreadPool.globalInstance()):
                 pool.clear()
-                stopped = pool.waitForDone(10000) and stopped
-            if stopped:
-                collection().release()
+                pool.waitForDone(10000)
             event.accept()
         else:
             event.ignore()

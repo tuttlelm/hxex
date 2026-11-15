@@ -706,3 +706,14 @@ def test_the_elution_tab_reads_the_scan_files(qtbot, tmp_path, page):
     legend = [t.get_text() for t in fig.axes[0].get_legend().get_texts()]
     assert legend[0] == "this spectrum: undeuterated, rep 2 (un2.mzML)"
     assert legend[-1] == "its replicates (1)"
+
+
+def test_the_export_folder_belongs_to_the_results_shown(page, results, tmp_path):
+    """After an export from one project, every export from the next was suggested into the
+    first project's folder (audit of 2026-11-15, E-10)."""
+    page.export_folder = tmp_path / "a_exports"
+    page.show_results(results, None)  # the same results again: kept
+    assert page.export_folder == tmp_path / "a_exports"
+    page.show_results(results, tmp_path / "b" / "out")
+    assert page.export_folder is None
+    assert page.default_export_folder() == tmp_path / "b" / "hxex_exports"

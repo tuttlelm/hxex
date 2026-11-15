@@ -99,7 +99,8 @@ class WindowEditor(QObject):
         self.plain = plain
         self.preview = None
         self.failure: str | None = None
-        self.history: list = []  # SavedWindow, the latest last (Undo)
+        self.history: list = []  # SavedWindow, the latest last (Undo); the results' own
+        self._results_path: Path | None = None  # where the results shown come from
         self._target: tuple | None = None  # (results, spectrum id) the boxes were set for
         self._has_drift = False  # the spectrum was summed over a drift range
         self._drift_shown: tuple | None = None  # the drift range the boxes were set to
@@ -215,6 +216,17 @@ class WindowEditor(QObject):
             return
         self._target = None
         self.update()
+
+    def reset(self, results_path: Path | None) -> None:
+        """Other results are shown (from ``results_path``): the saves of the results before
+        cannot be undone from here (Undo rewrote the previous project's table and project file
+        under another project; audit of 2026-11-15, D-5)."""
+        self._results_path = results_path
+        if self.history:
+            log.info("the elution tab's Undo history (%d save(s)) left behind with %s",
+                     len(self.history), self.history[-1].path)
+        self.history.clear()
+        self.undo.setEnabled(False)
 
     def forget(self) -> None:
         """Another spectrum is selected: what is still being read, fitted or matched for the
@@ -656,6 +668,12 @@ class WindowEditor(QObject):
         if not self.history:
             return
         last = self.history[-1]
+        project = getattr(last, "project", None)
+        shown = None if self._results_path is None else Path(self._results_path).absolute()
+        if project is not None and shown != project:
+            self.message.emit(f"not undone: that window was saved in {project}, not in the "
+                              "project shown")
+            return
         try:
             undo_window(last)
         except (OSError, ValueError) as exc:
