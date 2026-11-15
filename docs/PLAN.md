@@ -1918,6 +1918,18 @@ Planned, not built:
    column (worst-case and expected overlap share), a view in the window, the list of unexplained
    species. First test: does the expected-case overlap predict the spectra that sit off their
    replicates (item 33's lists) better than chance?
+35. **A checkpoint of the fit stage** (owner, 2026-11-15, from the GUI audit's open question A 3:
+   a run stopped during its fit stage leaves nothing on disk, although the stage is long now).
+   The fits run in chunks of whole series with the plan recorded in the bundle (`chunk_plan`),
+   `hxex resume` already extends the fits chunk by chunk (a higher `k_max`), and the bootstrap
+   has a checkpoint (the fits are written before it starts, so a stopped bootstrap resumes):
+   the fit stage needs the same, the fits so far written after each chunk (a scratch file in
+   the output folder, or the bundle with the fit marked pending) and `resume` continuing from
+   the chunks not done. About a session; after the GUI fix sessions.
+36. **The fragment ladder fits' cost** (the GUI audit's measurement M-4): a Compute with
+   `fit_rates` on spends a minute in `fragments.fit_decay`'s 3,766 `scipy.optimize.curve_fit`
+   calls, almost all in finite-difference Jacobians. An analytic Jacobian of the decay model, or
+   a vectorised start, would cut most of it. Engine work, a later item.
 
 ## Risks and open decisions
 
