@@ -9877,3 +9877,36 @@ CSVs or mzML if wanted.
     choose K > 1 about as often (tutorial 62 vs 52 %, benchmark 12 vs 13 %, Orbitrap 31 vs 30 %). Private records:
     the benchmark's raw-file folder in hxex_private, rt_groups (README; columns_noapex is the
     better run), and analysis_examples/envelope_positions/built/README.md (page 1).
+
+385. **The profile fit built: `[run.picker] pick = "profile_fit"`, opt-in (2026-11-13; docs/PLAN.md
+    Next steps 31 "Design" and "Built"; guide picking-window.md "Fitting the profile instead").**
+    `hxex.picking.profile` ports the scratch prototype of item 383: the pick seeds a non-negative
+    deuterium distribution, each bin sits at its isotopologues' abundance-weighted mass (fine
+    structure per nominal shell) with its peak widened by their mass sd, the spectrum's m/z offset
+    is searched about its injection's median, and NNLS (on the normal equations) of the profile on
+    one peak per bin of the run's measured shape plus stray peaks gives the bins' areas, in two
+    passes. The run's `PeakMeasure` becomes `measure = "profile_fit"` with the peak `shape` in the
+    manifest; `fit_offset_ppm`, `purity`, and `stray_share` per spectrum (binned.parquet; spectra.csv
+    when fitted; `purity` as measured in item 384, replacing the prototype's `unexplained`, which
+    counted the strays as explained). Fragments, ion types other than M, series with their own envelopes, and centroided
+    spectra keep the pick; the screens and the m/z check measure the pick; a run without
+    undeuterated controls in profile mode is refused. Two changes from the design, both from the
+    built check: (1) the fit runs in spawned processes with one linear-algebra thread each (8
+    forked workers each used every core: load 217 on 48 cores); (2) both passes search coarse
+    then fine (the design's second pass, the best offset ± one step, missed the full grid's
+    offset in 18 of 1,500 benchmark spectra; both passes coarse: 3, at 24 instead of 15 ms per
+    spectrum; the full grid 46 ms). Built check against the prototype (hxex_private/
+    analysis_examples/envelope_positions/built, README; the first run with the design's second
+    pass, a second run of the benchmark and tutorial with both passes coarse: offsets off the
+    full grid's 1.3 → 0.31 % of benchmark spectra, scores unchanged): peak shapes identical; normalised values
+    agree to about 1e-6 (median); the K-independent tests identical (natural abundance) or 2-3 %
+    higher (charge pairs: the built values are 2-3 % larger, no run-wide factor, against one fixed
+    noise curve); full runs as the prototype's within run-to-run variation (undeuterated controls
+    reading two: benchmark 3.4 / 3.4 %, tutorial 1.9 / 2.3 %, noisy 5.5 / 5.5 %, Orbitrap 30.5 /
+    30.4 %; benchmark K = 1 misses 52 / 55; replicate and charge calibration within 0.01). The
+    known-answer set has 18 undeuterated controls, under the 20 the shape needs, so it takes a
+    Gaussian shape (the prototype had measured one): K correct 83.9 % (prototype 84.2, the pick
+    83.2). Picking time with 8 processes: tutorial (3,877 spectra) 21 s, benchmark (26,201) 2 min
+    12 s, Orbitrap (24,195, full grid) 3 min 11 s (the pick alone: under a minute). Figures: fitted values are triangles labelled
+    "fitted values: peak areas"; drawing the fitted peaks and strays waits for the owner (drafts
+    in the private record). Tests: tests/test_profile_fit.py.

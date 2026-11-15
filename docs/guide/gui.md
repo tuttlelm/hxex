@@ -234,6 +234,12 @@ Click a row, or move through the tree with the arrow keys, to see:
 
 A time point with a single replicate shows that spectrum's figures, as its replicate does.
 
+Results picked with the profile fit (`[run.picker] pick = "profile_fit"`) also have a
+**picking check** tab on a replicate: the raw profile, the peptide's fitted peaks (dark), the
+peaks the fit gave to other species (orange, dashed), and the bin values (triangles), with the
+spectrum's purity and stray share in the title ([details](picking-window.md#fitting-the-profile-instead-opt-in)).
+It is kept apart from the spectrum's own figure so that the populations' fit stays readable.
+
 A replicate read from mzML or Thermo raw files also has an **elution** tab: its elution
 trace over retention time, to check that the scans summed sit on the peptide's own elution peak and not on a
 neighbour's. *hxex* opens the spectrum's file again and draws, per scan, the intensity at the

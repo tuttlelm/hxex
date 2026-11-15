@@ -7,7 +7,8 @@ spectra), with filters and a search; and the figures of what is selected:
   draws them;
 - a time point: its replicates side by side (the spectra page cut to that time, on the
   series' m/z range), with the series' uptake;
-- a spectrum: the spectrum itself, its fits at each K, and the series' uptake.
+- a spectrum: the spectrum itself, its picking check (profile-fit results only), its fits at each
+  K, and the series' uptake.
 
 The children of a series are made when it is opened, so a large run opens quickly.
 """
@@ -112,14 +113,19 @@ SERIES_PAGES = ("spectra", "uptake", "populations")  # a series' pages, as hxex 
 TABS = {"start": ("overview",),  # results open, nothing selected yet: the first look
         "series": (*SERIES_PAGES, "data", "overview"),
         "point": ("spectra", "fits at each K", "uptake", "data", "overview"),
-        "spectrum": ("spectrum", "fits at each K", "elution", "uptake", "data", "overview")}
+        "spectrum": ("spectrum", "picking check", "fits at each K", "elution", "uptake", "data",
+                     "overview")}
 # shown only for spectra read from scan files (mzML, Thermo raw): read again when in view
 TRACE_TABS = ("elution",)
+# shown only for results picked with the profile fit ([run.picker] pick = "profile_fit")
+PROFILE_TABS = ("picking check",)
 # the figure tabs' tooltips (owner, 2026-11-13): a series is a peptide at one charge in one
 # sample, with its time points, replicates, and controls; a spectrum is one replicate
 TAB_TIPS = {
     "spectra": "the raw spectrum, the picked peaks, and the fit of each spectrum of the selection",
     "spectrum": "this spectrum's raw data, picked peaks, and fit",
+    "picking check": "how the profile fit read this spectrum: the peptide's fitted peaks, other "
+                     "species' peaks, and the purity",
     "fits at each K": "the same spectra fitted with 1, 2, 3 … populations, side by side",
     "elution": "where this spectrum was summed in retention time (and drift); change its window "
                "here",
@@ -421,7 +427,8 @@ class ResultsWorkspace(QWidget):
         self.figures.blockSignals(True)
         while self.figures.count():
             self.figures.removeTab(0)
-        names = tuple(n for n in TABS[kind] if n not in TRACE_TABS or self._traceable())
+        names = tuple(n for n in TABS[kind] if (n not in TRACE_TABS or self._traceable())
+                      and (n not in PROFILE_TABS or self._profile_fitted()))
         for name in names:
             at = self.figures.addTab(self.table_view if name == "data" else self.panel(name), name)
             self.figures.setTabToolTip(at, tip(TAB_TIPS[name]))
@@ -476,6 +483,15 @@ class ResultsWorkspace(QWidget):
         self._draw_overview()
 
     # --- the elution tab -----------------------------------------------------------------------
+
+    def _profile_fitted(self) -> bool:
+        """Whether the results shown were picked with the profile fit (a picking check can be
+        drawn)."""
+        settings = getattr(self.results, "settings", None)
+        try:
+            return settings is not None and settings.measure.measure == "profile_fit"
+        except Exception:  # noqa: BLE001 (a record this version cannot read: no tab)
+            return False
 
     def _traceable(self) -> bool:
         """Whether the results shown were read from scan files (an elution trace can be read)."""
@@ -1193,6 +1209,7 @@ class ResultsWorkspace(QWidget):
         decisions changed)."""
         from ..report.figures import series_figures, series_kinds
         from ..report.overview import plot_k_comparison, plot_k_comparisons
+        from ..report.picking_check import plot_picking_check
         from ..report.series import plot_series_spectra, series_mz_range
         from ..report.spectrum import plot_spectrum
 
@@ -1279,6 +1296,9 @@ class ResultsWorkspace(QWidget):
                 mz_range=mz_range))
             self.panel("fits at each K").draw(lambda: plot_k_comparison(sid, results,
                                                                         mz_range=mz_range))
+            if self._profile_fitted():
+                self.panel("picking check").draw(lambda: plot_picking_check(
+                    sid, results, mz_range=mz_range))
             self.panel("uptake").draw(uptake)
         self._draw_overview()  # in view: kept, or drawn again for new results (a decision)
         self._selection = (kind, payload)

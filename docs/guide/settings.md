@@ -223,8 +223,8 @@ Peak picking: the spectra become sticks at the predicted isotope positions (guid
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `pick` | text | `"peak"` | what a bin takes: "peak" (the tallest peak whose apex is in the window; pyHXExpress's "window_max", the tallest point in the window, was removed) |
-| `measure` | text | `"auto"` | the value a picked peak gives its bin: "auto" (areas when the run's undeuterated controls show weak peaks wider than tall ones, as on the Q-TOF data tested; heights otherwise, as on an Orbitrap; hxex info says which), "height" (as pyHXExpress) or "area" |
+| `pick` | text | `"peak"` | how a bin is read: "peak" (the tallest peak whose apex is in the window) or "profile_fit" (opt-in: peaks of the run's measured shape fitted to the profile around the whole envelope, with stray peaks for other species; measured to help on Q-TOF data, measure and area_fwhm then do not apply; peptide ions in profile mode only, fragments keep the pick). pyHXExpress's "window_max" was removed |
+| `measure` | text | `"auto"` | the value a picked peak gives its bin (not with pick = "profile_fit"): "auto" (areas when the run's undeuterated controls show weak peaks wider than tall ones, as on the Q-TOF data tested; heights otherwise, as on an Orbitrap; hxex info says which), "height" (as pyHXExpress) or "area" |
 | `area_fwhm` | number | `1.5` | with areas: how far either side of a peak's apex its area is taken, in peak widths at half maximum (measured from the run) |
 | `resolution_ppm` | number | `50.0` | half-width (ppm) of the window a peak is picked in around its predicted m/z (never above half the isotope spacing); not a resolving power |
 | `zero_filling` | integer | `4` | bins picked after the last one above the noise threshold |

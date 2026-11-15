@@ -14,6 +14,8 @@ from .screen import SCREEN_SCORES
 _FLAT = ("mz", "intensity", "n_deut", "offsets", "peak_mz")
 # the m/z check of each spectrum's series (hxex.picking.mz_check)
 MZ_CHECK_COLUMNS = ("envelope_offset_ppm", "envelope_offset_limit_ppm", "window_shift_ppm")
+# the profile fit of each spectrum (hxex.picking.profile; NaN: picked, not fitted)
+PROFILE_COLUMNS = ("fit_offset_ppm", "purity", "stray_share")
 
 
 @dataclass(frozen=True)
@@ -37,7 +39,12 @@ class BinnedSet:
     calibration, ``envelope_offset_limit_ppm``, the limit it was compared with (both NaN: not
     assessed), and ``window_shift_ppm``, how far the picker's windows were moved from the
     predicted m/z (0: not moved; only bundles picked with the former ``recentre``, removed in
-    HISTORY 200, have others).
+    HISTORY 200, have others). With ``pick = 'profile_fit'`` (:mod:`hxex.picking.profile`):
+    ``fit_offset_ppm``, the m/z offset the profile fit took, ``purity``, the share of the profile
+    the bins' fitted peaks account for within a peak width of each bin, and ``stray_share``, the
+    share of the fitted region the stray peaks account for
+    (:func:`hxex.picking.profile.fit_quality`; all NaN for a spectrum that kept the pick);
+    ``peak_mz`` is then each bin's fitted position.
     Nothing is dropped here; drop flagged spectra with :meth:`select`. The index arrays are
     copied from the :class:`~hxex.spectra.SpectrumSet` that was picked.
     """
@@ -83,6 +90,9 @@ class BinnedSet:
     envelope_offset_ppm: np.ndarray | None = None
     envelope_offset_limit_ppm: np.ndarray | None = None
     window_shift_ppm: np.ndarray | None = None
+    fit_offset_ppm: np.ndarray | None = None
+    purity: np.ndarray | None = None
+    stray_share: np.ndarray | None = None
     # per spectrum, its scans' noise at its bins and shares of the signal (ScanCut; None: not
     # recorded): such spectra are fitted through the instrument's per-scan cut
     scan_cut: np.ndarray | None = field(default=None, compare=False)
@@ -91,7 +101,8 @@ class BinnedSet:
         for name in SCREEN_SCORES:  # not assessed: picked elsewhere, or by an older version
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
-        for name in ("envelope_offset_ppm", "envelope_offset_limit_ppm"):  # not assessed
+        for name in ("envelope_offset_ppm", "envelope_offset_limit_ppm",  # not assessed
+                     *PROFILE_COLUMNS):  # picked, not fitted
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
         if self.window_shift_ppm is None:  # picked elsewhere or by an older version: not moved

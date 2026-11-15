@@ -1637,6 +1637,7 @@ Planned, not built:
        - `fit_offset_ppm`;
        - `unexplained`: the share of the fitted region's intensity that neither the bins nor
          the strays account for. A candidate interference measure; reported, not used.
+         Replaced in the build by `purity` and `stray_share` (item 33 step 1, HISTORY 384).
      - **What changes downstream.**
        - `measure` (heights or areas, HISTORY 185) does not apply to fitted values; `hxex
          check` and `hxex info` say so.
@@ -1674,6 +1675,17 @@ Planned, not built:
          fitted positions.
      - **Not in the first build:** a position tolerance (dropped); fragments; the Orbitrap
        question; the spectrum-level identity flag (separate, upstream).
+   - *Built (2026-11-13, HISTORY 385): as designed.*
+     `hxex.picking.profile`; `pick = "profile_fit"` in `PICKS`/`PROJECT_PICKS`; the run's
+     `PeakMeasure` is `measure = "profile_fit"` with the peak `shape` (manifest `peak_measure`);
+     `fit_offset_ppm`, `purity`, and `stray_share` per spectrum (binned.parquet, spectra.csv when fitted; `unexplained` replaced, item 33 step 1);
+     the fit runs in up to 8 spawned processes with one linear-algebra thread each (forked
+     workers each took every core). The coarse search follows the measured width law
+     (`|fwhm_exponent| < 0.25`), and both passes search coarse then fine: the design's second
+     pass (the best offset ± one step) missed the full grid's offset in 1.2 % of benchmark
+     spectra, both passes coarse in 0.2 % (the sample of 300-400 had underestimated it). Without undeuterated controls in profile mode the run is
+     refused. Figures: fitted values are triangles, labelled as such; drawing the fitted peaks
+     and strays waits for the owner (drafts side by side in the private record).
 
 32. **Exporting a series: HX-Express spreadsheets and the data behind the figures** (owner,
    2026-11-12; BUILT the same day, HISTORY 373: `hxex.report.export`,

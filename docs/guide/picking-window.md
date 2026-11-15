@@ -9,7 +9,7 @@ tolerance in ppm.
 
 ```toml
 [run.picker]
-pick = "peak"   # the default, and the only choice
+pick = "peak"   # the default; "profile_fit" fits the profile instead (see below)
 ```
 
 Each bin takes the tallest **peak** whose top lies inside its window. In a profile spectrum a
@@ -82,6 +82,90 @@ this change. Set `measure = "area"` to take areas whatever the width check says;
 measures the peak width from the undeuterated controls. Like the other picker settings, the
 choice acts when the spectra are picked (`hxex run`; see [Changing these
 settings](#changing-these-settings) for running again from the stored spectra).
+
+## Fitting the profile instead (opt-in)
+
+```toml
+[run.picker]
+pick = "profile_fit"
+```
+
+With `pick = "profile_fit"`, *hxex* does not take each bin from its own window. It fits the
+whole envelope at once: one peak per bin, all with the run's own peak shape, at the positions
+the envelope's isotopes put them, and the bins take those peaks' areas. Any peak in the profile
+that sits more than one peak width away from every bin gets a peak of its own in the fit (a
+"stray" peak), so a neighbouring peptide's peak is given to that neighbour instead of being
+counted into this peptide's bins. For each spectrum:
+
+1. The usual pick runs first and gives a rough deuterium distribution.
+2. From it and the peptide's composition, *hxex* works out where each bin's peak sits (a
+   deuterated bin mixes molecules with deuterium and carbon-13, which differ slightly in mass,
+   so it sits a little away from an undeuterated one) and how much wider than a single peak it
+   is.
+3. It tries a range of small shifts of the whole spectrum in m/z (about its injection's typical
+   shift) and keeps the one that fits best.
+4. The fit is done twice, the second time with positions from the first fit's values.
+
+The peak shape and width come from the run's undeuterated controls, in three classes of peak
+height, because on a Q-TOF weak peaks are wider than tall ones. With fewer than 20 undeuterated
+controls the shape is a smooth bell curve of the run's width. Without any undeuterated control
+in profile mode the run is refused: nothing tells *hxex* how wide the peaks are.
+
+The values are areas on the height scale (a peak of the run's width keeps its height), so
+`measure` and `area_fwhm` do not apply. `hxex check` says so, and `hxex info` shows the peak
+width and shape the run measured:
+
+```
+bin values     fitted peak areas (pick = profile_fit); peak width 34.9 ppm at m/z 1000; peak shape measured from 517 undeuterated controls (1007, 641, 587 peaks by height class); width at a tenth 1.88 peak widths (a Gaussian's 1.82)
+```
+
+Fragment ions, ion types other than M, series with their own envelopes (`[run.envelope]`), and
+centroided spectra keep the usual pick. Three columns in `spectra.csv` describe each fitted
+spectrum:
+
+- `fit_offset_ppm`: the shift in m/z the fit took;
+- `purity`: how much of the profile close to the peptide's peaks (within one peak width of
+  each) the peptide's fitted peaks account for, from 0 to 1. Other species resolved between
+  the peptide's peaks do not lower it; something sitting beside a peak, under its flank, does.
+  On the datasets measured, most spectra read 0.9 or more (median 0.94 to 0.97, on Q-TOF and
+  Orbitrap data alike), and spectra below about 0.8 were far more often far from their
+  replicates. Something sitting right on a peak (within about a third of a peak width) reads as
+  part of it and does not lower purity: no picking can tell those apart.
+- `stray_share`: how much of the profile around the envelope the other species' peaks account
+  for. A crowded spectrum can have a large share and still a high purity.
+
+Both are only reported, not used to judge anything. To see how the fit read a spectrum, open
+its **picking check** tab in the window ([the window](gui.md)), or draw it from Python:
+
+```python
+from hxex.report.picking_check import plot_picking_check
+
+fig = plot_picking_check(spectrum_id, results)
+```
+
+It shows the raw profile, the peptide's fitted peaks, the other species' peaks the fit set
+aside (orange, dashed), and the bin values, with the purity and stray share in its title.
+
+**When it helps.** On Q-TOF data (resolving power about 20,000 to 25,000), the fitted values
+were closer to the truth than the pick on every test made: simulated spectra with known
+answers, two halves of one elution measured separately, the undeuterated controls against
+their isotope pattern, and the charge states of one injection against each other. Fewer
+undeuterated controls seemed to hold two populations (from 7.0 to 3.4 % on one dataset, from
+11.2 to 5.5 % on a noisy one), and the known-answer set's number of populations was right a
+little more often. The values also hardly depend on the window: the window only seeds the fit.
+
+**On an Orbitrap**, keep the usual pick with a narrow window (`resolution_ppm = 10`). There,
+other peptides often sit within one peak width of this peptide's peaks, too close for a stray
+peak, and a narrow window keeps them out better. The fit was better than a ±50 ppm window but
+not better than ±10 ppm.
+
+**It takes longer.** The fit takes about 25 to 50 ms per spectrum on one core, against about
+1 ms for the pick. *hxex* spreads it over up to 8 processes: a Q-TOF run of 26,000 spectra spent
+about 2 minutes picking instead of under one, an Orbitrap run of 24,000 about 3 minutes. Running again from the stored spectra with the
+same picker settings reuses the stored values, so the time is spent once.
+
+On the spectra page of the figures, fitted values are drawn as up-pointing triangles, and the
+legend says "fitted values: peak areas (height-equivalent)".
 
 ## The default: a ppm tolerance
 

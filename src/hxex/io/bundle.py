@@ -48,7 +48,7 @@ from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..fit.measurements import measurement_identity
 from ..noise import ControlsNoise, NoiseEstimate
 from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PeakMeasure, PickerConfig
-from ..picking.binned import MZ_CHECK_COLUMNS
+from ..picking.binned import MZ_CHECK_COLUMNS, PROFILE_COLUMNS
 from ..picking.screen import SCREEN_SCORES
 from ..population_test import PopulationTest, PopulationTestConfig
 from ..quality import FLAG_NAMES, QualityConfig, QualityFlags
@@ -158,6 +158,7 @@ def _binned_table(b: BinnedSet) -> pa.Table:
         ("max_namides", np.int64), ("empty", bool), ("no_signal", bool), ("capped", bool),
         *((name, np.float64) for name in SCREEN_SCORES),
         *((name, np.float64) for name in MZ_CHECK_COLUMNS),
+        *((name, np.float64) for name in PROFILE_COLUMNS),
     )
     for name, typ in per_spectrum:
         cols[name] = pa.array(np.asarray(getattr(b, name), dtype=typ))
@@ -1532,6 +1533,8 @@ class Bundle:
                for name in SCREEN_SCORES if name in t.column_names},
             **{name: np.asarray(_col(t, name), dtype=np.float64)  # older bundles: not checked
                for name in MZ_CHECK_COLUMNS if name in t.column_names},
+            **{name: np.asarray(_col(t, name), dtype=np.float64)  # older bundles: picked
+               for name in PROFILE_COLUMNS if name in t.column_names},
         )
 
     def spectra(self, ids: Sequence[str] | None = None) -> SpectrumSet | None:

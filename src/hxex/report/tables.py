@@ -22,7 +22,7 @@ from ..controls import CONTROL_NOTES, correct_means
 from ..io.entries import parse_range
 from ..io.outputs import replace_outputs
 from ..noise import noise_reference_kinds
-from ..picking.binned import MZ_CHECK_COLUMNS
+from ..picking.binned import MZ_CHECK_COLUMNS, PROFILE_COLUMNS
 from ..picking.screen import SCREEN_SCORES
 from ..quality import FLAG_NAMES
 from ..spectra import point_order_key, time_point
@@ -293,7 +293,9 @@ def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     (``screen_*``, :mod:`hxex.picking.screen`; empty where not assessed) and the m/z check of
     the spectrum's series (``envelope_offset_ppm``, ``envelope_offset_limit_ppm``,
     ``window_shift_ppm``, :mod:`hxex.picking.mz_check`; the first two empty where not
-    assessed, the last 0 except in bundles picked with the former ``recentre``)."""
+    assessed, the last 0 except in bundles picked with the former ``recentre``); with ``pick =
+    "profile_fit"``, the profile fit's ``fit_offset_ppm``, ``purity`` and ``stray_share``
+    (:mod:`hxex.picking.profile`; empty for a spectrum that kept the pick)."""
     ks = results.effective_K
     k_max = int(ks.max())  # over every spectrum: the same columns whichever rows are made
     picked = np.arange(len(ks)) if rows is None else np.asarray(rows, dtype=np.int64)
@@ -350,6 +352,8 @@ def _screen_columns(results: Results) -> dict[str, np.ndarray]:
     m = len(results.fit)
     b = results.binned
     names = (*SCREEN_SCORES, *MZ_CHECK_COLUMNS)
+    if b is not None and np.isfinite(np.asarray(b.fit_offset_ppm, dtype=np.float64)).any():
+        names = (*names, *PROFILE_COLUMNS)  # picked with pick = "profile_fit"
     if b is None:
         return {name: np.full(m, np.nan) for name in names}
     index = {str(s): j for j, s in enumerate(b.spectrum_id)}

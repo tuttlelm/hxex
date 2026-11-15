@@ -277,7 +277,7 @@ def series_offsets(spectra, config: PickerConfig, *,
     runs = {run: calibration(np.asarray(at)) if len(at) >= MIN_RUN_CONTROLS else whole
             for run, at in run_index.items()}
     by_series: dict[int, list[tuple[float, float, float]]] = defaultdict(list)
-    # each series from its controls' offsets with pairs (HISTORY pending: a control whose third
+    # each series from its controls' offsets with pairs (HISTORY 382: a control whose third
     # top lands on another peak still places the envelope), against its runs' calibration and
     # scatter, which come from controls whose tops all agree only (pairs would widen it)
     for j, (i, o, run) in enumerate(zip(rows, np.asarray(paired, dtype=np.float64), run_of,

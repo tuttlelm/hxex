@@ -188,14 +188,16 @@ STICK = "#444444"
 # the marker on top of a picked bin tells what the bin holds (owner, 2026-11-02): a circle for
 # heights, an up-pointing triangle for areas (height-equivalent), which sit off the raw
 # profile's apexes by design
-MEASURE_MARKERS = {"height": ("o", MARKER_SIZE), "area": ("^", 22)}
+MEASURE_MARKERS = {"height": ("o", MARKER_SIZE), "area": ("^", 22), "profile_fit": ("^", 22)}
 MEASURE_LABELS = {"height": "picked values: heights",
-                  "area": "picked values: areas (height-equivalent)"}
+                  "area": "picked values: areas (height-equivalent)",
+                  "profile_fit": "fitted values: peak areas (height-equivalent)"}
 
 
 def peak_measure(results: Results | None) -> str:
-    """``'height'`` or ``'area'``: what the picked bins of ``results`` hold (the bundle's
-    ``peak_measure``; heights without settings, as in a bundle made before areas)."""
+    """``'height'``, ``'area'`` or ``'profile_fit'``: what the picked bins of ``results`` hold
+    (the bundle's ``peak_measure``; heights without settings, as in a bundle made before
+    areas)."""
     settings = results.settings if results is not None else None
     measure = getattr(settings, "peak_measure", "height") if settings is not None else "height"
     return measure if measure in MEASURE_MARKERS else "height"

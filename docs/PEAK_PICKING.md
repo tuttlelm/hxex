@@ -191,6 +191,28 @@ the profile points fall on the peak; a height does (at 2.6 points per FWHM the t
 read up to a tenth low). The choice is recorded in the bundle (`peak_measure`) and shown by
 `hxex info`.
 
+**The profile fit (`pick = "profile_fit"`, opt-in; `hxex.picking.profile`, PLAN Next steps 31).**
+The pick above runs first, with areas; its values give a non-negative deuterium distribution
+over the exchangeable sites (the natural-abundance shape shifted along the deuterium grid). Each
+bin's position is then the abundance-weighted mass of its isotopologues (deuterium and the fine
+structure of 13C, 15N, 18O, 34S per nominal shell, exact masses) and its peak is the run's width
+widened by those isotopologues' mass sd. Non-negative least squares (on the normal equations,
+by Cholesky) of the profile points within 1.5 widths of the end bins on one peak per bin, of the
+run's measured shape (the controls' picked peaks in three height classes, a median profile in
+units of the width; a Gaussian with fewer than 20 controls), plus free stray peaks at the
+profile's local maxima above 0.2 % of the region's tallest that lie more than one width from
+every bin. The spectrum's m/z offset is searched about its injection's median own offset (the
+weighted median of its bright picked apexes about the supported positions; injection = scan
+file, else sample, role, time, and replicate), 3 robust sd of the run's own offsets about their
+injection medians either side (at least 3 ppm), in 12 steps either side (at least 0.25 ppm);
+coarse then fine where the width law is flat in m/z (`|fwhm_exponent| < 0.25`, a TOF), the full
+grid otherwise. Two passes, the second with positions from the first's values. A bin's value is
+its peak's area over that of a Gaussian of the run's width and unit height; a bin with no
+profile point where its peak reaches half height reads 0. Recorded per spectrum:
+`fit_offset_ppm`, `purity` (the bins' share of the profile within `FOOTPRINT_WIDTHS` = 1 peak width of each bin whose fitted peak reaches 5 % of the tallest bin's, weighted by the bins' curve; the smaller of curve and profile), `stray_share` (the strays' share of the region). Fragments, ion types other than M, series with their own
+envelopes, and centroided spectra keep the pick; the screens and the m/z check measure the
+pick, as without the fit.
+
 **Why not a tighter window.** On the Q-TOF benchmark the undeuterated peaks (M to M+2) sit within
 16 ppm of their predicted m/z within a series (99 %), but deuterated peaks scatter +/- 20 to 40 ppm
 about theirs: each is a blend of isotopologues with deuterium (+1.00628 Da) and carbon-13

@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field, fields
 
 import numpy as np
 from scipy.special import erf
@@ -64,7 +64,11 @@ class PeakMeasure:
     ``n_controls`` controls with a measured width (``n_weak`` weak peaks); ``area_fwhm`` the
     area's half-range in peak widths; ``reason`` says in words why. ``area_scale`` is the
     median area of the controls' tallest peaks over that range per unit of height (their
-    tallest point) and of width (NaN: a Gaussian's, ``1.064`` at 1.5 widths)."""
+    tallest point) and of width (NaN: a Gaussian's, ``1.064`` at 1.5 widths).
+
+    With ``[run.picker] pick = "profile_fit"`` the measure is ``'profile_fit'`` (the bins take
+    fitted peak areas, :mod:`hxex.picking.profile`, whatever ``setting`` says) and ``shape`` is
+    the run's peak shape (:class:`~hxex.picking.profile.PeakShape`); None otherwise."""
 
     measure: str
     setting: str
@@ -76,6 +80,7 @@ class PeakMeasure:
     area_fwhm: float = 1.5
     reason: str = ""
     area_scale: float = float("nan")
+    shape: object | None = field(default=None, compare=False)  # profile.PeakShape
 
     def fwhm_mz(self, mz) -> np.ndarray:
         """The peak width (FWHM, in m/z) at each ``mz``."""
@@ -83,21 +88,35 @@ class PeakMeasure:
         return mz * 1e-6 * self.fwhm_ppm * (mz / REFERENCE_MZ) ** self.fwhm_exponent
 
     def to_dict(self) -> dict:
-        return {k: (None if isinstance(v, float) and not math.isfinite(v) else v)
-                for k, v in asdict(self).items()}
+        out = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "shape"}
+        out = {k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+               for k, v in out.items()}
+        if self.shape is not None:
+            out["shape"] = self.shape.to_dict()
+        return out
 
     @classmethod
     def from_dict(cls, data: Mapping) -> PeakMeasure:
         values = {k: (float("nan") if v is None and k in _NAN_FIELDS else v)
                   for k, v in dict(data).items()}
+        if values.get("shape") is not None:
+            from .profile import PeakShape
+
+            values["shape"] = PeakShape.from_dict(values["shape"])
         return cls(**values)
+
+    @property
+    def fitted(self) -> bool:
+        """Whether the bins take fitted peak areas (``pick = "profile_fit"``)."""
+        return self.measure == "profile_fit"
 
     def describe(self) -> str:
         """One line for people: the measure and why."""
-        what = "areas" if self.measure == "area" else "heights"
+        what = {"area": "areas", "profile_fit": "fitted peak areas"}.get(self.measure, "heights")
         width = (f"; peak width {self.fwhm_ppm:.1f} ppm at m/z {REFERENCE_MZ:g}"
                  if math.isfinite(self.fwhm_ppm) else "")
-        return f"{what} ({self.reason}){width}"
+        shape = f"; peak shape {self.shape.describe()}" if self.shape is not None else ""
+        return f"{what} ({self.reason}){width}{shape}"
 
 
 HEIGHTS = PeakMeasure("height", "height", reason="set")
@@ -207,18 +226,24 @@ def _recorded(spectra, name: str, i: int) -> float:
 def choose_measure(spectra, config: PickerConfig, *, registry=None) -> PeakMeasure:
     """The run's :class:`PeakMeasure` under ``config.measure`` from the undeuterated controls
     (role ``'undeut'``) of ``spectra`` (a :class:`~hxex.spectra.SpectrumSet`); see the module
-    docstring. ``'height'`` is returned without measuring."""
+    docstring. ``'height'`` is returned without measuring. With ``config.pick =
+    'profile_fit'`` the bins take fitted areas whatever ``config.measure`` says: the controls
+    give the peak width and shape (:mod:`hxex.picking.profile`); a run without an undeuterated
+    control in profile mode is refused (nothing measures the peaks' width)."""
     from .. import chem
     from .pick import clean_profile, pick_spectrum, plan_bins
+    from .profile import peak_shape, shape_curves
 
-    if config.measure == "height":
+    fitted = config.pick == "profile_fit"
+    if config.measure == "height" and not fitted:
         return HEIGHTS
     registry = registry or chem.DEFAULT_MODIFICATIONS
     role = np.asarray(spectra.role if spectra.role is not None else [""] * len(spectra), dtype=str)
     rows = np.flatnonzero(role == UNDEUT)
-    heights = PickerConfig.from_dict({**config.to_dict(), "measure": "height"})
+    heights = PickerConfig.from_dict({**config.to_dict(), "measure": "height",
+                                      **({"pick": "peak"} if fitted else {})})
     plans: dict = {}
-    tops, top_fw, top_mz, weak, tall = [], [], [], [], []
+    tops, top_fw, top_mz, weak, tall, regions = [], [], [], [], [], []
     n_centroided = 0
     for i in rows:
         mz, y = clean_profile(*spectra.spectrum(int(i)))
@@ -252,7 +277,17 @@ def choose_measure(spectra, config: PickerConfig, *, registry=None) -> PeakMeasu
         ratios = [peak_fwhm(mz, y, apex[k], spacing) / w0
                   for k in np.flatnonzero((share >= WEAK_SHARE[0]) & (share < WEAK_SHARE[1]))]
         weak.append([r for r in ratios if math.isfinite(r)])
+        if fitted:  # the peaks' region, for their shape once the width is known
+            s = np.asarray(plans[key].clusters[0], dtype=np.float64)
+            region = (mz >= np.nanmin(apex) - 1.0) & (mz <= np.nanmax(apex) + 1.0)
+            regions.append((mz[region], y[region], apex, s[:len(v)] / s.max(), charge))
     n = len(tops)
+    if n == 0 and fitted:
+        reason = ("the spectra are centroided" if n_centroided
+                  else "no undeuterated control has a peak whose width can be measured")
+        raise ValueError(f"pick = \"profile_fit\" needs undeuterated controls in profile mode "
+                         f"to measure the run's peak width and shape, and {reason}: use pick "
+                         f"= \"peak\" (the default)")
     if n == 0:
         reason = ("the spectra are centroided" if n_centroided
                   else "no undeuterated control with a measurable peak width")
@@ -281,6 +316,12 @@ def choose_measure(spectra, config: PickerConfig, *, registry=None) -> PeakMeasu
             continue  # capped: not the full range
         per.append(float(_raw_areas(x, v, np.array([c]), half, sp)[0] / (h * width[0])))
     base["area_scale"] = float(np.median(per)) if per else float("nan")
+    if fitted:
+        curves = [c for x, v, apex, expected, z in regions
+                  for c in shape_curves(x, v, apex, expected, z, law.fwhm_mz)]
+        shape = peak_shape(curves, len(regions))
+        return PeakMeasure("profile_fit", reason="pick = profile_fit", shape=shape,
+                           **{**base, "setting": "profile_fit"})
     if config.measure == "area":
         return PeakMeasure("area", reason="set", **base)
     if n < MIN_CONTROLS or not pooled:

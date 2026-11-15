@@ -1813,10 +1813,14 @@ _COMMENTS: dict[str, str] = {
     "run.picker.nterm_subtract": "N-terminal residues without an exchanging amide (the amide "
                                  "count bounds the bins); none after an acetylated N-terminus "
                                  "(Ac-), whose residue 1 keeps its amide",
-    "run.picker.pick": 'what a bin takes: "peak" (the tallest peak whose apex is in the window; '
-                       "pyHXExpress's \"window_max\", the tallest point in the window, was "
-                       "removed)",
-    "run.picker.measure": 'the value a picked peak gives its bin: "auto" (areas when the run\'s '
+    "run.picker.pick": 'how a bin is read: "peak" (the tallest peak whose apex is in the window) '
+                       'or "profile_fit" (opt-in: peaks of the run\'s measured shape fitted to '
+                       "the profile around the whole envelope, with stray peaks for other "
+                       "species; measured to help on Q-TOF data, measure and area_fwhm then "
+                       "do not apply; peptide ions in profile mode only, fragments keep the "
+                       "pick). pyHXExpress's \"window_max\" was removed",
+    "run.picker.measure": 'the value a picked peak gives its bin (not with pick = "profile_fit"): '
+                          '"auto" (areas when the run\'s '
                           "undeuterated controls show weak peaks wider than tall ones, as on "
                           "the Q-TOF data tested; heights otherwise, as on an Orbitrap; hxex "
                           'info says which), "height" (as pyHXExpress) or "area"',

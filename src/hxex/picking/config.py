@@ -17,10 +17,11 @@ from ..chem import DEFAULT_AMIDE_RULES, AmideRules, ChemistryError
 log = logging.getLogger(__name__)
 
 RECORDED = "recorded"  # resolving_power: take each spectrum's value from the scan files
-PICKS = ("peak", "window_max")  # pick: what a bin takes from its window
+PICKS = ("peak", "profile_fit", "window_max")  # pick: how a bin's value is read
 # what a project file may set: "window_max" (pyHXExpress's pick) stays for the comparison tests
 # and for results picked with it, not as a setting (owner, 2026-11-13)
-PROJECT_PICKS = ("peak",)
+PROJECT_PICKS = ("peak", "profile_fit")
+APEX_PICKS = ("peak", "profile_fit")  # picks that take the tallest peak's apex in a window
 MEASURES = ("auto", "height", "area")  # measure: what value a picked peak gives its bin
 ISOTOPE_STEP = 1.00235  # Da, the average spacing of a peptide's isotope peaks
 
@@ -51,11 +52,16 @@ class PickerConfig:
     """Settings of :func:`hxex.picking.pick_spectra` (the ``[run.picker]`` table): how a
     spectrum becomes sticks at the predicted isotope positions. See docs/PEAK_PICKING.md.
 
-    - ``pick``: what a bin takes from its window. ``'peak'`` (the default and the only choice a
-      project file has): the tallest peak of the raw spectrum whose apex lies in the window (in
-      profile data a local maximum, its apex the vertex of the parabola through it and its
-      neighbours; in centroided data every point), so the flank of a peak outside the window
-      is never picked. ``'window_max'``: the tallest point in the window, with the shoulder
+    - ``pick``: how a bin's value is read. ``'peak'`` (the default): the tallest peak of the
+      raw spectrum whose apex lies in the bin's window (in profile data a local maximum, its
+      apex the vertex of the parabola through it and its neighbours; in centroided data every
+      point), so the flank of a peak outside the window is never picked. ``'profile_fit'``
+      (opt-in): the pick runs first, then the bins take the areas of peaks fitted to the
+      profile around the whole envelope, with the run's peak shape, at the positions the
+      envelope supports, with stray peaks for other species (:mod:`hxex.picking.profile`);
+      ``measure`` and ``area_fwhm`` then do not apply. Fragment ions, ion types other than
+      ``M``, series with their own envelopes, and centroided spectra keep the pick.
+      ``'window_max'``: the tallest point in the window, with the shoulder
       rule (``shoulder_min_points``), as pyHXExpress picks; kept for the comparison with
       pyHXExpress's picks and for results picked with it, not as a project setting (it was
       as good or worse on every dataset measured; HISTORY 172 and the removal's item).
@@ -184,7 +190,7 @@ class PickerConfig:
         exponent = self.resolving_power_exponent
         if isinstance(exponent, bool) or not exponent >= 0:
             raise ValueError("resolving_power_exponent must be non-negative")
-        if r is not None and self.pick == "peak":
+        if r is not None and self.pick in APEX_PICKS:
             raise ValueError(
                 "resolving_power sets the window for pick = 'window_max' only; with pick = "
                 "'peak' (the default) the window is resolution_ppm, a mass tolerance: a peak's "

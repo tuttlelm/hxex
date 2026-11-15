@@ -27,7 +27,7 @@ from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..spectra import SpectrumSet, _objects
 from .binned import BinnedSet
-from .config import DEFAULT_PICKER_CONFIG, PickerConfig
+from .config import APEX_PICKS, DEFAULT_PICKER_CONFIG, PickerConfig
 from .measure import PeakMeasure, area_values, choose_measure
 from .mz_check import series_offsets
 from .screen import RAW_SCORES, STICK_POINTS, off_position_scores, raw_scores
@@ -70,6 +70,9 @@ class PickedSpectrum:
     no_signal: bool
     capped: bool
     screen: tuple[float, float, float, float] = (float("nan"),) * 4  # screen.raw_scores
+    fit_offset_ppm: float = float("nan")  # the profile fit's (NaN: the pick)
+    purity: float = float("nan")  # the profile fit's quality (profile.fit_quality)
+    stray_share: float = float("nan")
 
 
 def predicted_mz(undeut_mz: float, charge: int, n_bins: int) -> np.ndarray:
@@ -209,7 +212,7 @@ def _bin_values(
     lower, upper = config.window_edges(pred, charge, **recorded)
     values = np.zeros(len(pred))
     where = np.full(len(pred), np.nan)
-    if config.pick == "peak":
+    if config.pick in APEX_PICKS:
         index, apex = peaks if peaks is not None else _peaks(mz, y, charge)
         lo = np.searchsorted(apex, lower, side="left")
         hi = np.searchsorted(apex, upper, side="right")
@@ -336,6 +339,17 @@ def clean_profile(mz, intensity) -> tuple[np.ndarray, np.ndarray]:
     return mz, intensity
 
 
+def envelope_shape(mz: np.ndarray, values: np.ndarray, charge: int, env_threshold: float
+                   ) -> tuple[float, float]:
+    """The envelope's width (in mass units) at ``env_threshold`` of the tallest bin and its
+    symmetry (2 minus the drop from the tallest to the left edge, relative to the tallest)."""
+    if not len(values):
+        return float("nan"), float("nan")
+    ymax = float(values.max())
+    left, right, left_int = envelope(mz, values, ymax * env_threshold)
+    return charge * (right - left), (2.0 - (ymax - left_int) / ymax if ymax else float("nan"))
+
+
 def mz_offset_ppm(peak_mz: np.ndarray, pred_mz: np.ndarray, intensity: np.ndarray,
                   threshold: float) -> float:
     """How far the picked peaks are from their predicted m/z: the intensity-weighted median of
@@ -391,7 +405,7 @@ def pick_spectrum(
 
     pred = plan.pred_mz
     peaks = None
-    if config.pick == "peak" and len(pred):  # found once: the later passes only move windows
+    if config.pick in APEX_PICKS and len(pred):  # found once: the later passes only move windows
         reach = config.half_width(pred, charge, **recorded).max() + 1.00235 / charge
         span = (pred.min() * scale - reach, pred.max() * scale + reach)
         peaks = _peaks(mz, intensity, charge, span)
@@ -421,12 +435,7 @@ def pick_spectrum(
     picked_mz, picked_y = pred[: end + 1], values[: end + 1]
     peak_mz = where[: end + 1]
 
-    width = symm = float("nan")
-    if len(picked_y):
-        ymax = float(picked_y.max())
-        left, right, left_int = envelope(picked_mz, picked_y, ymax * config.env_threshold)
-        width = charge * (right - left)
-        symm = 2.0 - (ymax - left_int) / ymax if ymax else float("nan")
+    width, symm = envelope_shape(picked_mz, picked_y, charge, config.env_threshold)
     n_deut = np.arange(end + 1, dtype=np.int64)
     screen = PickedSpectrum.screen
     if plan.clusters is not None and len(picked_y):
@@ -459,6 +468,7 @@ def pick_spectra(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
     measure: PeakMeasure | None = None,
+    workers: int | None = None,
 ) -> BinnedSet:
     """Pick every spectrum of ``spectra``. Nothing is dropped; see the flags on the result.
     ``measure`` is the run's choice of bin value; None: decided here from ``spectra`` under
@@ -467,11 +477,17 @@ def pick_spectra(
     ion-type mixture (:mod:`hxex.picking.envelope`); the others use their ion's natural ones.
     With ``config.off_mz_sd`` set, the series of peptide ions with undeuterated controls are
     checked for an envelope off its m/z first (:mod:`hxex.picking.mz_check`; flagged, the
-    windows stay on the prediction)."""
+    windows stay on the prediction). With ``pick = 'profile_fit'`` (a ``measure`` of
+    ``'profile_fit'``) the profile fit then reads the bins (:mod:`hxex.picking.profile`), in up
+    to ``workers`` processes (None: as many as it may use, up to eight)."""
     clusters = clusters or {}
     if measure is None:
         measure = choose_measure(spectra, config, registry=registry)
         log.info("picking: bins take %s", measure.describe())
+    fitted = measure.measure == "profile_fit"
+    # with the profile fit the pick seeds it: with areas (the closer start where weak peaks are
+    # wider than tall ones; a Gaussian's when the run's area scale is unknown)
+    seed = dataclasses.replace(measure, measure="area") if fitted else measure
     plans: dict[tuple, BinPlan] = {}
     picked: list[PickedSpectrum] = []
     n = len(spectra)
@@ -513,15 +529,128 @@ def pick_spectra(
             pick_spectrum(
                 mz, y, key[0], key[1], modification=key[2], config=config, registry=registry,
                 plan=plans[key], resolving_power=float(spectra.resolving_power[i]),
-                resolving_power_mz=float(spectra.resolving_power_mz[i]), measure=measure,
+                resolving_power_mz=float(spectra.resolving_power_mz[i]), measure=seed,
             )
         )
-        report(progress, i + 1, len(spectra))
+        if not fitted:
+            report(progress, i + 1, len(spectra))
+        elif i % 200 == 0:
+            report(progress, i + 1, 10 * len(spectra))  # the pick: a tenth of the stage
     binned = _assemble(spectra, picked)
+    # the screens measure the pick (as without the fit: their limits were set on it)
+    off_position = off_position_scores(binned, config, spectra.resolving_power,
+                                       spectra.resolving_power_mz)
+    if fitted:
+        picked = _profile_fit(spectra, picked, plans, clusters, config, registry, measure,
+                              progress=progress, cancel=cancel, workers=workers)
+        binned = _assemble(spectra, picked)
     return dataclasses.replace(
-        binned, screen_off_position=off_position_scores(
-            binned, config, spectra.resolving_power, spectra.resolving_power_mz),
+        binned, screen_off_position=off_position,
         envelope_offset_ppm=off_rel, envelope_offset_limit_ppm=off_limit)
+
+
+def _profile_fit(spectra: SpectrumSet, picked: list[PickedSpectrum], plans: dict,
+                 clusters: Mapping, config: PickerConfig, registry, measure: PeakMeasure, *,
+                 progress=None, cancel=None, workers: int | None = None,
+                 ) -> list[PickedSpectrum]:
+    """``picked`` with the profile fit's values (:mod:`hxex.picking.profile`) for the spectra
+    it reads: peptide ions (ion type M, natural clusters) in profile mode, with signal; the
+    others keep the pick."""
+    from ..controls import fragment_ids
+    from ..io.mzml import SCAN_READERS, fragment_series
+    from .measure import _profile
+    from .mz_check import injection
+    from .profile import (
+        COARSE_EXPONENT,
+        bin_positions,
+        deuterium_distribution,
+        fit_all,
+        ion_moments,
+        own_offset,
+        search_offsets,
+    )
+
+    shape = measure.shape
+    if shape is None:
+        raise ValueError("the profile fit needs the run's peak shape (PeakMeasure.shape)")
+    fragments = fragment_ids(spectra.modification, spectra.data_id,
+                             fragment_series(spectra.source))
+    scans = (spectra.source or {}).get("reader") in SCAN_READERS
+    moments: dict[tuple, object] = {}
+    rows, own, injections, kept_pick = [], [], [], {"fragment": 0, "ion type": 0,
+                                                    "own envelope": 0, "centroided": 0}
+    for i, p in enumerate(picked):
+        series = int(spectra.data_id[i])
+        mod = str(spectra.modification[i])
+        if series in fragments:
+            kept_pick["fragment"] += 1
+            continue
+        if chem.parse_modification(mod).ion_type != "M":
+            kept_pick["ion type"] += 1
+            continue
+        if series in clusters:
+            kept_pick["own envelope"] += 1
+            continue
+        if p.empty or not len(p.intensity):
+            continue
+        mz, _ = clean_profile(*spectra.spectrum(i))
+        if not _profile(mz, int(spectra.charge[i]))[0]:
+            kept_pick["centroided"] += 1
+            continue
+        key = (str(spectra.peptide[i]), int(spectra.charge[i]), mod, None)
+        plan = plans[key]
+        if key not in moments:
+            moments[key] = ion_moments(key[0], modification=mod,
+                                       nterm_subtract=config.nterm_subtract,
+                                       rules=config.amide_rules, registry=registry)
+        d = deuterium_distribution(p.intensity, plan.clusters[0], plan.n_sites)
+        mean, _ = bin_positions(d, moments[key], len(p.intensity))
+        own.append(own_offset(p.intensity, p.peak_mz, plan.undeut_mz + mean / plan.charge))
+        injections.append(injection(spectra, i) if scans else (
+            str(spectra.sample[i]), str(spectra.role[i]) if spectra.role is not None else "",
+            float(np.nan_to_num(spectra.time[i], nan=-1.0)), str(spectra.rep[i])))
+        rows.append((i, key))
+    search = search_offsets(np.asarray(own, dtype=np.float64), injections)
+    coarse = abs(measure.fwhm_exponent) < COARSE_EXPONENT
+    log.info("profile fit: %d spectra; m/z offsets searched %s%.1f ppm about their "
+             "injection's median (the run's scatter %.1f ppm), %s search; peak shape %s",
+             len(rows), "\u00b1", search.limit, search.scatter,
+             "coarse-then-fine" if coarse else "full-grid", shape.describe())
+    others = ", ".join(f"{n} {what}" for what, n in kept_pick.items() if n)
+    if others:
+        log.info("profile fit: spectra that keep the pick: %s", others)
+    jobs = []
+    for j, (i, key) in enumerate(rows):
+        mz, y = clean_profile(*spectra.spectrum(i))
+        jobs.append((i, mz, y, picked[i].intensity, plans[key], moments[key],
+                     float(search.centre[j])))
+    span = None if progress is None else _Tail(progress, len(spectra))
+    fits = fit_all(jobs, measure, shape, search, coarse=coarse, workers=workers,
+                   progress=span, cancel=cancel)
+    out = list(picked)
+    for i, fit in fits.items():
+        if fit is None:
+            continue
+        p = picked[i]
+        width, symm = envelope_shape(p.mz, fit.values, int(spectra.charge[i]),
+                                     config.env_threshold)
+        out[i] = dataclasses.replace(
+            p, intensity=fit.values, peak_mz=fit.where,
+            mz_offset_ppm=mz_offset_ppm(fit.where, p.mz, fit.values, p.threshold),
+            env_width=width, env_symm=symm, empty=bool(fit.values.sum() == 0),
+            fit_offset_ppm=fit.offset_ppm, purity=fit.purity,
+            stray_share=fit.stray_share)
+    return out
+
+
+class _Tail:
+    """Progress of the profile fit as the last nine tenths of the picking stage."""
+
+    def __init__(self, progress, n: int):
+        self.progress, self.n = progress, n
+
+    def __call__(self, done: int, total: int) -> None:
+        report(self.progress, self.n + int(9 * self.n * done / max(total, 1)), 10 * self.n)
 
 
 def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:
@@ -544,6 +673,9 @@ def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:
         empty=cat("empty", bool),
         no_signal=cat("no_signal", bool),
         capped=cat("capped", bool),
+        fit_offset_ppm=cat("fit_offset_ppm", np.float64),
+        purity=cat("purity", np.float64),
+        stray_share=cat("stray_share", np.float64),
         **{name: np.array([p.screen[j] for p in picked], dtype=np.float64)
            for j, name in enumerate(RAW_SCORES)},
         sample=spectra.sample,

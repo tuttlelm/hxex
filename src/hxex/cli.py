@@ -683,6 +683,10 @@ def cmd_check(args) -> int:
                  f"for one ion, in {len({w.file for w in rows})} file(s), from "
                  f"{inp.rt_elution_windows}")
     problems += _check_ks(project)
+    if inp is not None and project.run.picker.pick == "profile_fit":
+        _say(f"{'bin values':14s} fitted to the profile (pick = \"profile_fit\"; measure and "
+             "area_fwhm not used): peptide ions in profile mode; fragment ions and centroided "
+             "spectra keep the pick")
     if inp is not None:
         device, problem = _device_text(project)
         _say(f"{'fits on':14s} {device}")
