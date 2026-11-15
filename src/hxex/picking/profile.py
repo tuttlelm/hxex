@@ -58,6 +58,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.integrate import trapezoid
 from scipy.optimize import nnls
 
 from .. import chem
@@ -262,7 +263,7 @@ class PeakShape:
     def integral(self, share: np.ndarray) -> np.ndarray:
         """The area of the shape, in widths, for peaks of relative height ``share``."""
         grid = self.grid()
-        areas = np.array([np.trapezoid(r, grid) for r in self.rows])
+        areas = np.array([trapezoid(r, grid) for r in self.rows])
         return areas[_class_of(share)]
 
     def to_dict(self) -> dict:
