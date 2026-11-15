@@ -46,6 +46,22 @@ replace pyHXExpress for new users while staying comparable with it.
 - **Minimum Python version: 3.11** (`requires-python = ">=3.11"`), with CI on 3.11 to 3.14
   (and 3.15 once it is final). Python 3.10 reaches end of life in October 2026, and PyTorch
   2.15 requires 3.11 or newer.
+  Keeping 3.11 (owner, 2026-11-14) costs neither speed nor what hxex can compute: the heavy
+  work runs in torch, NumPy, SciPy and pyarrow, which run alike under every Python version.
+  Only the per-spectrum loops in Python itself (the profile fit's offset search, file reading,
+  tables and figures) would gain from a newer interpreter, an estimated 5 % or less (not
+  measured). Python 3.14's free-threaded build could let the profile fit's pool use threads
+  instead of processes, but the standard build would still need the processes, and nothing
+  needs threads. What 3.11 costs is language conveniences (the 3.12 type-alias syntax,
+  `itertools.batched`) and its end of life: security support ends in October 2027, and the
+  scientific libraries may stop releasing for it before then, after which users on 3.11 stay
+  on older versions. Drop 3.11 when NumPy, SciPy or PyTorch stop supporting it, or by mid-2027
+  at the latest: `requires-python`, the classifiers, the CI matrix, the README and the guide's
+  install page, and the lower bounds the minimum-versions job tests.
+  What limits the code is those lower bounds, not the Python version: `np.trapezoid` (NumPy
+  2.0) failed the minimum-versions job under `numpy>=1.26` (fixed in 8aa52df with SciPy's
+  `trapezoid`). Raising NumPy's bound to 2.0 would be a separate dependency decision; NumPy 2
+  runs on 3.11.
 - **Saving all fits:** every K = 1 .. K_max fit is saved by default; individual bootstrap
   fits are an option and are kept for the **selected K only** (see "Saving all fits").
 
