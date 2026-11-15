@@ -1811,6 +1811,11 @@ Planned, not built:
       third. Proposed: when most samples put a peptide's ion at the same offset beyond their
       limits, flag it in every sample (or judge the pooled offset against the pooled scatter).
       Measure how many series change on the three datasets first.
+      *Measured and built (2026-11-14, HISTORY 386):* the per-spectrum flag
+      `spectrum_off_mz` (against the injection's median, with the run's scatter for spectra of
+      the same brightness, 6 x; flag only). The cross-sample verdict was dropped: pooling clears
+      a sample truly off, and an adding-only rule changed 0-2 series, already flagged per
+      spectrum.
    3. **The charges of a peptide share their window.** Charges co-elute; borrowing another
       charge's per-file window was the one rule that helped (below). Check whether `find_peak`
       finds a peak per ion or per peptide; then measure a peak found on the summed trace of every

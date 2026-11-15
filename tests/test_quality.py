@@ -313,3 +313,53 @@ def test_a_control_picked_where_its_shape_predicts_nothing_gives_no_warning():
     with np.errstate(all="raise"):
         near, tail, top = control_shape_ratios(meas)
     assert near[0] == pytest.approx(60.0 / 50.0) and top[0] == 100.0
+
+
+def test_spectrum_offsets_take_the_injections_median_and_the_scatter_of_like_brightness():
+    from hxex.quality import spectrum_mz_offsets
+
+    rng = np.random.default_rng(3)
+    n = 200
+    injection = np.array([f"file{k % 4}" for k in range(n)], dtype=object)
+    bright = np.where(np.arange(n) % 2 == 0, 1e6, 1e3)  # half bright, half dim
+    calibration = np.array([float(f[-1]) * 3.0 for f in injection])  # each file its own offset
+    noise = np.where(bright > 1e4, 1.0, 6.0) * rng.standard_normal(n)  # dim peaks scatter more
+    offset = calibration + noise
+    offset[0] += 30.0  # a bright spectrum on another ion
+    offset[1] += 15.0  # a dim one moved by less than dim spectra scatter
+    out, scatter = spectrum_mz_offsets(offset, injection, bright)
+    assert out[0] > 25 and abs(out[0]) > 6 * scatter[0]
+    assert abs(out[1]) < 6 * scatter[1]
+    assert scatter[1] > 3 * scatter[0]
+    np.testing.assert_allclose(np.median(out[injection == "file2"]), 0.0, atol=1.0)
+    skipped, _ = spectrum_mz_offsets(offset, injection, bright, assessed=np.arange(n) != 0)
+    assert np.isnan(skipped[0])
+    few, few_scatter = spectrum_mz_offsets(offset[:15], injection[:15], bright[:15])
+    assert np.isnan(few).all() and np.isnan(few_scatter).all()  # no injection of ten
+
+
+def test_a_spectrum_off_its_injection_is_flagged_and_stored(run, monkeypatch):
+    import hxex.quality as quality
+    from hxex.io.bundle import _quality_table, _read_quality
+
+    meas, fit = run
+    monkeypatch.setattr(quality, "MIN_INJECTION_OFFSETS", 4)
+    monkeypatch.setattr(quality, "SCATTER_CLASS_SIZE", 8)  # one class: its median holds
+    files = np.array(["S a"] * 4 + ["S b"] * 4, dtype=object)
+    offsets = np.array([1.0, 1.5, 0.5, 40.0, 2.0, 2.5, 1.5, 2.2])
+    q = assess_quality(meas, fit, mz_offset_ppm=offsets, injection=files)
+    assert q.spectrum_off_mz[3] and q.spectrum_off_mz.sum() == 1
+    assert np.isfinite(q.spectrum_offset).all() and np.isfinite(q.spectrum_offset_limit).all()
+    quiet = assess_quality(meas, fit, mz_offset_ppm=offsets, injection=files,
+                           skip_series=np.unique(fit.data_id))
+    assert not quiet.spectrum_off_mz.any() and np.isnan(quiet.spectrum_offset).all()
+    off = assess_quality(meas, fit, QualityConfig(spectrum_off_mz_sd=None),
+                         mz_offset_ppm=offsets, injection=files)
+    assert not off.spectrum_off_mz.any()
+    back = _read_quality(_quality_table(q), q.config.to_dict(), q.spectrum_id)
+    assert list(back.spectrum_off_mz) == list(q.spectrum_off_mz)
+    np.testing.assert_array_equal(back.spectrum_offset, q.spectrum_offset)
+    old = _read_quality(_quality_table(q).drop_columns(
+        ["spectrum_off_mz", "spectrum_offset", "spectrum_offset_limit"]),
+        q.config.to_dict(), q.spectrum_id)
+    assert not old.spectrum_off_mz.any() and np.isnan(old.spectrum_offset).all()

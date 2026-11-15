@@ -2011,6 +2011,10 @@ _COMMENTS: dict[str, str] = {
     "run.quality.max_ion_overlap": "overlapping_ion: another ion of the same fragment scans puts "
                                    "at least this share of a fragment's picked intensity on its "
                                    "bins (false: off)",
+    "run.quality.spectrum_off_mz_sd": "spectrum_off_mz: a spectrum whose peaks sit further from "
+                                      "where its injection puts the peptides than this many "
+                                      "times the run's scatter for spectra of its brightness "
+                                      "(peptide ions only; false: off)",
     "run.quality.min_signal_to_noise": "below_noise: a fragment spectrum fitted through the "
                                        "per-scan cut whose tallest peak, in its largest scan, is "
                                        "below this times that scan's recorded noise: too dim for "

@@ -313,6 +313,39 @@ The figures and analyses made from the earlier results are then out of date (see
 again](outputs.md#running-again)). Results made with a version of *hxex* before this check have
 empty columns and no `off_mz` flag until they are run again.
 
+## One spectrum off its injection's m/z
+
+```toml
+[run.quality]
+spectrum_off_mz_sd = 6.0   # how far from its injection counts as off, in multiples of the scatter
+```
+
+The check above judges a whole series, from its undeuterated controls. A single spectrum can be
+off on its own: a labelled replicate whose retention window landed on a neighbouring ion, or an
+exported spectrum summed over the wrong scans. Its replicates are fine, so the series passes.
+
+*hxex* therefore also compares every spectrum with the other spectra of its injection (one scan
+file, or for the other formats one sample, time point, and replicate). Within an injection the
+peptides' peaks all sit off their predicted m/z by about the same amount, the instrument's
+calibration, and a spectrum far from that is suspect. How far is too far depends on how bright
+the spectrum is: the peaks of a dim spectrum land less precisely, so *hxex* measures the scatter
+separately for dim and bright spectra in each run and holds each spectrum to the scatter of
+spectra like it. A spectrum further from its injection's median than `spectrum_off_mz_sd` times
+that scatter is flagged `spectrum_off_mz`.
+
+On the datasets we measured, the flag marked about 1 % of the spectra, and about half of them
+were more than 0.05 D per amide away from their replicates, against 3 % of all spectra. It
+caught every exported spectrum that had been summed over another ion's scans, and on the tutorial
+data the one series that reads another species in every sample. It is a flag only: nothing is
+left out. Look at a flagged spectrum and its elution trace, and leave it out with
+`review_status = "rejected"` if it is not your peptide.
+
+`spectra.csv` shows the check in `spectrum_offset_ppm` (how far the spectrum's peaks sit from
+its injection's median) and `spectrum_offset_limit_ppm` (the limit for a spectrum of its
+brightness). Fragment ions are not checked, and nor are spectra in an injection with fewer than
+ten spectra. `spectrum_off_mz_sd = false` turns the check off. It is set in `hxex run`;
+`hxex resume` adds it to results made before it existed.
+
 ## Seeing the window
 
 The spectrum figures (`hxex report --figures`, `hxex.report.plot_spectrum`) draw every picked

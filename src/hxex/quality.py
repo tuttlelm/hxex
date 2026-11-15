@@ -44,6 +44,18 @@ signal never reach the fit and are handled before it.
   retention time points at another peptide, or one shares its peaks). The statistic is
   ``envelope_offset`` (ppm). Peptide ions with undeuterated controls only; the analysis leaves
   such series out (``[analysis.filters] off_mz``).
+- ``spectrum_off_mz``: one spectrum's peaks sit further from where its injection puts the
+  peptides than ``spectrum_off_mz_sd`` times the run's scatter for spectra of its brightness
+  (:func:`spectrum_mz_offsets`): the spectrum, not its series, reads another species or a
+  neighbour (a window placed on another ion, an export summed over the wrong scans). The
+  statistic is ``spectrum_offset`` (ppm: the picker's offset minus its injection's median) beside
+  its limit ``spectrum_offset_limit``. The scatter is measured per run in brightness classes
+  (dim spectra's offsets scatter two to seven times more), so a dim spectrum is held to a wider
+  limit. Measured (docs/HISTORY.md, the item that built it): at 6 x, 0.7-1.4 % of Q-TOF spectra
+  flagged, 42-55 % of them more than 0.05 D per amide from their replicates (2.9-3.3 % overall);
+  it caught every exported spectrum summed over another ion's scans and a series on another
+  species in every sample that the series check passed. Peptide ions only (fragment series are
+  skipped, as by ``off_mz``); a flag, nothing is left out.
 - ``rt_found``: the series was read at the retention time found for its exact m/z in the
   undeuterated controls, not the peptide table's (``[input.scans] find_retention_time =
   "automatic"``, :mod:`hxex.io.retention_search`): check the time
@@ -141,7 +153,7 @@ log = logging.getLogger(__name__)
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
               "poor_envelope", "saturated", "tails_low", "bright", "rt_found", "undeut_high",
               "drift_unclear", "elution_cut", "precursor_off", "overlapping_ion",
-              "below_noise")
+              "below_noise", "spectrum_off_mz")
 
 
 # The version of the checks behind the flags: add one whenever a flag or statistic is added or
@@ -151,12 +163,19 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz"
 # it. 1: every flag up to overlapping_ion and below_noise (HISTORY 309, 314). 2: overlapping_ion
 # scales the other ion by its bins away from the fragment's strong bins (was: all its bins).
 # 3: low_intensity compares the spectra once each injection's brightness is divided out.
-QUALITY_VERSION = 3
+# 4: spectrum_off_mz (a spectrum off its injection's m/z).
+QUALITY_VERSION = 4
 
 # low_intensity: an injection's brightness is measured from at least this many of its spectra
 # with replicates (else it is taken as 1), and named in a warning outside these limits.
 MIN_INJECTION_SPECTRA = 10
 INJECTION_SCALE_WARN = (0.5, 2.0)
+
+# spectrum_off_mz: an injection's median offset needs this many spectra; the run's scatter is
+# measured in up to SCATTER_CLASSES brightness classes of at least SCATTER_CLASS_SIZE spectra
+MIN_INJECTION_OFFSETS = 10
+SCATTER_CLASSES = 10
+SCATTER_CLASS_SIZE = 20
 
 
 @dataclass(frozen=True)
@@ -181,6 +200,9 @@ class QualityConfig:
       this share of a fragment's picked intensity on its bins; None: off.
     - ``min_signal_to_noise``: ``below_noise`` when a fragment spectrum fitted through the
       per-scan cut has its tallest peak below this times its scan's recorded noise; None: off.
+    - ``spectrum_off_mz_sd``: ``spectrum_off_mz`` when a spectrum's m/z offset is further than
+      this many times the run's scatter (for its brightness) from its injection's median;
+      None: off.
     """
     # defaults set on the private pooled dataset: docs/HISTORY.md item 28
 
@@ -194,6 +216,7 @@ class QualityConfig:
     max_precursor_offset: float | None = 1.0
     max_ion_overlap: float | None = 0.2
     min_signal_to_noise: float | None = 4.0
+    spectrum_off_mz_sd: float | None = 6.0
 
     def __post_init__(self):
         if not self.poor_fit_factor > 1:
@@ -216,6 +239,8 @@ class QualityConfig:
             raise ValueError("tails_low_ratio must be between 0 and 1 (or None to skip the screen)")
         if self.min_signal_to_noise is not None and not self.min_signal_to_noise > 0:
             raise ValueError("min_signal_to_noise must be > 0 (or None to skip the screen)")
+        if self.spectrum_off_mz_sd is not None and not self.spectrum_off_mz_sd > 0:
+            raise ValueError("spectrum_off_mz_sd must be > 0 (or None to skip the screen)")
 
     def to_dict(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -240,7 +265,9 @@ class QualityFlags:
     divided by its injection's ``injection_scale``; ``injection`` names the injection, empty
     where not known); ``mz_offset``
     is the series' m/z offset relative to the run, in ppm, and ``envelope_offset`` the picker's
-    m/z check of the series (``off_mz``), in ppm. NaN where not assessed (the flag is False
+    m/z check of the series (``off_mz``), in ppm; ``spectrum_offset`` is the spectrum's own
+    offset against its injection's median and ``spectrum_offset_limit`` its limit
+    (``spectrum_off_mz``), in ppm. NaN where not assessed (the flag is False
     there). ``flagged`` is True where any flag is set. Flags read from a bundle written before
     them are False.
     """
@@ -277,6 +304,9 @@ class QualityFlags:
     below_noise: np.ndarray | None = None
     injection: np.ndarray | None = None
     injection_scale: np.ndarray | None = None
+    spectrum_offset: np.ndarray | None = None
+    spectrum_offset_limit: np.ndarray | None = None
+    spectrum_off_mz: np.ndarray | None = None
     version: int = QUALITY_VERSION  # of the checks that assessed them (QUALITY_VERSION)
 
     @property
@@ -288,12 +318,12 @@ class QualityFlags:
     def __post_init__(self):  # flags read from a bundle written before the m/z screen, misfit
         for name in ("mz_offset", "misfit", "misfit_rel", "envelope_offset",  # or a flag
                      "precursor_offset", "ion_overlap", "signal_to_noise",
-                     "injection_scale"):
+                     "injection_scale", "spectrum_offset", "spectrum_offset_limit"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
         for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright",
                      "rt_found", "undeut_high", "drift_unclear", "elution_cut",
-                     "precursor_off", "overlapping_ion", "below_noise"):
+                     "precursor_off", "overlapping_ion", "below_noise", "spectrum_off_mz"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
         for name in ("ion_overlap_with", "injection"):
@@ -474,6 +504,7 @@ def assess_quality(
     precursor_offset: np.ndarray | None = None,
     ion_overlap: tuple[np.ndarray, np.ndarray] | None = None,
     injection: np.ndarray | None = None,
+    skip_series=(),
 ) -> QualityFlags:
     """Quality statistics and flags of a fit (see the module docstring). ``mz_offset_ppm`` is
     the picker's offset of every measurement (:attr:`~hxex.picking.BinnedSet.mz_offset_ppm`);
@@ -489,7 +520,8 @@ def assess_quality(
     ``precursor_offset`` every measurement's :func:`precursor_offsets` (None: not assessed).
     ``ion_overlap``: :func:`ion_overlaps` (the share and the other ion; None: not assessed).
     ``injection``: every measurement's injection (:func:`injection_keys`; None: every
-    injection taken as equally bright).
+    injection taken as equally bright, and ``spectrum_off_mz`` not assessed).
+    ``skip_series``: series (``data_id``) left out of ``spectrum_off_mz`` (fragment ions).
     ``controls``
     (:class:`hxex.controls.ControlTable`) gives ``undeut_high`` its limit (None: not
     assessed)."""
@@ -570,6 +602,17 @@ def assess_quality(
     snr = signal_to_noise(meas)
     below = (np.zeros(m, dtype=bool) if config.min_signal_to_noise is None
              else np.nan_to_num(snr, nan=np.inf) < config.min_signal_to_noise)
+    spec_offset = np.full(m, np.nan)
+    spec_limit = np.full(m, np.nan)
+    if (config.spectrum_off_mz_sd is not None and mz_offset_ppm is not None
+            and injection is not None):
+        brightness_top = np.array([float(np.max(o)) if len(o) else 0.0 for o in meas.observed])
+        assessed = ~np.isin(np.asarray(fit.data_id, dtype=np.int64),
+                            np.asarray(list(skip_series), dtype=np.int64))
+        spec_offset, scatter = spectrum_mz_offsets(np.asarray(mz_offset_ppm, dtype=float), inj,
+                                                   brightness_top, assessed)
+        spec_limit = config.spectrum_off_mz_sd * scatter
+    spectrum_off = np.abs(np.nan_to_num(spec_offset)) > np.nan_to_num(spec_limit, nan=np.inf)
     return QualityFlags(
         config=config, spectrum_id=fit.spectrum_id, deviance=deviance,
         deviance_rel=deviance_rel, intensity=total, intensity_rel=intensity_rel,
@@ -591,8 +634,47 @@ def assess_quality(
         precursor_offset=offset, precursor_off=precursor_off,
         ion_overlap=overlap, ion_overlap_with=np.where(overlapping, overlap_with, ""),
         overlapping_ion=overlapping, signal_to_noise=snr, below_noise=below,
-        injection=inj, injection_scale=scale, **brightness,
+        injection=inj, injection_scale=scale, spectrum_offset=spec_offset,
+        spectrum_offset_limit=spec_limit, spectrum_off_mz=spectrum_off, **brightness,
     )
+
+
+def spectrum_mz_offsets(offset_ppm: np.ndarray, injection: np.ndarray, brightness: np.ndarray,
+                        assessed: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """``(offset, scatter)`` per spectrum for ``spectrum_off_mz``, in ppm: each spectrum's
+    picker offset minus the median of its injection's (``injection``, at least
+    ``MIN_INJECTION_OFFSETS`` spectra), and the run's robust scatter (1.4826 times the median
+    absolute value of those offsets) for spectra of its brightness (``brightness``, the tallest
+    picked bin): measured in up to ``SCATTER_CLASSES`` classes of equal count (at least
+    ``SCATTER_CLASS_SIZE`` spectra each), between them by log brightness, flat beyond the ends.
+    NaN where not assessed (``assessed`` False, no offset, no brightness, a small injection, or
+    too few spectra in the run for one class). A median per injection, not a calibration line
+    in m/z: a line gained nothing on Q-TOF or Orbitrap data (scratch, 2026-11-14)."""
+    m = len(offset_ppm)
+    out, scatter = np.full(m, np.nan), np.full(m, np.nan)
+    ok = np.isfinite(offset_ppm) & (np.asarray(brightness, dtype=float) > 0)
+    if assessed is not None:
+        ok &= np.asarray(assessed, dtype=bool)
+    inj = np.asarray(injection, dtype=object)
+    for key in np.unique(inj[ok]):
+        if key == "":
+            continue
+        rows = np.flatnonzero(ok & (inj == key))
+        if len(rows) >= MIN_INJECTION_OFFSETS:
+            out[rows] = offset_ppm[rows] - np.median(offset_ppm[rows])
+    have = np.flatnonzero(np.isfinite(out))
+    n_classes = min(SCATTER_CLASSES, len(have) // SCATTER_CLASS_SIZE)
+    if n_classes < 1:
+        return np.full(m, np.nan), scatter
+    log_b = np.log(np.asarray(brightness, dtype=float)[have])
+    order = np.argsort(log_b)
+    centres, spreads = [], []
+    for part in np.array_split(order, n_classes):
+        r = out[have[part]]
+        centres.append(float(np.median(log_b[part])))
+        spreads.append(1.4826 * float(np.median(np.abs(r))))
+    scatter[have] = np.interp(log_b, centres, spreads)
+    return out, scatter
 
 
 def injection_keys(spectra, rows=None, source=None) -> np.ndarray:

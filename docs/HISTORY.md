@@ -9910,3 +9910,29 @@ CSVs or mzML if wanted.
     12 s, Orbitrap (24,195, full grid) 3 min 11 s (the pick alone: under a minute). Figures: fitted values are triangles labelled
     "fitted values: peak areas"; drawing the fitted peaks and strays waits for the owner (drafts
     in the private record). Tests: tests/test_profile_fit.py.
+
+386. **A spectrum off its injection's m/z: `spectrum_off_mz` (2026-11-14; docs/PLAN.md Next steps 33
+    step 2; owner agreed to build it as a flag and chose the name).** The series m/z check
+    (`off_mz`) judges a series from its undeuterated controls, so a single labelled spectrum on
+    another ion (a window or an export summed over the wrong scans) passed. New in the quality
+    step (`hxex.quality.spectrum_mz_offsets`, QUALITY_VERSION 4, so `hxex resume` assesses old
+    bundles again): each spectrum's picker offset minus its injection's median (the scan file, else
+    sample, time point, and replicate; at least 10 spectra), against the run's robust scatter for
+    spectra of its brightness (up to 10 classes of equal count by the tallest picked bin, at least
+    20 spectra each, interpolated on log brightness); flagged beyond `[run.quality]
+    spectrum_off_mz_sd` (6) times it. Peptide ions only (fragment series skipped). spectra.csv
+    `spectrum_offset_ppm`, `spectrum_offset_limit_ppm`; quality.parquet `spectrum_offset`,
+    `spectrum_offset_limit`, `spectrum_off_mz`. Measured (scratch, at 6 x): flagged 1.1 / 0.7 /
+    1.4 % of spectra on the intact-peptide benchmark (exported / raw files) and the pooled raw
+    project, of which 42 / 47 / 55 % sit more than 0.05 D per amide from their replicates (3.3 /
+    2.9 / 31 % of all spectra); the dimmest fifth are flagged no more than the rest (a single
+    injection scatter flagged them 3-4 times as often); every exported spectrum summed over
+    another ion's scans was caught; on the tutorial data it flags exactly the one series on
+    another species in every sample, whose WT series the series check passed (-21.2 ppm against
+    a limit of 22.6). On the Orbitrap digest 4.4 %, mostly whole series on near-isobaric
+    co-eluters (half in series already `off_mz`). Dropped after measuring: a calibration line in
+    m/z instead of the median (no gain); one verdict per peptide across samples (pooling clears a
+    sample truly off; an adding-only rule changes 0-2 series, already flagged per spectrum).
+    Built check: resuming a copy of the raw-file benchmark bundle flags 178 spectra (0.64 %), all
+    flagged in the scratch measurement, which flagged 28 more at 6.0-6.6 times the scatter.
+    Private records: hxex_private/analysis_examples/spectrum_mz_flag (README, built_check/).

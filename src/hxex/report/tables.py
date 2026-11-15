@@ -295,7 +295,10 @@ def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     ``window_shift_ppm``, :mod:`hxex.picking.mz_check`; the first two empty where not
     assessed, the last 0 except in bundles picked with the former ``recentre``); with ``pick =
     "profile_fit"``, the profile fit's ``fit_offset_ppm``, ``purity`` and ``stray_share``
-    (:mod:`hxex.picking.profile`; empty for a spectrum that kept the pick)."""
+    (:mod:`hxex.picking.profile`; empty for a spectrum that kept the pick); and the
+    spectrum's own m/z check (``spectrum_offset_ppm``, its offset against its injection's
+    median, and ``spectrum_offset_limit_ppm``, :func:`hxex.quality.spectrum_mz_offsets`; empty
+    where not assessed)."""
     ks = results.effective_K
     k_max = int(ks.max())  # over every spectrum: the same columns whichever rows are made
     picked = np.arange(len(ks)) if rows is None else np.asarray(rows, dtype=np.int64)
@@ -325,6 +328,11 @@ def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     out.update(wide)
     out.update({k: np.asarray(v)[picked] for k, v in _test_columns(results).items()})
     out.update({k: np.asarray(v)[picked] for k, v in _screen_columns(results).items()})
+    q = results.quality
+    for name, attr in (("spectrum_offset_ppm", "spectrum_offset"),
+                       ("spectrum_offset_limit_ppm", "spectrum_offset_limit")):
+        out[name] = (np.asarray(getattr(q, attr), dtype=np.float64)[picked] if q is not None
+                     else np.full(len(picked), np.nan))
     return out
 
 

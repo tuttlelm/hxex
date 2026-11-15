@@ -148,6 +148,16 @@ _add("off_mz", "quality", "series, on each of its spectra", SPECTRA_FLAGS,
      "points at another peptide of almost the same mass.",
      "Check the retention time in the peptide table (`find_retention_time` can suggest one).",
      "picking-window.md#a-series-whose-peaks-sit-off-its-mz")
+_add("spectrum_off_mz", "quality", "spectrum", SPECTRA_FLAGS,
+     "This spectrum's peaks sit further from where its injection puts the peptides than "
+     "spectra of its brightness usually do: most likely it reads another species or a "
+     "neighbour.",
+     FLAG_ONLY,
+     "The limit is {run.quality.spectrum_off_mz_sd} times the run's scatter for spectra of "
+     "this brightness (dim spectra scatter more). Unlike `off_mz`, it judges one spectrum, "
+     "labelled ones included: a window or an export placed on another ion's scans.",
+     "Look at the spectrum and its elution trace; compare it with its replicates.",
+     "picking-window.md#one-spectrum-off-its-injections-mz")
 _add("rt_found", "quality", "series, on each of its spectra", SPECTRA_FLAGS,
      "The series was read at the retention time found for its exact m/z, not the peptide "
      "table's.",

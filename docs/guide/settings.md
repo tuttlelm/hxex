@@ -370,6 +370,7 @@ Quality flags on every spectrum (guide: outputs.md): poor_fit, low_intensity, no
 | `max_precursor_offset` | number | `1.0` | precursor_off: a precursor ion in the fragment scans (unreacted) reading further than this (D) from its parent's MS1 spectrum in the same file (false: off) |
 | `max_ion_overlap` | number | `0.2` | overlapping_ion: another ion of the same fragment scans puts at least this share of a fragment's picked intensity on its bins (false: off) |
 | `min_signal_to_noise` | number | `4.0` | below_noise: a fragment spectrum fitted through the per-scan cut whose tallest peak, in its largest scan, is below this times that scan's recorded noise: too dim for the fit to recover its deuteration (false: off) |
+| `spectrum_off_mz_sd` | number | `6.0` | spectrum_off_mz: a spectrum whose peaks sit further from where its injection puts the peptides than this many times the run's scatter for spectra of its brightness (peptide ions only; false: off) |
 
 ## `[run.registry]`
 

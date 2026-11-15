@@ -709,7 +709,8 @@ def _fit_part(
                                  drift_unclear_series=drift_unclear,
                                  elution_cut_spectra=elution_cut,
                                  precursor_offset=offsets, ion_overlap=overlaps,
-                                 controls=controls, injection=injection)
+                                 controls=controls, injection=injection,
+                                 skip_series=fragments)
     return fits, fit, controls, quality, test
 
 
@@ -1728,8 +1729,9 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
                 kept: np.ndarray, envelopes: EnvelopeTable | None, source,
                 controls=None) -> QualityFlags:
     """The quality flags of ``fit`` from what a bundle stores, as :func:`run` assesses them."""
+    from .controls import fragment_ids
     from .io.drift_gate import unclear_series
-    from .io.mzml import elution_cut_spectra
+    from .io.mzml import elution_cut_spectra, fragment_series
     from .io.retention_search import moved_series
     from .quality import ion_overlaps, precursor_offsets
 
@@ -1746,7 +1748,9 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
         precursor_offset=precursor_offsets(fit, source, binned.label[kept]),
         ion_overlap=ion_overlaps(data, fit, source, binned.label[kept], _bin_mz(binned, kept),
                                  config.picker),
-        controls=controls)
+        controls=controls,
+        skip_series=fragment_ids(binned.modification[kept], binned.data_id[kept],
+                                 fragment_series(source)))
 
 
 def _bin_mz(binned: BinnedSet, kept: np.ndarray) -> list[np.ndarray]:

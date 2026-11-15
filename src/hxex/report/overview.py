@@ -73,6 +73,7 @@ QUALITY_LABELS = {
     "precursor_off": "precursor off",
     "overlapping_ion": "overlapping ion",
     "below_noise": "below the noise",
+    "spectrum_off_mz": "spectrum off m/z",
     "undeut_high": "UN too heavy",
     "any": "any flag",
 }
