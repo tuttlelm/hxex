@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 from .data_table import DataPanel, cell_text, flag_tip
-from .figure_view import FigurePanel
+from .figure_view import HINT, FigurePanel
 from .order import natural_key
 from .results_tree import FILTERS, Peptide, left_out, left_out_counts, peptides, points, shown
 from .review_panel import ReviewPanel
@@ -132,14 +132,22 @@ TAB_TIPS = {
     "uptake": "the series' deuterium against time (or order), every replicate and the controls",
     "populations": "the components: each population's deuterium level and share, one panel per "
                    "spectrum",
-    "data": "the rows behind the figures: spectra, populations, or uptake for a series; the "
-            "spectra of a time point; one spectrum's values",
+    "data": "the rows of the CSV tables hxex report writes: uptake, components, or spectra for a "
+            "series (every K, as the tables hold them); the spectra of a time point; one "
+            "spectrum's values",
     "overview": "the whole results at a glance: populations chosen, controls, quality flags (it "
                 "doesn't follow the selection)",
 }
 # the pages of the overview tab, as hxex report --figures writes them (overview_<kind>)
 OVERVIEW_PAGES = {"k_selection": "K selection", "controls": "controls",
                   "quality": "quality flags"}
+# under the spectra pages: a click on a spectrum's panel selects it (PLAN "GUI"; audit of
+# 2026-11-15, C open question 1)
+SPECTRA_PAGE_HINT = HINT + "\nClick a spectrum's panel: select that spectrum in the tree."
+# a run or resume of the project is replacing the results shown (audit of 2026-11-15, A open
+# question 1: no blocking; the window reloads them when it ends)
+RUN_NOTICE = ("A run of this project is in progress: the results shown are replaced when it "
+              "finishes.")
 
 
 class ResultsWorkspace(QWidget):
@@ -163,6 +171,10 @@ class ResultsWorkspace(QWidget):
         top = QHBoxLayout()
         top.addWidget(self.path_label, 1)
         top.addWidget(open_button)
+        self.notice = QLabel()  # RUN_NOTICE while a run of the project shown runs
+        self.notice.setWordWrap(True)
+        self.notice.setStyleSheet("color: palette(highlight); font-weight: bold;")
+        self.notice.hide()
 
         self.filter = QComboBox()
         for i, (key, (text, meaning)) in enumerate(FILTERS.items()):
@@ -233,6 +245,12 @@ class ResultsWorkspace(QWidget):
         self.tree.review_key.connect(self.review.key)
         self._leaves: dict[int, QTreeWidgetItem] = {}  # a spectrum's row in the tree
         self._series_items: dict[int, QTreeWidgetItem] = {}
+        self._series_by_id: dict[int, tuple] = {}  # data_id -> (Peptide, Series) of the tree
+        # the row last selected, as (kind, payload), kept while the tree is rebuilt without it
+        # (a Find that leaves it out: audit of 2026-11-15, C-8): the figures and the review
+        # panel still show it, so decisions redraw it and a session keeps the place
+        self._last: tuple | None = None
+        self._keep_tab: str | None = None  # the figure tab to show again after a reread
         # the tree, and beside it every spectrum as a list (owner, 2026-11-03): a row chosen in
         # the list selects that spectrum in the tree, so the figures and the review are the same
         tree_page = QWidget()
@@ -339,8 +357,16 @@ class ResultsWorkspace(QWidget):
         self.series_table.currentTextChanged.connect(self._series_table_changed)
         self.series_table.hide()
         self.table_view.add_option(self.series_table)
-        self._table_for = None  # (results, kind, payload) the table shows
+        self._table_for = None  # what the table shows (_table_key), for these results
+        self._table_results = None
+        self._table_count: int | None = None
+        self._selection_whole = None  # the Peptide when a peptide row is selected
         self.figures.currentChanged.connect(lambda _i: self._fill_table())
+        # the figures of the tabs not in view are drawn when their tab is opened, not on every
+        # selection (audit of 2026-11-15, M-3: every selection drew every tab, hidden ones too,
+        # in the one drawing thread)
+        self._pending_draws: dict[str, object] = {}  # panel name -> the function to draw
+        self.figures.currentChanged.connect(lambda _i: self._draw_pending())
         # the selected spectrum's elution trace, read from its scan files when in view
         # (PLAN Next steps 26): the file first, then the files compared behind it
         self._trace_task = Latest(self)
@@ -380,14 +406,24 @@ class ResultsWorkspace(QWidget):
         split.setSizes([560, 900])
         layout = QVBoxLayout(self)
         layout.addLayout(top)
+        layout.addWidget(self.notice)
         layout.addWidget(split, 1)
         self._show_tabs("start")
+
+    def set_notice(self, text: str) -> None:
+        """A line under the path (``RUN_NOTICE``; '' for none)."""
+        self.notice.setText(text)
+        self.notice.setVisible(bool(text))
 
     # --- the figures' tabs -----------------------------------------------------------------
 
     def panel(self, name: str) -> FigurePanel:
         if name not in self.panels:
-            panel = FigurePanel(render=self.render)
+            clickable = name in ("spectra", "fits at each K")  # a panel per spectrum
+            panel = FigurePanel(render=self.render,
+                                hint=SPECTRA_PAGE_HINT if clickable else HINT)
+            if clickable:
+                panel.clicked_row.connect(self._spectrum_row_clicked)
             if name != "overview":  # the overview is the whole run's, not the selection's
                 panel.add_option(self._export_button())
             if name == "uptake":  # the only page with a time axis: its choice in its own bar
@@ -427,6 +463,8 @@ class ResultsWorkspace(QWidget):
         keys = getattr(self, "_tab_keys", ())
         at = self.figures.currentIndex()
         current = keys[at] if 0 <= at < len(keys) else None
+        if self._keep_tab in TABS[kind]:  # the tab shown before the results were read again
+            current, self._keep_tab = self._keep_tab, None
         self.figures.blockSignals(True)
         while self.figures.count():
             self.figures.removeTab(0)
@@ -444,9 +482,29 @@ class ResultsWorkspace(QWidget):
     def _data_count(self, n: int | None) -> None:
         """The data tab named with its rows, ``data (12)``, as in Analysis (owner, 2026-11-05);
         ``data`` before it is filled."""
+        self._table_count = n
         at = self.figures.indexOf(self.table_view)
         if at >= 0:
             self.figures.setTabText(at, f"data ({n})" if n else "data")
+
+    def _draw_panel(self, name: str, draw) -> None:
+        """Draw ``draw()`` in the panel ``name`` when its tab is in view; otherwise keep it to
+        draw when the tab is opened (:meth:`_draw_pending`)."""
+        panel = self.panel(name)
+        if self.figures.currentWidget() is panel:
+            self._pending_draws.pop(name, None)
+            panel.draw(draw)
+        else:
+            self._pending_draws[name] = draw
+
+    def _draw_pending(self) -> None:
+        """The tab now in view: its figure, when the selection left it to draw later."""
+        keys = getattr(self, "_tab_keys", ())
+        at = self.figures.currentIndex()
+        name = keys[at] if 0 <= at < len(keys) else None
+        draw = self._pending_draws.pop(name, None) if name is not None else None
+        if draw is not None:
+            self.panel(name).draw(draw)
 
     # --- the tree --------------------------------------------------------------------------
 
@@ -466,10 +524,28 @@ class ResultsWorkspace(QWidget):
             left = _left_out_or_none(results, analysis)
         self.left = left
         self.left_bar.hide()  # worked out as the results were read
+        if results is not None and (path is None or Path(path).suffix != ".toml"):
+            # a bundle on its own: no project file to take the settings from (audit of
+            # 2026-11-15, C open question 4)
+            self.left_note.setText("The 'left out' column uses the default analysis settings: "
+                                   "these results were opened on their own, not through their "
+                                   "project file.")
+            self.left_update.hide()
+            self.left_bar.show()
         self._selection, self._table_for = (None, None), None  # the table: nothing selected
+        self._selection_whole, self._last, self._pending_draws = None, None, {}
         self._trace_for, self._drawn, self._shown_traces = None, None, None
         self._trace_cancel.set()  # a trace read for the results before is not wanted
         self._drop_reader()  # the files of the results shown before
+        same = results is not None and path is not None \
+            and path == getattr(self, "results_path", None)
+        # the same results read again (a decision, a changed setting, a finished run): the
+        # figure tab, the filters, Find, and the List's row stay (audit of 2026-11-15, C-14)
+        keys = getattr(self, "_tab_keys", ())
+        at = self.figures.currentIndex()
+        self._keep_tab = keys[at] if same and 0 <= at < len(keys) else None
+        boxes = (self.ms_filter, self.ion_filter, self.level_filter, self.class_filter)
+        kept = {box: box.currentData() for box in boxes} if same else {}
         if path != getattr(self, "results_path", None):
             # other results: what belonged to the ones before goes (audit of 2026-11-15:
             # the export folder E-10, decisions waiting for a held table D-7, the elution
@@ -480,11 +556,20 @@ class ResultsWorkspace(QWidget):
                 self.window_editor.reset(path)
         self.results_path = path
         self.kind = None  # the tabs again: the elution tab follows the results
+        self.tree.blockSignals(True)  # other results: nothing selected (a reread restores it)
+        self.tree.setCurrentItem(None)
+        self.tree.blockSignals(False)
         self.table_view.clear()
         for panel in self.panels.values():
             panel.clear()
         self.tree_data = [] if results is None else peptides(results, left)
+        self._series_by_id = {s.data_id: (pep, s) for pep in self.tree_data for s in pep.series}
         self._fill_target_filters()
+        for box, value in kept.items():
+            if value is not None and box.findData(value) >= 0:
+                box.blockSignals(True)
+                box.setCurrentIndex(box.findData(value))
+                box.blockSignals(False)
         self._fill_time_axis()
         self.review.show_spectra([], "Select a spectrum, a time point or a series.")
         self.path_label.setText("No results open." if results is None else str(path))
@@ -503,6 +588,18 @@ class ResultsWorkspace(QWidget):
         try:
             return settings is not None and settings.measure.measure == "profile_fit"
         except Exception:  # noqa: BLE001 (a record this version cannot read: no tab)
+            return False
+
+    def _profile_fit_of(self, spectrum_id: str) -> bool:
+        """Whether the profile fit read this spectrum (a fragment, another ion type, an own
+        envelope or centroided data keep the pick: no picking check for them)."""
+        b = getattr(self.results, "binned", None)
+        if b is None or getattr(b, "fit_offset_ppm", None) is None:
+            return False
+        try:
+            return bool(np.isfinite(float(np.asarray(b.fit_offset_ppm, dtype=float)[
+                b.find(spectrum_id)])))
+        except (KeyError, ValueError, TypeError):
             return False
 
     def _traceable(self) -> bool:
@@ -750,10 +847,12 @@ class ResultsWorkspace(QWidget):
         self.series_table.setVisible(kind not in (None, "spectrum", "point"))
         if kind is None:
             return
-        key = (id(self.results), kind, id(payload))  # by identity: reset with new results
-        if self._table_for == key:
+        whole = self._selection_whole
+        key = self._table_key()
+        if self._table_for == key and self._table_results is self.results:
+            self._data_count(self._table_count)  # named again (C-21)
             return
-        self._table_for = key
+        self._table_for, self._table_results = key, self.results
         results, series = self.results, payload[1]
         if kind == "spectrum":
             table = spectra_table(results, rows=[payload[3].index])
@@ -762,37 +861,60 @@ class ResultsWorkspace(QWidget):
             self.table_view.show_rows(["column", "value"], rows,
                                       f"{payload[3].spectrum_id}_spectrum")
             self._data_count(1)
-            self.table_view.set_note("spectra.csv: this spectrum's row")
+            self.table_view.set_note("spectra.csv: this spectrum's row, as hxex report writes it")
         elif kind == "point":
             table = spectra_table(results, rows=[s.index for s in payload[2].spectra])
             self._show_columns(table, f"{payload[0].peptide_range}_z{series.charge}_"
                                       f"{payload[2].label}_spectra")
-            self.table_view.set_note("spectra.csv: this time point's spectra")
+            self.table_view.set_note("spectra.csv: this time point's spectra, as hxex report "
+                                     "writes them")
         else:
-            row = series_table(results)
-            at = int(np.flatnonzero(np.asarray(row["data_id"]) == series.data_id)[0])
-            about = ", ".join(f"{name} {_cell(row[name][at])}" for name in row
-                              if name not in ("data_id", "sample", "peptide_range", "peptide",
-                                              "charge") and _cell(row[name][at]))
+            # a peptide row: the rows of every series the tree shows under it (owner,
+            # 2026-11-15; the figures stay the first charge's)
+            shown = ([s for s in whole.series if self._shown(whole, s)] if whole is not None
+                     else [series])
+            ids = [s.data_id for s in shown]
+            spectra = np.flatnonzero(np.isin(results.fit.data_id, np.asarray(ids)))
             chosen = self.series_table.currentText()
-            stem = f"{payload[0].sample}_{payload[0].peptide_range}_z{series.charge}"
+            if whole is None:
+                row = series_table(results, data_ids=[series.data_id])
+                about = ", ".join(f"{name} {_cell(row[name][0])}" for name in row
+                                  if name not in ("data_id", "sample", "peptide_range",
+                                                  "peptide", "charge") and _cell(row[name][0]))
+                stem = f"{payload[0].sample}_{payload[0].peptide_range}_z{series.charge}"
+                whose = "this series'"
+                tail = f" series.csv: {about}"
+            else:
+                stem = f"{whole.sample}_{whole.peptide_range}_peptide"
+                whose = f"this peptide's {len(ids)} series'"
+                tail = ""
             if chosen == "components.csv":
-                spectra = np.flatnonzero(results.fit.data_id == series.data_id)
                 self._show_columns(components_table(results, rows=spectra),
                                    f"{stem}_components")
-                what = "this series' populations, one row per spectrum and population"
+                what = f"{whose} populations, one row per spectrum and population"
             elif chosen == "spectra.csv":
-                spectra = np.flatnonzero(results.fit.data_id == series.data_id)
                 self._show_columns(spectra_table(results, rows=spectra), f"{stem}_spectra")
-                what = "this series' spectra"
+                what = f"{whose} spectra"
             else:
-                self._show_columns(uptake_table(results, data_ids=[series.data_id]),
-                                   f"{stem}_uptake")
-                what = "this series' rows"
-            self.table_view.set_note(f"{chosen}: {what}. series.csv: {about}")
+                self._show_columns(uptake_table(results, data_ids=ids), f"{stem}_uptake")
+                what = f"{whose} rows, every K and population"
+            self.table_view.set_note(f"{chosen}: {what}, as hxex report writes them (not the "
+                                     f"figures' K or correction).{tail}")
+
+    def _table_key(self) -> tuple | None:
+        """What the data tab shows, by what names it (not by the payload's address, which
+        Python gives to the next selection's tuple: audit of 2026-11-15, C-11); None when
+        nothing is selected."""
+        kind, payload = getattr(self, "_selection", (None, None))
+        if kind is None:
+            return None
+        whole = self._selection_whole
+        return (kind, payload[1].data_id, payload[2].order if kind in ("point", "spectrum")
+                else None, payload[3].index if kind == "spectrum" else None,
+                self.series_table.currentText(),
+                None if whole is None else (whole.sample, whole.peptide_range, whole.peptide))
 
     def _series_table_changed(self, _name: str) -> None:
-        self._table_for = None
         self._fill_table()
 
     def _show_columns(self, table: dict, name: str) -> None:
@@ -803,13 +925,41 @@ class ResultsWorkspace(QWidget):
         self._data_count(n)
 
     def _table_row_chosen(self, row: dict) -> None:
-        """A row of the table double-clicked: its spectrum, when it names one."""
+        """A row of the table double-clicked: its spectrum, when it names one (opened in the
+        tree when its series is not open yet: audit of 2026-11-15, C-10)."""
         sid = row.get("spectrum_id")
         if sid and self.results is not None:
-            i = int(np.flatnonzero(self.results.fit.spectrum_id == sid)[0])
-            leaf = self._leaves.get(i)
-            if leaf is not None:
-                self.tree.setCurrentItem(leaf)
+            self.select_spectrum(str(sid))
+
+    def _spectrum_row_clicked(self, row: dict) -> None:
+        """A click on a spectrum's panel of a spectra page (or its fits at each K): that
+        spectrum selected in the tree (PLAN "GUI")."""
+        sid = row.get("spectrum_id")
+        if sid and self.results is not None and self.selection().get("spectrum_id") != sid:
+            self.select_spectrum(str(sid))
+
+    def select_spectrum(self, spectrum_id: str) -> bool:
+        """Select the spectrum ``spectrum_id`` (False when the results lack it)."""
+        where = self._where_of(spectrum_id)
+        return bool(where) and self.select(where)
+
+    def _where_of(self, spectrum_id: str) -> dict:
+        """The selection (:meth:`selection`) of the spectrum ``spectrum_id`` ({} when the
+        results lack it)."""
+        found = np.flatnonzero(self.results.fit.spectrum_id == spectrum_id)
+        if not len(found):
+            return {}
+        known = self._series_by_id.get(int(self.results.fit.data_id[found[0]]))
+        if known is None:
+            return {}
+        pep, series = known
+        out = {"sample": pep.sample, "peptide_range": pep.peptide_range,
+               "peptide": pep.peptide, "charge": series.charge, "data_id": series.data_id,
+               "spectrum_id": spectrum_id}
+        if series.fragment:
+            out.update(fragment=series.fragment, condition=series.condition,
+                       ms_level=series.ms_level)
+        return out
 
     # --- the spectra pages of a series ---------------------------------------------------------
 
@@ -817,9 +967,12 @@ class ResultsWorkspace(QWidget):
         """With a series' spectra in view on several pages: its next (``step`` 1) or previous
         (-1) page; False at either end (the step then goes to the next series)."""
         item = self.tree.currentItem()
+        on = self.figures.currentWidget()
+        paged = [self.panels.get("spectra")]
+        if self._populations_paged:  # an empty populations tab has no pages (C-24)
+            paged.append(self.panels.get("populations"))
         if self._spectra_job is None or item is None or item.data(0, KIND) not in (
-                "series", "peptide") or self.figures.currentWidget() not in (
-                self.panels.get("spectra"), self.panels.get("populations")):
+                "series", "peptide") or on not in paged:
             return False
         at = self.spectra_page.currentIndex() + step
         if not 0 <= at < self.spectra_page.count():
@@ -862,15 +1015,14 @@ class ResultsWorkspace(QWidget):
         results, data_id, config, pages = self._spectra_job
         at = max(self.spectra_page.currentIndex(), 0)
         page = pages[at]
-        self.panel("spectra").draw(
-            lambda: plot_spectra_page(results, data_id, config, page))
+        self._draw_panel("spectra", lambda: plot_spectra_page(results, data_id, config, page))
         if self._populations_paged:  # the same page of the populations
             from ..report.series import plot_populations
 
             self.population_page.blockSignals(True)
             self.population_page.setCurrentIndex(at)
             self.population_page.blockSignals(False)
-            self.panel("populations").draw(lambda: plot_populations(
+            self._draw_panel("populations", lambda: plot_populations(
                 results, data_id, k=config.k, corrected=config.corrected, rows=page.rows,
                 max_columns=config.page_columns, note=page.note, layout=page.layout))
 
@@ -926,9 +1078,11 @@ class ResultsWorkspace(QWidget):
         review panel), or its series for a table of series (series.csv, uptake.csv)."""
         where = {"sample": str(row.get("sample")), "peptide_range": str(row.get("peptide_range")),
                  "charge": int(row.get("charge") or 0)}
+        if row.get("peptide"):
+            where["peptide"] = str(row["peptide"])
         if row.get("spectrum_id"):
             where["spectrum_id"] = str(row.get("spectrum_id"))
-        elif row.get("data_id") is not None:  # one series of several with the same name
+        if row.get("data_id") is not None:  # its own series, not every one of the charge (C-20)
             where["data_id"] = int(row["data_id"])
         self.select(where)
 
@@ -971,7 +1125,10 @@ class ResultsWorkspace(QWidget):
         kept = self._overview_figures.get(page)
         if kept is not None:
             if panel.view.figure is not kept:
-                panel.show_figure(kept)
+                if self.render == "svg":  # its SVG made off the window's thread (C-17)
+                    panel.draw(lambda: kept)
+                else:
+                    panel.show_figure(kept)
             return
         draw = {"k_selection": plot_k_selection, "controls": plot_controls_overview,
                 "quality": plot_quality_overview}[page]
@@ -1018,7 +1175,11 @@ class ResultsWorkspace(QWidget):
         return config
 
     def _redraw(self, *_) -> None:
-        self._selected(self.tree.currentItem())
+        item = self.tree.currentItem()
+        if item is not None:
+            self._selected(item)
+        elif self._last is not None:  # the tree lost the row (a Find), the figures did not
+            self._show(*self._last, again=True)
 
     def _fill_target_filters(self) -> None:
         """The MS level and ion type lists, from the series of the results (hidden, with the
@@ -1070,6 +1231,7 @@ class ResultsWorkspace(QWidget):
                      self.level_filter.currentData(), self.class_filter.currentData())
 
     def _fill(self, *_) -> None:
+        keep = self.selection()  # the row selected: selected again below when still shown
         self.tree.blockSignals(True)
         self.tree.clear()
         self._leaves, self._series_items = {}, {}
@@ -1119,6 +1281,8 @@ class ResultsWorkspace(QWidget):
                                         min(names + 4 * pad, 480)))
         total = sum(len(p.series) for p in self.tree_data)
         self.count.setText(f"{n_series} of {total} series" if self.results is not None else "")
+        if keep:  # (audit of 2026-11-15, C-8: after a Find the tree had no current row)
+            self._find(keep)
 
     def _expanded(self, item: QTreeWidgetItem) -> None:
         """A series opened: its time points and their spectra, made now."""
@@ -1237,16 +1401,21 @@ class ResultsWorkspace(QWidget):
         """Draw what ``item`` shows. Moving to an item that shows the same figures (a
         peptide and its first charge) draws nothing again unless ``again`` (settings or
         decisions changed)."""
+        if item is None or self.results is None:
+            return
+        self._show(item.data(0, KIND), item.data(0, PAYLOAD), again=again)
+
+    def _show(self, kind: str, payload, again: bool = True) -> None:
+        """Draw what the row of ``kind`` and ``payload`` (the tree's) shows."""
         from ..report.figures import series_figures, series_kinds
         from ..report.overview import plot_k_comparison, plot_k_comparisons
         from ..report.picking_check import plot_picking_check
         from ..report.series import plot_series_spectra, series_mz_range
         from ..report.spectrum import plot_spectrum
 
-        if item is None or self.results is None:
+        if self.results is None:
             return
-        kind = item.data(0, KIND)
-        payload = item.data(0, PAYLOAD)
+        self._last = (kind, payload)
         whole = payload if kind == "peptide" else None
         if kind == "peptide":  # its first charge's pages
             pep = payload
@@ -1266,6 +1435,8 @@ class ResultsWorkspace(QWidget):
                  else payload[2].order if kind == "point" else None)
         drawn = (kind, data_id, shown)
         if not again and drawn == self._drawn:  # the item moved to, not what it shows
+            self._selection_whole = whole  # the data tab lists a peptide's every series
+            self._fill_table()
             self.selection_changed.emit()
             if self.window is not None:
                 self.window.changed()
@@ -1273,6 +1444,7 @@ class ResultsWorkspace(QWidget):
         self._drawn = drawn
         config = self._plot_config()
         self._show_tabs(kind)
+        self._pending_draws = {}  # the selection before: its tabs not opened are not drawn
         # one m/z axis for the series at every level: its pages, a time point, a spectrum
         mz_range = series_mz_range(results, data_id) if kind != "series" else None
 
@@ -1296,8 +1468,8 @@ class ResultsWorkspace(QWidget):
                 if name == "populations":  # drawn with its spectra's page
                     continue
                 one = dataclasses.replace(config, kinds=(name,))
-                panel.draw(lambda one=one, name=name: series_figures(results, data_id,
-                                                                     one)[name])
+                self._draw_panel(name, lambda one=one, name=name: series_figures(
+                    results, data_id, one)[name])
         elif kind == "point":
             self.spectra_page.hide()
             self.population_page.hide()
@@ -1307,7 +1479,7 @@ class ResultsWorkspace(QWidget):
             # a near square of panels (2 x 2 for four replicates): one row of four was a wide,
             # short page, tiny when fitted to the window (owner, 2026-11-03)
             columns = max(1, math.ceil(math.sqrt(len(rows))))
-            self.panel("spectra").draw(lambda: plot_series_spectra(
+            self._draw_panel("spectra", lambda: plot_series_spectra(
                 results, data_id, rows=rows, columns=columns, show=config.show, k=config.k,
                 corrected=config.corrected))
             point = payload[2]
@@ -1315,24 +1487,31 @@ class ResultsWorkspace(QWidget):
             labels = [f"rep {s.rep}" for s in point.spectra]
             title = f"{payload[0].sample} {payload[0].peptide_range} {payload[0].peptide} " \
                     f"{series.name}, {point.label}"
-            self.panel("fits at each K").draw(lambda: plot_k_comparisons(
+            self._draw_panel("fits at each K", lambda: plot_k_comparisons(
                 ids, results, labels=labels, title=title, mz_range=mz_range))
-            self.panel("uptake").draw(uptake)
+            self._draw_panel("uptake", uptake)
         else:
             spectrum = payload[3]
             sid = spectrum.spectrum_id
-            self.panel("spectrum").draw(lambda: plot_spectrum(
+            self._draw_panel("spectrum", lambda: plot_spectrum(
                 sid, results, show=config.show, k=config.k, corrected=config.corrected,
                 mz_range=mz_range))
-            self.panel("fits at each K").draw(lambda: plot_k_comparison(sid, results,
-                                                                        mz_range=mz_range))
+            self._draw_panel("fits at each K", lambda: plot_k_comparison(
+                sid, results, mz_range=mz_range))
             if self._profile_fitted():
-                self.panel("picking check").draw(lambda: plot_picking_check(
-                    sid, results, mz_range=mz_range))
-            self.panel("uptake").draw(uptake)
+                if self._profile_fit_of(sid):
+                    self._draw_panel("picking check", lambda: plot_picking_check(
+                        sid, results, mz_range=mz_range))
+                else:  # the run kept the pick for it: nothing to check
+                    self._pending_draws.pop("picking check", None)
+                    self.panel("picking check").clear(
+                        "no picking check: this spectrum kept the pick (a fragment, another "
+                        "ion type, its own envelope, or centroided data)")
+            self._draw_panel("uptake", uptake)
         self._draw_overview()  # in view: kept, or drawn again for new results (a decision)
-        self._selection = (kind, payload)
-        self._data_count(None)  # until the tab is filled for this selection
+        self._selection, self._selection_whole = (kind, payload), whole
+        if self._table_key() != self._table_for or self._table_results is not results:
+            self._data_count(None)  # until the tab is filled for this selection
         self._fill_table()
         self._draw_retention()
         self.selection_changed.emit()
@@ -1460,10 +1639,16 @@ class ResultsWorkspace(QWidget):
                                           for j in range(point.childCount())))
                 self._sum_children(point)
         for data_id in series_ids:
+            rejected, multi = counts(results, data_id)
+            known = self._series_by_id.get(data_id)
+            if known is not None:  # the counts the next rebuild and the filters use (C-9)
+                series = known[1]
+                series.n_rejected, series.n_multi = rejected, multi
+                rows = np.flatnonzero(results.fit.data_id == data_id)
+                series.n_reviewed = int(np.isin(status[rows], ("accepted", "rejected")).sum())
             item = self._series_items.get(data_id)
             if item is None:
                 continue
-            rejected, multi = counts(results, data_id)
             item.setText(COLUMN["rejected"], str(rejected or ""))
             item.setText(COLUMN["K > 1"], str(multi or ""))
             self._sum_children(item.parent(), ("rejected", "K > 1"))
@@ -1494,6 +1679,7 @@ class ResultsWorkspace(QWidget):
         self.left_note.setText(f"The 'left out' column is from before {why}." if why.startswith(
             "your") else f"The 'left out' column is out of date: {why}.")
         self.left_update.setEnabled(True)
+        self.left_update.show()
         self.left_bar.show()
 
     def _left_tab_changed(self, _index: int) -> None:
@@ -1572,18 +1758,23 @@ class ResultsWorkspace(QWidget):
             item.setText(col, str(total or ""))
 
     def selection(self) -> dict:
-        """What is selected, by what outlasts a rerun: sample, residues and charge (and for a
-        fragment its ion, condition and MS level), and the time point's label or the spectrum's
-        id."""
+        """What is selected, by what outlasts a rerun: sample, residues, the sequence (two
+        forms of a peptide share the residues: audit of 2026-11-15, C-7) and charge (and for
+        a fragment its ion, condition and MS level), and the time point's label or the
+        spectrum's id. What the figures show when the tree has lost its row (a Find)."""
         item = self.tree.currentItem()
         if item is None:
-            return {}
-        kind, payload = item.data(0, KIND), item.data(0, PAYLOAD)
+            if self._last is None:
+                return {}
+            kind, payload = self._last
+        else:
+            kind, payload = item.data(0, KIND), item.data(0, PAYLOAD)
         if kind == "peptide":
-            return {"sample": payload.sample, "peptide_range": payload.peptide_range}
+            return {"sample": payload.sample, "peptide_range": payload.peptide_range,
+                    "peptide": payload.peptide}
         pep, series = payload[0], payload[1]
         out = {"sample": pep.sample, "peptide_range": pep.peptide_range,
-               "charge": series.charge}
+               "peptide": pep.peptide, "charge": series.charge}
         if series.fragment:
             out.update(fragment=series.fragment, condition=series.condition,
                        ms_level=series.ms_level)
@@ -1606,24 +1797,48 @@ class ResultsWorkspace(QWidget):
         if not found:
             return False
         pep = next((p for p in found if p.peptide == peptide), found[0])
-        return self.select({"sample": pep.sample, "peptide_range": pep.peptide_range})
+        return self.select({"sample": pep.sample, "peptide_range": pep.peptide_range,
+                            "peptide": pep.peptide})
 
     def select(self, selection: dict) -> bool:
         """Select what ``selection`` names (as :meth:`selection` gives it); False when the
-        results do not have it (the filter and search are cleared to find it)."""
-        if not selection:
+        results do not have it. The filters and Find are cleared only when they hide it
+        (audit of 2026-11-15, C-14)."""
+        if not selection or self.results is None:
             return False
+        if "spectrum_id" in selection and "data_id" not in selection:
+            # the spectrum's own series, so that no other series of the charge is opened on
+            # the way to it (C-20)
+            found = np.flatnonzero(self.results.fit.spectrum_id == selection["spectrum_id"])
+            if not len(found):
+                return False
+            selection = {**selection, "data_id": int(self.results.fit.data_id[found[0]])}
+        if self._find(selection):
+            return True
         boxes = (self.filter, self.ms_filter, self.ion_filter, self.level_filter,
                  self.class_filter)
-        if self.search.text() or any(box.currentIndex() > 0 for box in boxes):
-            for box in boxes:
-                box.setCurrentIndex(0 if box.count() else -1)
-            self.search.clear()
+        if not (self.search.text() or any(box.currentIndex() > 0 for box in boxes)):
+            return False
+        for box in boxes:  # cleared together: the tree is rebuilt once
+            box.blockSignals(True)
+            box.setCurrentIndex(0 if box.count() else -1)
+            box.blockSignals(False)
+        self.search.blockSignals(True)
+        self.search.clear()
+        self.search.blockSignals(False)
+        self._fill()
+        return self._find(selection)
+
+    def _find(self, selection: dict) -> bool:
+        """Select what ``selection`` names among the rows the tree shows now (False when it
+        is not there)."""
         for i in range(self.tree.topLevelItemCount()):
             top = self.tree.topLevelItem(i)
             pep = top.data(0, PAYLOAD)
             if (pep.sample, pep.peptide_range) != (selection.get("sample"),
                                                    selection.get("peptide_range")):
+                continue
+            if "peptide" in selection and pep.peptide != selection["peptide"]:
                 continue
             if "charge" not in selection:
                 self.tree.setCurrentItem(top)

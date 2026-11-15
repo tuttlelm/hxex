@@ -10054,3 +10054,62 @@ CSVs or mzML if wanted.
     refuses, naming the key, a hand-edited file whose tables are not tables (A-11). Not done: B-29 (latent), B-30 (config.py's Python wording), and a
     TOML round-tripping library (open question B 7: the line editor was extended instead).
     Guide gui.md: the `#~` mark, the half-ticked box, per-sample tables, New table.
+
+390. **The window's Results tree, List, figure view and data tab (2026-11-15; fix Session 3
+    of docs/AUDIT_GUI_2026-11-15.md).** The matplotlib view (the default) showed a new figure with
+    the previous figure's clickable marks when the previous picture was still queued (the Analysis
+    go-to then opened the wrong peptide): `RasterView.set_figure` drops the pending picture and
+    forgets the marks, and a picture that comes back for another figure is ignored (C-1); the
+    previous picture stays under the veil until the new one is drawn, drawn at once instead of
+    after the zoom timer, so a new figure no longer blinks white (C-19); a picture that fails
+    says so on the panel's status line (C-25); the marks and panel boxes are taken at the
+    picture's own dpi, in the drawing thread (C-28); Save figure… and the SVG renderer's work
+    run in the drawing thread too (C-17; the overview's kept page goes through `draw` in SVG
+    mode); Actual size keeps the centre of the view where it is (C-18); the wheel over a list in
+    the figure's bar no longer zooms (C-13); a typed name like `fig.v2` gets the chosen format's
+    suffix (C-23); the − and + tooltips name the wheel over the figure (C-22);
+    `natural_key("10²")` no longer raises (C-29). The List: sorting keeps the current row on its
+    spectrum (`RowsModel.sort` moves Qt's persistent indexes; the R key had rejected the
+    spectrum shown, not the one highlighted: C-4); the row chosen is kept by the row itself
+    through Find, the sample and the column filters, also on series.csv and uptake.csv (whose
+    rows have no spectrum id: C-5), and ◀ ▶ step by row, so a spectrum with two rows of
+    components.csv is passed (C-6); the row comes back after the results are read again (open
+    question 5); a row chosen opens only the spectrum's own series (C-20); copies keep the
+    digits the CSV files keep (C-3); the columns are sized from the first 300 rows, not every
+    row (M-2). The tree: the selection carries the sequence, so two forms of a peptide at one
+    range in one sample (a modified form, two forms of a pool) are told apart by the Analysis
+    go-to and by every restored selection (C-7); after a Find or a filter change the row stays
+    selected, and when the text leaves it out the figures and the review panel still show it,
+    decisions still redraw it, and a reread or a session keeps the place (C-8); a decision
+    updates the counts the rebuilt tree and the filters use (C-9); double-clicking a spectrum's
+    row in a series' data tab opens it also when the series was never opened (C-10); the
+    results read again keep the figure tab, the filters, Find and the List's row, and `select`
+    clears the filters only when they hide the selection, rebuilding the tree once (C-14); ◀ ▶
+    by series pass an empty populations tab (C-24). The data tab: keyed by what names the
+    selection, not by the address of its tuple, which Python gave to a later selection (another
+    peptide's rows were shown: C-11); it keeps its count when the same selection is drawn again
+    (C-21); a peptide row lists the rows of every series the tree shows under it, while its
+    figures stay the first charge state's (open question 2); its note says the rows are the CSV
+    tables' as `hxex report` writes them, not the figures' K or correction (open question 3,
+    guide corrected); it builds only the rows asked for: `_index_columns` takes the rows,
+    `series_table` takes `data_ids`, and `spectra_table` / `components_table` work per K in one
+    batch with one `correct_means` call per K (M-1, C-26; the intact-peptide benchmark, 26,212
+    spectra: a one-row `spectra_table` 0.18 s -> 0.002 s, one series' `uptake_table` 0.17 ->
+    0.012 s, the List's whole `spectra_table` 5.8 -> 0.4 s; every table identical in values and
+    column order, checked against the old code on the benchmark and in a test). Hidden tabs
+    are drawn when opened, not on every selection (M-3: every selection drew every tab in the
+    one drawing thread; the tab in view draws at once, the others when switched to). A click on
+    a spectrum's panel of a spectra page, or of the fits at each K, selects that spectrum in
+    the tree (open question 1; `plot_spectrum` gives the panel's artists their spectrum id as a
+    data row). A bundle opened on its own says under the tree that the 'left out' column uses
+    the default analysis settings (open question 4). The picking check tab (13957ad, outside
+    the audit's commit) says when a spectrum kept the pick instead of failing to draw. The
+    window: while a run or resume of the project shown runs, the Results panel and the status
+    bar say that the results shown are replaced when it finishes, nothing blocked (A open
+    question 1); a review table saved, or a [figures] / [review] change made, while the results
+    are being read is seen when they arrive, the results read once more (A-14, D-6; an
+    [analysis] change then recomputes the 'left out' column); the first decision of a project,
+    which names its review table in the project file, no longer reads the results again
+    (D open question 7). Guide gui.md updated. Tests: `tests/test_gui_figure_view.py`,
+    `test_gui_list.py`, `test_gui_reloads.py` (new), `test_report.py` (subset tables equal the
+    whole tables' rows), `test_gui_results.py`, `test_gui_data.py`.

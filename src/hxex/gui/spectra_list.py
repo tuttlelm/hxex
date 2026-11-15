@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .data_table import RowsModel, cell_text
+from .data_table import RowsModel, cell_text, copy_text, size_columns
 from .flow_layout import FlowLayout
 from .order import natural_key
 from .results_tree import search_matches
@@ -143,6 +143,9 @@ class SpectraList(QWidget):
         self.update_button.clicked.connect(self.update_asked.emit)
         self.columns: list[str] = []
         self.rows: list[dict] = []  # every spectrum's row (the model shows the filtered ones)
+        # the row chosen when the list was cleared for a reread of the results: chosen again,
+        # quietly, when the rows come back (audit of 2026-11-15, C open question 5)
+        self._kept_key: tuple | None = None
         self.filter = QComboBox()
         for i, (key, (text, meaning)) in enumerate(FILTERS.items()):
             self.filter.addItem(text, key)
@@ -236,9 +239,18 @@ class SpectraList(QWidget):
         self.sample.blockSignals(False)
         self._apply()
         if rows:
-            self.grid.resizeColumnsToContents()
+            size_columns(self.grid)
+        kept, self._kept_key = self._kept_key, None
+        if kept is not None and self.current_row() is None:
+            for i, row in enumerate(self.model.rows):
+                if _row_key(row) == kept:
+                    self.select_index(i, emit=False)
+                    break
 
     def clear(self, message: str = "") -> None:
+        current = self.current_row()
+        if current is not None:
+            self._kept_key = _row_key(current)
         self.columns, self.rows = [], []
         self.model.set_rows([], [])
         self.count.setText(message)
@@ -320,7 +332,8 @@ class SpectraList(QWidget):
             self.set_column_filter(column, dialog.rule())
 
     def _apply(self) -> None:
-        """Show the rows the filter, sample and search keep, in the order sorted."""
+        """Show the rows the filter, sample and search keep, in the order sorted; the row chosen
+        stays chosen (by the row itself, whichever table: audit of 2026-11-15, C-5)."""
         current = self.current_row()
         shown = [r for r in self.rows if self.shown(r)]
         self.model.set_rows(self.columns, shown)
@@ -330,7 +343,10 @@ class SpectraList(QWidget):
         self.count.setText(f"{len(shown):,} of {len(self.rows):,} spectra" if self.rows else
                            self.count.text())
         if current is not None:
-            self.select(current["spectrum_id"], emit=False)
+            for i, row in enumerate(self.model.rows):
+                if row is current:
+                    self.select_index(i, emit=False)
+                    break
 
     def copied_text(self, every: bool) -> str:
         """The row chosen (``every``: every row shown, in the order shown), with the header,
@@ -339,7 +355,7 @@ class SpectraList(QWidget):
         if not rows:
             return ""
         lines = ["\t".join(self.model.columns)]
-        lines += ["\t".join(cell_text(r.get(c)) for c in self.model.columns) for r in rows]
+        lines += ["\t".join(copy_text(r.get(c)) for c in self.model.columns) for r in rows]
         return "\n".join(lines) + "\n"
 
     def copy(self, every: bool = False) -> None:
@@ -416,24 +432,30 @@ class SpectraList(QWidget):
         return self.model.rows[index.row()]
 
     def select(self, spectrum_id: str, emit: bool = True) -> bool:
-        """Make the row of ``spectrum_id`` current (False when it is not shown)."""
+        """Make the first row of ``spectrum_id`` current (False when it is not shown)."""
         for i, row in enumerate(self.model.rows):
             if str(row.get("spectrum_id")) == spectrum_id:
-                if not emit:
-                    self.grid.selectionModel().blockSignals(True)
-                index = self.model.index(i, 0)
-                self.grid.selectionModel().setCurrentIndex(
-                    index, QItemSelectionModel.SelectionFlag.ClearAndSelect
-                    | QItemSelectionModel.SelectionFlag.Rows)
-                self.grid.scrollTo(index)
-                if not emit:
-                    self.grid.selectionModel().blockSignals(False)
+                self.select_index(i, emit=emit)
                 return True
         return False
 
+    def select_index(self, i: int, emit: bool = True) -> None:
+        """Make the row at position ``i`` (as shown) current; ``emit``: as a click would
+        (:attr:`chosen`), else quietly."""
+        if not emit:
+            self.grid.selectionModel().blockSignals(True)
+        index = self.model.index(i, 0)
+        self.grid.selectionModel().setCurrentIndex(
+            index, QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows)
+        self.grid.scrollTo(index)
+        if not emit:
+            self.grid.selectionModel().blockSignals(False)
+
     def step(self, step: int) -> bool:
-        """The next (``step`` 1) or previous (-1) row, in the order shown; False at either
-        end."""
+        """The next (``step`` 1) or previous (-1) row, in the order shown, by its place (a
+        spectrum with two populations has two rows of components.csv: audit of 2026-11-15, C-6);
+        False at either end."""
         n = self.model.rowCount()
         if not n:
             return False
@@ -441,7 +463,7 @@ class SpectraList(QWidget):
         row = (0 if step > 0 else n - 1) if not index.isValid() else index.row() + step
         if not 0 <= row < n:
             return False
-        self.select(str(self.model.rows[row]["spectrum_id"]))
+        self.select_index(row)
         return True
 
     def _current(self, current, _previous) -> None:
@@ -602,6 +624,15 @@ def _order_key(row: dict, column: str):
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return (0, float(value) if not math.isnan(float(value)) else math.inf, ())
     return (1, 0.0, natural_key(value))
+
+
+# the columns that tell a row of any of the tables apart, for finding it again
+_KEY_COLUMNS = ("spectrum_id", "data_id", "time", "role", "rep", "description", "K", "rank")
+
+
+def _row_key(row: dict) -> tuple:
+    """What tells ``row`` apart from the other rows of its table."""
+    return tuple((c, row.get(c)) for c in _KEY_COLUMNS if c in row)
 
 
 def _number(value) -> float:

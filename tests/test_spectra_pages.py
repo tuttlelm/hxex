@@ -102,8 +102,9 @@ def test_the_window_offers_the_pages(qtbot, results):
     page.show_results(dataclasses.replace(results, figures=PlotConfig(page_rows=1)), None)
     series_item = page.tree.topLevelItem(0).child(0)
     spectra = page.panel("spectra")
+    page.tree.setCurrentItem(series_item)
     with qtbot.waitSignal(spectra.drawn, timeout=30000):
-        page.tree.setCurrentItem(series_item)
+        page.figures.setCurrentWidget(spectra)
     box = page.spectra_page
     assert not box.isHidden()  # several pages: the list in the tab's bar
     assert [box.itemText(i) for i in range(box.count())] == [f"page {n} of 3" for n in (1, 2, 3)]
@@ -112,8 +113,9 @@ def test_the_window_offers_the_pages(qtbot, results):
     assert spectra.view.figure._suptitle.get_text().endswith("(page 3 of 3)")
     # one page (the defaults): no list
     page.show_results(results, None)
+    page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
     with qtbot.waitSignal(spectra.drawn, timeout=30000):
-        page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
+        page.figures.setCurrentWidget(spectra)
     assert box.isHidden()
 
 
@@ -162,11 +164,13 @@ def test_a_spectrum_keeps_its_series_axis_and_plot_area(qtbot, results):
     series_item = page.tree.topLevelItem(0).child(0)
     page.tree.expandItem(series_item)
     leaf = series_item.child(1).child(0)
+    page.tree.setCurrentItem(leaf)
     with qtbot.waitSignal(page.panel("spectrum").drawn, timeout=30000):
-        page.tree.setCurrentItem(leaf)
+        page.figures.setCurrentWidget(page.panel("spectrum"))
     shown = page.panel("spectrum").view.figure.axes[0].get_xlim()
     assert np.allclose(shown, wanted)
-    qtbot.waitUntil(lambda: page.panel("fits at each K").view.figure is not None, timeout=30000)
+    with qtbot.waitSignal(page.panel("fits at each K").drawn, timeout=30000):
+        page.figures.setCurrentWidget(page.panel("fits at each K"))
     assert np.allclose(page.panel("fits at each K").view.figure.axes[0].get_xlim(), wanted)
 
 
@@ -229,8 +233,9 @@ def test_the_populations_go_on_over_the_spectras_pages(qtbot, results, tmp_path)
     qtbot.addWidget(page)
     page.show_results(dataclasses.replace(results, figures=cfg), None)
     populations = page.panel("populations")
+    page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
     with qtbot.waitSignal(populations.drawn, timeout=30000):
-        page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
+        page.figures.setCurrentWidget(populations)
     box = page.population_page
     assert not box.isHidden() and box.count() == 3
     with qtbot.waitSignal(populations.drawn, timeout=30000):

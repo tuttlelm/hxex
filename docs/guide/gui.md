@@ -231,7 +231,7 @@ In **List**, the same columns come from `spectra.csv`, and **Find** finds them t
   worked out when the results open, and again only when you ask: after a review decision or a
   change to `[analysis]`, a line under the tree says it is from before them, with an
   **Update** button (a few seconds on a large run). Results opened as a bundle on their own
-  use the default settings.
+  use the default settings, and the line under the tree says so.
 
 Click a row, or move through the tree with the arrow keys, to see:
 
@@ -244,12 +244,18 @@ Click a row, or move through the tree with the arrow keys, to see:
   framed), and the series' uptake plot.
 
 A time point with a single replicate shows that spectrum's figures, as its replicate does.
+The tab in view is drawn when you select a row; the other tabs of the selection are drawn
+when you open them (a selection no longer draws every tab, so moving through a large run is
+quicker). On a spectra page, and on the fits at each K, click a spectrum's panel to select
+that spectrum in the tree (the **?** by the buttons says so).
 
 Results picked with the profile fit (`[run.picker] pick = "profile_fit"`) also have a
 **picking check** tab on a replicate: the raw profile, the peptide's fitted peaks (dark), the
 peaks the fit gave to other species (orange, dashed), and the bin values (triangles), with the
 spectrum's purity and stray share in the title ([details](picking-window.md#fitting-the-profile-instead-opt-in)).
 It is kept apart from the spectrum's own figure so that the populations' fit stays readable.
+A spectrum the profile fit did not read (a fragment, another ion type, its own envelope, or
+centroided data, which keep the pick) has no picking check, and the tab says so.
 
 A replicate read from mzML or Thermo raw files also has an **elution** tab: its elution
 trace over retention time, to check that the scans summed sit on the peptide's own elution peak and not on a
@@ -383,14 +389,17 @@ so a spectrum with a new window has a new id after the run; your review decision
 it to the new id (see [When a spectrum's id changes](project-file.md#the-user-review-table)).
 
 Every level also has a **data** tab, named with its number of rows as in Analysis
-(**data (12)**): the selection's rows of the tables `hxex report` writes.
+(**data (12)**): the selection's rows of the tables `hxex report` writes, as it writes them
+(every K and population, corrected and uncorrected; the `[figures]` K and correction the
+figures follow do not apply to the tables).
 A charge (series) shows its `uptake.csv` rows (each time, the centroid row and each K and
-population, with errors and fD: the values of its uptake page), with its `series.csv` values in
-a line above; the list beside **Save table…** switches to its `components.csv` rows (each
-spectrum's populations: the values of its populations page) or its `spectra.csv` rows. A time
-point shows its replicates' `spectra.csv` rows; a spectrum its own `spectra.csv` row, as names
-and values. Sort, copy, and **Save table…** as in the Analysis data tab; double-click a row to
-open its spectrum.
+population, with errors and fD), with its `series.csv` values in a line above; the list beside
+**Save table…** switches to its `components.csv` rows (each spectrum's populations) or its
+`spectra.csv` rows. A peptide shows the same tables for every charge state under it, while its
+figures are its first charge state's. A time point shows its replicates' `spectra.csv` rows; a
+spectrum its own `spectra.csv` row, as names and values. Sort, copy, and **Save table…** as in
+the Analysis data tab (a copy keeps the digits the CSV files keep; the cells shown round
+more); double-click a row to open its spectrum.
 
 **List**, the tab beside **Tree**, shows every spectrum as one row with the columns of
 `spectra.csv` (K and the populations at the K in use, the review, the flags, the screens'
@@ -405,9 +414,12 @@ Choosing a row shows that spectrum, with the review panel, as the tree does, and
 through the list one row at a time in the order shown (the choice of spectrum, time point, or
 charge beside them is greyed out on the List tab; Ctrl+C, or a right click, copies the row chosen or every
 row shown, with the header): sort by a screen score, say, and work down from the
-worst. The keys **A**, **R**, and **U** decide in the list too. A decision updates its row at
-once; the row stays in view until you change the filter. The list is made in the background
-when the results open (a few seconds for a large run).
+worst. Sorting, filtering, and **Find** keep the row chosen, so the row highlighted is always
+the spectrum shown. The keys **A**, **R**, and **U** decide in the list too. A decision updates
+its row at once; the row stays in view until you change the filter. The list is made in the
+background when the results open (a few seconds for a large run), and when the results are
+read again (after a decision, a changed setting, or a run) it comes back on the row you were
+on.
 
 The list at the left of its bar chooses which of `hxex report`'s tables the List shows:
 `spectra.csv` (the spectra, as above), `series.csv`, `components.csv`, or `uptake.csv`, each
@@ -445,8 +457,10 @@ linear one, or the time points evenly spaced. The session remembers the choice.
 
 Results opened through the project file carry its `[figures]` settings and its review: change
 either (in the Project part, or in a text editor) and the results are shown again with the
-change, at the same place in the tree. Other settings change what the next **Run** does, not
-results already made. The commands read the project file when they start.
+change, at the same place in the tree, on the same figure tab, with the tree's filters and
+**Find** as they were. A change made while the results are being read is applied as soon as
+they arrive. Other settings change what the next **Run** does, not results already made. The
+commands read the project file when they start.
 
 The list above the tree shows only some series (flagged, more than one population, rejected,
 left out, or not reviewed yet), and **Find** narrows them: every word must match, a number as a
@@ -645,7 +659,10 @@ would type it. One command runs at a time.
   **Earlier commands**, below the console, lists the project's other commands, newest first:
   choose one to see its output. Only the project file's own commands are listed, also when
   several project files share a folder. The next command you run clears the console.
-- After **Run**, **Resume**, or **Report**, the Results part shows the new results.
+- After **Run**, **Resume**, or **Report**, the Results part shows the new results. While a
+  **Run** or **Resume** of the project whose results are shown is running, the Results part
+  and the status bar say that the results shown are replaced when it finishes; you can keep
+  looking at them meanwhile.
 - While a command runs, the other parts of the window show it too: the tab reads **Running**
   in the highlight colour, and the right end of the status bar, at the bottom of
   the window, shows the command, its step, and its run time (click it to open **Run**). When
@@ -663,7 +680,7 @@ sample, and charge of a series), which stays readable however far you zoom:
 
 - **Fit page** shows the whole figure in the space there is (the figure follows the window's
   size); **−**, **+**, and **Actual size** zoom out, zoom in, and show the figure at its own size
-  (100 %).
+  (100 %), keeping the part of the figure at the centre of the view where it is.
 - The **mouse wheel** zooms in and out around the pointer; **dragging** with the left button
   moves a zoomed figure (the scroll bars work too).
 - **Double-click** a panel of a page (one spectrum of the spectra page, say) to magnify it to

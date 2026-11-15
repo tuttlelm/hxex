@@ -370,11 +370,18 @@ class ReviewPanel(QGroupBox):
             if chosen is None:
                 self.message.setText("Not saved: no review table chosen")
                 return False
+        window = self.workspace.window
         try:
-            record = getattr(self.workspace.window, "recording", None)
-            with (record("the review table named in the project file") if record is not None
-                  else contextlib.nullcontext()):
-                path = make_review_table(project, results, chosen)
+            record = getattr(window, "recording", None)
+            if window is not None:  # naming the table is no reason to read the results again
+                window.naming_review_table = True
+            try:
+                with (record("the review table named in the project file") if record is not None
+                      else contextlib.nullcontext()):
+                    path = make_review_table(project, results, chosen)
+            finally:
+                if window is not None:
+                    window.naming_review_table = False
             write_decisions(path, self.pending, bundle_k, results=results)
         except TableLocked as exc:
             self.message.setText(f"Not saved yet: {exc}")
@@ -385,8 +392,9 @@ class ReviewPanel(QGroupBox):
             self.message.setText(f"Not saved: {exc}")
             log.error("the review decision was not saved: %s", exc)
             return False
-        if self.workspace.window is not None:  # the results shown have this table's decisions
-            self.workspace.window.results_review_stamp = table_stamp(project)
+        if window is not None:  # the results shown have this table's decisions
+            window.results_review_stamp = table_stamp(project)
+            window.watch_review_table()  # a table just made: a change elsewhere is seen
         changed, kept = self._lay_over(self.pending)
         log.info("review: %d spectra in %s", len(self.pending), path.name)
         self.pending = {}

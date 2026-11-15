@@ -67,19 +67,27 @@ def test_each_level_draws_its_figures(qtbot, page):
                                                                               "FD"]
     point = series.child(1)
     assert point.childCount() == 3 and point.text(COLUMN["K"]) == "1 1 1"
-    with qtbot.waitSignal(page.panel("spectra").drawn, timeout=30000):
-        page.tree.setCurrentItem(point)
+    page.tree.setCurrentItem(point)
     tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
     assert tabs == ["spectra", "fits at each K", "uptake", "data", "overview"]
-    qtbot.waitUntil(lambda: page.panel("fits at each K").view.figure is not None, timeout=30000)
-    title = page.panel("fits at each K").view.figure.axes[0].get_title()
-    assert title.splitlines()[-1].startswith("rep 1: K=")
+    # a tab's figure is drawn when the tab is in view (audit of 2026-11-15, M-3): the overview
+    # stayed in view, so nothing was drawn yet
+    assert page.figures.currentWidget() is page.panel("overview")
+    assert set(page._pending_draws) == {"spectra", "fits at each K", "uptake"}
+    with qtbot.waitSignal(page.panel("spectra").drawn, timeout=30000):
+        page.figures.setCurrentWidget(page.panel("spectra"))
     assert len(page.panel("spectra").view.figure.axes) == 3  # that time's replicates
     with qtbot.waitSignal(page.panel("fits at each K").drawn, timeout=30000):
-        page.tree.setCurrentItem(point.child(0))
+        page.figures.setCurrentWidget(page.panel("fits at each K"))
+    title = page.panel("fits at each K").view.figure.axes[0].get_title()
+    assert title.splitlines()[-1].startswith("rep 1: K=")
+    assert "uptake" in page._pending_draws  # still waiting for its tab
+    with qtbot.waitSignal(page.panel("fits at each K").drawn, timeout=30000):
+        page.tree.setCurrentItem(point.child(0))  # the tab in view draws the new selection
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
         "spectrum", "fits at each K", "uptake", "data", "overview"]
-    qtbot.waitUntil(lambda: page.panel("spectrum").view.figure is not None, timeout=30000)
+    with qtbot.waitSignal(page.panel("spectrum").drawn, timeout=30000):
+        page.figures.setCurrentWidget(page.panel("spectrum"))
     sel = page.selection()
     assert sel["charge"] == 2 and sel["spectrum_id"] == point.child(0).toolTip(0)
 
@@ -148,9 +156,9 @@ def test_a_peptide_and_its_first_charge_are_drawn_once(qtbot, page):
     (owner, 2026-11-07); another time point does."""
     peptide = page.tree.topLevelItem(0)
     series = _open_series(page)
-    with qtbot.waitSignals([page.panel(n).drawn for n in ("spectra", "uptake")],
-                           timeout=30000):
-        page.tree.setCurrentItem(series)
+    page.tree.setCurrentItem(series)
+    with qtbot.waitSignal(page.panel("uptake").drawn, timeout=30000):
+        page.figures.setCurrentWidget(page.panel("uptake"))
     figure = page.panel("uptake").view.figure
     with qtbot.assertNotEmitted(page.panel("uptake").drawn, wait=500):
         page.tree.setCurrentItem(peptide)
@@ -158,7 +166,7 @@ def test_a_peptide_and_its_first_charge_are_drawn_once(qtbot, page):
         page.tree.setCurrentItem(series)
     assert page.panel("uptake").view.figure is figure
     assert page.selection()["charge"] == 2
-    with qtbot.waitSignal(page.panel("spectra").drawn, timeout=30000):
+    with qtbot.waitSignal(page.panel("uptake").drawn, timeout=30000):
         page.tree.setCurrentItem(series.child(1))
 
 
@@ -167,8 +175,9 @@ def test_the_time_axis_is_chosen_in_the_window(qtbot, page):
     uptake page is drawn again with the choice (owner: uptake usually read on a log axis)."""
     assert page.time_axis.itemText(0) == "[figures] scale: linear"
     series = page.tree.topLevelItem(0).child(0)
+    page.tree.setCurrentItem(series)
     with qtbot.waitSignal(page.panel("uptake").drawn, timeout=30000):
-        page.tree.setCurrentItem(series)
+        page.figures.setCurrentWidget(page.panel("uptake"))
     ax = page.panel("uptake").view.figure.axes[0]
     assert ax.get_xscale() == "linear" and page.view_settings() == {}
     with qtbot.waitSignal(page.panel("uptake").drawn, timeout=30000):
@@ -202,8 +211,9 @@ def test_a_change_to_the_projects_figures_reaches_the_results_shown(qtbot, tmp_p
     qtbot.waitUntil(lambda: not window.loading and window.results_path == project.absolute(),
                     timeout=30000)
     page = window.results_page
+    page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
     with qtbot.waitSignal(page.panel("uptake").drawn, timeout=30000):
-        page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
+        page.figures.setCurrentWidget(page.panel("uptake"))
     chosen = page.selection()
     assert page.panel("uptake").view.figure.axes[0].get_xscale() == "linear"
     set_setting(project, "figures.scale", "log")
@@ -277,8 +287,9 @@ def test_a_time_point_of_one_replicate_shows_that_spectrum(qtbot, results, tmp_p
     fd = series.child(series.childCount() - 1)
     assert fd.childCount() == 2
     fd.data(0, 257)[2].spectra.pop()  # the time point now holds one replicate
+    page.tree.setCurrentItem(fd)
     with qtbot.waitSignal(page.panel("spectrum").drawn, timeout=30000):
-        page.tree.setCurrentItem(fd)
+        page.figures.setCurrentWidget(page.panel("spectrum"))
     assert [page.figures.tabText(i) for i in range(page.figures.count())] == [
         "spectrum", "fits at each K", "uptake", "data", "overview"]
     assert "z=2, FD, rep 1" in page.review.heading.text()  # the spectrum, by name
@@ -455,7 +466,8 @@ def test_the_data_tab_holds_the_selections_report_rows(qtbot, page, results):
     # named with its rows, as the Analysis data tab (owner, 2026-11-05)
     at = page.figures.indexOf(view)
     assert page.figures.tabText(at) == f"data ({len(want['data_id'])})"
-    assert view.note.text().startswith("uptake.csv: this series' rows. series.csv: n_spectra")
+    assert view.note.text().startswith("uptake.csv: this series' rows, every K")
+    assert "series.csv: n_spectra" in view.note.text()
     assert not page.series_table.isHidden()
     # its populations page's rows (components.csv), or its spectra's (spectra.csv)
     page.series_table.setCurrentText("components.csv")
@@ -667,8 +679,7 @@ def test_the_elution_tab_reads_the_scan_files(qtbot, tmp_path, page):
     from test_retention_search import PEPTIDES, _entry, lc_run
 
     series = _open_series(page)
-    with qtbot.waitSignal(page.panel("fits at each K").drawn, timeout=30000):
-        page.tree.setCurrentItem(series.child(1).child(0))
+    page.tree.setCurrentItem(series.child(1).child(0))
     assert "elution" not in [page.figures.tabText(i) for i in range(page.figures.count())]
 
     runs = [MzmlRun(str(write_mzml(tmp_path / "un1.mzML", lc_run(1))), "S", rep=1,
@@ -687,8 +698,7 @@ def test_the_elution_tab_reads_the_scan_files(qtbot, tmp_path, page):
     qtbot.addWidget(w)
     w.show_results(Results.from_run(run(spectra, cfg)), None)
     series = _open_series(w)
-    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
-        w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
+    w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
     tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
     assert tabs == ["spectrum", "fits at each K", "elution", "uptake", "data", "overview"]
     panel = w.panel("elution")
@@ -717,3 +727,285 @@ def test_the_export_folder_belongs_to_the_results_shown(page, results, tmp_path)
     page.show_results(results, tmp_path / "b" / "out")
     assert page.export_folder is None
     assert page.default_export_folder() == tmp_path / "b" / "hxex_exports"
+
+
+# --- the audit of 2026-11-15, scope C (the tree, the List, the figure view, the data tab) ----
+
+
+def two_form_results():
+    """Sample S with two peptides at the same residues 0001-0010 (an unmodified and a
+    substituted sequence, as two forms of a pool), each at charge 2."""
+    from hxex.picking import plan_bins
+    from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
+    from test_bundle import envelope, natural
+    from test_picking import sticks
+    from test_run import LAYOUT, PICK, control
+
+    spectra = []
+    for s, peptide in enumerate(("RDKVQKEYAL", "RDKVQKEYAV")):
+        plan = plan_bins(peptide, 2, config=PICK)
+        entry = PeptideEntry(f"f{s}.xlsx", "S", peptide, "0001-0010", 1, 10, 2)
+        for k, (t, rep, centre, width) in enumerate(LAYOUT):
+            height = 4e4 * (0.9 + 0.1 * (k % 3))
+            peaks = (natural(plan, height) if t == 0.0
+                     else envelope(plan, centre + 0.5 * s, width, height))
+            mz, y = sticks(plan, peaks)
+            y = y + np.random.default_rng(100 * s + k).normal(0, 15, len(y))
+            time, role = control(t)
+            spectra.append(Spectrum(mz, y, entry, time, rep, data_id=s, label=f"s{s}c{k}",
+                                    spectrum_id=f"proj:f{s}.xlsx#{k + 1}", role=role))
+    return Results.from_run(run(SpectrumSet.from_spectra(spectra), config(bootstrap=None)))
+
+
+@pytest.fixture(scope="module")
+def two_forms():
+    return two_form_results()
+
+
+def _peptide_shown(page):
+    item = page.tree.currentItem()
+    kind, payload = item.data(0, 256), item.data(0, 257)
+    return payload.peptide if kind == "peptide" else payload[0].peptide
+
+
+def test_two_forms_at_one_range_are_told_apart(qtbot, two_forms):
+    """Two peptides at the same residues in one sample (a modified and an unmodified form, two
+    forms of a pool): the selection carries the sequence, so a go-to from Analysis and a
+    selection restored after a reread land on the right one (audit of 2026-11-15, C-7)."""
+    page = ResultsWorkspace()
+    qtbot.addWidget(page)
+    page.show_results(two_forms, None)
+    assert page.tree.topLevelItemCount() == 2
+    assert page.select_peptide("S", 1, 10, "RDKVQKEYAV")
+    assert _peptide_shown(page) == "RDKVQKEYAV"
+    assert page.selection()["peptide"] == "RDKVQKEYAV"
+    second = page.tree.topLevelItem(1)
+    for level in ("peptide", "series", "point"):
+        item = second
+        if level != "peptide":
+            item = second.child(0)
+            page.tree.expandItem(item)
+            if level == "point":
+                item = item.child(1)
+        page.tree.setCurrentItem(item)
+        chosen = page.selection()
+        page.tree.setCurrentItem(page.tree.topLevelItem(0))
+        assert page.select(chosen) and _peptide_shown(page) == "RDKVQKEYAV", level
+    # a selection saved before the sequence was carried still finds the first form
+    assert page.select({"sample": "S", "peptide_range": "0001-0010", "charge": 2})
+    assert _peptide_shown(page) == "RDKVQKEYAL"
+
+
+def test_a_find_keeps_the_row_and_the_place(qtbot, page):
+    """Typing in Find rebuilds the tree with the row selected still selected; when the text
+    leaves it out, the figures and the review panel still show it, so a decision redraws it
+    and the selection is still known for a reread or a session (audit of 2026-11-15, C-8)."""
+    series = _open_series(page)
+    leaf = series.child(1).child(0)
+    page.tree.setCurrentItem(leaf)
+    chosen = page.selection()
+    page.figures.setCurrentWidget(page.panel("spectrum"))
+    qtbot.waitUntil(lambda: page.panel("spectrum").view.figure is not None, timeout=30000)
+    page.search.setText("S")  # still finds the peptide: the row stays selected
+    assert page.tree.currentItem() is not None and page.selection() == chosen
+    page.search.setText("nothing")  # the tree is empty, the figures are not
+    assert page.tree.topLevelItemCount() == 0 and page.tree.currentItem() is None
+    assert page.selection() == chosen and "rep 1" in page.review.heading.text()
+    with qtbot.waitSignal(page.panel("spectrum").drawn, timeout=30000):
+        page._redraw()  # as a decision does
+    page.search.clear()
+    assert page.selection() == chosen and page.tree.currentItem() is not None
+
+
+def test_the_counts_the_filters_use_follow_the_decisions(qtbot, page, results):
+    """A rejected spectrum counts in its series' row, in the next rebuild of the tree, and in
+    the 'rejected' filter (audit of 2026-11-15, C-9: the filters used the counts from when the
+    results opened)."""
+    from hxex.io.bundle import ReviewTable
+
+    series = page.tree.topLevelItem(0).child(0)
+    page.tree.setCurrentItem(series)
+    data_id = series.data(0, 257)[1].data_id
+    i = int(np.flatnonzero(results.fit.data_id == data_id)[0])
+    review = (results.review if results.review is not None else ReviewTable.empty()).update(
+        str(results.fit.spectrum_id[i]), status="rejected")
+    page.results = results.with_review(review)
+    page._reviewed([i])
+    assert series.text(COLUMN["rejected"]) == "1"
+    page.filter.setCurrentIndex(page.filter.findData("rejected"))
+    assert page.tree.topLevelItemCount() == 1
+    assert page.tree.topLevelItem(0).child(0).data(0, 257)[1].data_id == data_id
+    assert page.tree.topLevelItem(0).child(0).text(COLUMN["rejected"]) == "1"
+    page.filter.setCurrentIndex(page.filter.findData("unreviewed"))
+    shown = [page.tree.topLevelItem(0).child(j).data(0, 257)[1].data_id
+             for j in range(page.tree.topLevelItem(0).childCount())]
+    assert data_id not in shown  # reviewed now
+    page.filter.setCurrentIndex(0)
+
+
+def test_a_series_data_row_opens_its_spectrum_before_the_series_is_opened(qtbot, page):
+    """Double-clicking a spectrum's row in a series' data tab opens that spectrum, also when
+    the series was never opened in the tree (audit of 2026-11-15, C-10)."""
+    series = page.tree.topLevelItem(0).child(1)
+    assert not series.isExpanded() and series.childCount() == 0
+    page.tree.setCurrentItem(series)
+    page.figures.setCurrentWidget(page.table_view)
+    page.series_table.setCurrentText("spectra.csv")
+    rows = page.table_view.model.rows
+    assert rows and "spectrum_id" in rows[0]
+    page.table_view.activated.emit(rows[3])  # as a double-click
+    item = page.tree.currentItem()
+    assert item.data(0, 256) == "spectrum"
+    assert item.data(0, 257)[3].spectrum_id == rows[3]["spectrum_id"]
+    page.series_table.setCurrentText("uptake.csv")
+
+
+def test_the_data_tab_is_keyed_by_the_selection(qtbot, two_forms):
+    """The data tab remembers what it shows by what names it, not by the address of the
+    selection's tuple, which Python gives to a later selection (audit of 2026-11-15, C-11);
+    the same selection drawn again keeps the tab's count (C-21); the note says the rows are
+    the CSV tables' (open question 3)."""
+    page = ResultsWorkspace()
+    qtbot.addWidget(page)
+    page.show_results(two_forms, None)
+    first, second = page.tree.topLevelItem(0), page.tree.topLevelItem(1)
+    page.tree.setCurrentItem(first)
+    page.figures.setCurrentWidget(page.table_view)
+    assert {r["peptide"] for r in page.table_view.model.rows} == {"RDKVQKEYAL"}
+    at = page.figures.indexOf(page.table_view)
+    named = page.figures.tabText(at)
+    assert named.startswith("data (")
+    assert "as hxex report writes them" in page.table_view.note.text()
+    page.figures.setCurrentWidget(page.panel("uptake"))
+    for item in (second, first, second):  # the tuples come and go while the tab is hidden
+        page.tree.setCurrentItem(item)
+    page.figures.setCurrentWidget(page.table_view)
+    assert {r["peptide"] for r in page.table_view.model.rows} == {"RDKVQKEYAV"}
+    page.time_axis.setCurrentIndex(2)  # drawn again for the same selection
+    assert page.figures.tabText(at) == named
+    page.time_axis.setCurrentIndex(0)
+
+
+def test_a_peptide_rows_data_tab_lists_every_series_under_it(qtbot, page, results):
+    """A peptide row shows its first charge's figures, but its data tab lists the rows of
+    every series the tree shows under it (owner, 2026-11-15)."""
+    from hxex.report.tables import uptake_table
+
+    peptide = page.tree.topLevelItem(0)
+    page.tree.setCurrentItem(peptide)
+    page.figures.setCurrentWidget(page.table_view)
+    view = page.table_view
+    assert {int(r["data_id"]) for r in view.model.rows} == {0, 1}
+    assert len(view.model.rows) == len(uptake_table(results, data_ids=[0, 1])["data_id"])
+    assert "this peptide's 2 series'" in view.note.text()
+    page.tree.setCurrentItem(peptide.child(0))  # its first charge: the same figures, one series
+    assert {int(r["data_id"]) for r in view.model.rows} == {0}
+    assert "this series'" in view.note.text() and "series.csv: n_spectra" in view.note.text()
+
+
+def test_a_reread_keeps_the_tab_the_filters_find_and_the_lists_row(qtbot, results, tmp_path):
+    """The same results read again (a decision, a changed setting, a finished run): the
+    figure tab, the tree's filters and Find, and the List's row are kept, as the window keeps
+    the place (audit of 2026-11-15, C-14 and open question 5)."""
+    import dataclasses
+
+    page = ResultsWorkspace()
+    qtbot.addWidget(page)
+    path = tmp_path / "hxex.toml"
+    page.show_results(results, path)
+    qtbot.waitUntil(lambda: bool(page.list.rows), timeout=30000)
+    page.search.setText("S")
+    series = page.tree.topLevelItem(0).child(0)
+    page.tree.setCurrentItem(series)
+    page.figures.setCurrentWidget(page.panel("uptake"))
+    page.left_tabs.setCurrentWidget(page.list)
+    page.list.select_index(3)
+    row = page.list.current_row()["spectrum_id"]
+    pending = {**page.selection(), **page.view_settings()}
+    page.show_results(dataclasses.replace(results), path)  # as the window rereads them
+    page.set_time_axis(pending.pop("time_axis", None))
+    assert page.select(pending)
+    assert page._tab_keys[page.figures.currentIndex()] == "uptake"
+    assert page.search.text() == "S"
+    qtbot.waitUntil(lambda: bool(page.list.rows), timeout=30000)
+    assert page.list.current_row()["spectrum_id"] == row
+    # other results: nothing selected, the overview first
+    page.show_results(results, tmp_path / "other.toml")
+    assert page.tree.currentItem() is None and page.selection() == {}
+    assert page._tab_keys[page.figures.currentIndex()] == "overview"
+
+
+def test_choosing_a_list_row_opens_only_its_own_series(qtbot, page):
+    """A row chosen in the List opens the spectrum's own series, not every series of the
+    peptide with that charge (audit of 2026-11-15, C-20: on fragments, dozens were opened)."""
+    qtbot.waitUntil(lambda: bool(page.list.rows), timeout=30000)
+    top = page.tree.topLevelItem(0)
+    for j in range(top.childCount()):
+        top.child(j).setExpanded(False)
+    row = next(r for r in page.list.rows if int(r["data_id"]) == 1)
+    page._list_chosen(row)
+    item = page.tree.currentItem()
+    assert item.data(0, 256) == "spectrum" and item.data(0, 257)[1].data_id == 1
+    assert [top.child(j).isExpanded() for j in range(top.childCount())] == [False, True]
+    # a selection by spectrum id alone (a session): the same
+    for j in range(top.childCount()):
+        top.child(j).setExpanded(False)
+    page.tree.setCurrentItem(top)
+    assert page.select({"sample": "S", "peptide_range": "0001-0010", "charge": 2,
+                        "spectrum_id": row["spectrum_id"]})
+    assert [top.child(j).isExpanded() for j in range(top.childCount())] == [False, True]
+
+
+def test_the_arrows_pass_an_empty_populations_tab_by_series(qtbot, results):
+    """With the populations tab in view but empty (one population everywhere), stepping by
+    series goes to the next series, not through hidden spectra pages (audit of 2026-11-15,
+    C-24)."""
+    import dataclasses
+
+    from hxex.report.figures import PlotConfig
+
+    page = ResultsWorkspace()
+    qtbot.addWidget(page)
+    page.show_results(dataclasses.replace(results, figures=PlotConfig(page_rows=1)), None)
+    top = page.tree.topLevelItem(0)
+    page.tree.setCurrentItem(top.child(0))
+    page.figures.setCurrentWidget(page.panel("spectra"))
+    assert page.spectra_page.count() > 1
+    page.figures.setCurrentWidget(page.panel("populations"))
+    if page._populations_paged:
+        pytest.skip("these results have a populations page")
+    assert page.step_spectrum(1, "series") and page.tree.currentItem() is top.child(1)
+
+
+def test_a_click_on_a_spectra_page_selects_that_spectrum(qtbot, page):
+    """Each panel of a spectra page (and of the fits at each K) carries its spectrum's id as a
+    data row, and a click on it selects the spectrum in the tree (PLAN "GUI"; audit of
+    2026-11-15, C open question 1)."""
+    series = page.tree.topLevelItem(0).child(0)
+    page.tree.setCurrentItem(series)
+    panel = page.panel("spectra")
+    with qtbot.waitSignal(panel.drawn, timeout=30000):
+        page.figures.setCurrentWidget(panel)
+    qtbot.waitUntil(lambda: panel.view.ready, timeout=30000)
+    rows = [m.row for m in panel.view._marks if m.row]
+    ids = {r["spectrum_id"] for r in rows}
+    assert len(ids) == 8 and "Click a spectrum's panel" in panel.help.toolTip()
+    sid = sorted(ids)[3]
+    panel.clicked_row.emit({"spectrum_id": sid})  # as a click on its panel
+    item = page.tree.currentItem()
+    assert item.data(0, 256) == "spectrum" and item.data(0, 257)[3].spectrum_id == sid
+
+
+def test_a_bundle_opened_alone_says_the_left_out_column_uses_the_defaults(qtbot, results,
+                                                                            tmp_path):
+    """Results opened without their project file: the bar under the tree says the 'left out'
+    column follows the default analysis settings (audit of 2026-11-15, C open question 4)."""
+    page = ResultsWorkspace()
+    qtbot.addWidget(page)
+    page.show_results(results, tmp_path / "bundle")
+    assert page.left_bar.isVisibleTo(page) and page.left_update.isHidden()
+    assert "default analysis settings" in page.left_note.text()
+    page.show_results(results, tmp_path / "hxex.toml")
+    assert page.left_bar.isHidden()
+    page._left_stale("your latest review decisions")
+    assert not page.left_update.isHidden()

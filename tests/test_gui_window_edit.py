@@ -26,8 +26,7 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypat
     w.show_results(results, project)
     series = w.tree.topLevelItem(0).child(0)
     w.tree.expandItem(series)
-    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
-        w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
+    w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
     tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
     panel = w.panel("elution")
     w.figures.setCurrentIndex(tabs.index("elution"))
@@ -164,8 +163,7 @@ def test_compare_with_the_peptides_other_charge_states_in_this_file(qtbot, tmp_p
     w.show_results(results, path)
     series = w.tree.topLevelItem(0).child(0)
     w.tree.expandItem(series)
-    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
-        w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
+    w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
     tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
     panel = w.panel("elution")
     w.figures.setCurrentIndex(tabs.index("elution"))
@@ -247,8 +245,7 @@ def test_the_replicates_are_aligned_while_editing_and_each_file_is_a_row(qtbot, 
     w.show_results(results, project)
     series = w.tree.topLevelItem(0).child(0)
     w.tree.expandItem(series)
-    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
-        w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
+    w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
     tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
     panel = w.panel("elution")
     w.figures.setCurrentIndex(tabs.index("elution"))
@@ -330,8 +327,7 @@ def test_another_spectrum_never_draws_the_one_before(qtbot, project, monkeypatch
     series = w.tree.topLevelItem(0).child(0)
     w.tree.expandItem(series)
     first, second = series.child(0).child(1), series.child(0).child(0)  # UN rep 2, rep 1
-    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
-        w.tree.setCurrentItem(first)
+    w.tree.setCurrentItem(first)
     tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
     panel = w.panel("elution")
     w.figures.setCurrentIndex(tabs.index("elution"))
@@ -395,8 +391,7 @@ def test_the_replicates_are_drawn_only_once_matched(qtbot, project, monkeypatch)
     w.show_results(results, project)
     series = w.tree.topLevelItem(0).child(0)
     w.tree.expandItem(series)
-    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
-        w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
+    w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2
     tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
     panel = w.panel("elution")
     w.figures.setCurrentIndex(tabs.index("elution"))
@@ -483,8 +478,7 @@ def test_a_save_for_the_peptide_asks_before_replacing_this_files_charge_states(
     w.show_results(results, path)
     series = w.tree.topLevelItem(0).child(0)
     w.tree.expandItem(series)
-    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
-        w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2: un2.mzML
+    w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2: un2.mzML
     tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
     panel = w.panel("elution")
     w.figures.setCurrentIndex(tabs.index("elution"))

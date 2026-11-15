@@ -79,51 +79,98 @@ def _with_identities(cols: dict, results: Results, data_ids, *, after: str) -> d
     return out
 
 
-def _index_columns(results: Results) -> dict[str, np.ndarray]:
+# up to this many spectra are looked up in the picked table one by one (each a comparison of
+# the whole id column, 0.4 ms on 26,000 spectra); more, through one dictionary of every id
+_FEW = 32
+
+
+def _binned_index(b, spectrum_ids=None) -> dict[str, int]:
+    """Each spectrum's position in the picked table ``b``, by its id: of ``spectrum_ids``
+    only, or of every spectrum (None). A dictionary of every id took 15 ms on 26,000 spectra,
+    most of a one-row table (audit of 2026-11-15, M-1)."""
+    if spectrum_ids is None or len(spectrum_ids) > _FEW:
+        return {str(s): j for j, s in enumerate(b.spectrum_id)}
+    ids = np.asarray(b.spectrum_id)
+    out = {}
+    for sid in map(str, spectrum_ids):
+        hits = np.flatnonzero(ids == sid)
+        if len(hits):
+            out[sid] = int(hits[-1])  # the last, as the dictionary of every id keeps
+    return out
+
+
+def _index_columns(results: Results, picked=None) -> dict[str, np.ndarray]:
+    """The index columns of every spectrum, or of those at positions ``picked`` (in the fit, in
+    that order) only: the per-spectrum lookups are made for those rows alone (the window's data
+    tab asks for a row or a series; built for the whole run and then cut, one row took 0.2 s on
+    26,000 spectra: audit of 2026-11-15, M-1). Which columns there are is decided on the whole
+    run, so a few rows have the same columns as the whole table."""
     fit = results.fit
-    m = len(fit)
-    cols = {"spectrum_id": fit.spectrum_id, "data_id": fit.data_id, "time": fit.time,
-            "role": fit.role, "rep": _reps(results)}
+    at = np.arange(len(fit)) if picked is None else np.asarray(picked, dtype=np.int64)
+    m = len(at)
+    cols = {name: np.asarray(values)[at] for name, values in (
+        ("spectrum_id", fit.spectrum_id), ("data_id", fit.data_id), ("time", fit.time),
+        ("role", fit.role), ("rep", _reps(results)))}
     b = results.binned
     names = ("sample", "peptide_range", "peptide", "charge")
+    dropped: list[str] = []
     if b is not None:
-        index = {str(s): j for j, s in enumerate(b.spectrum_id)}
-        rows = np.array([index.get(str(s), -1) for s in fit.spectrum_id])
+        index = _binned_index(b, cols["spectrum_id"])
+        rows = np.array([index.get(str(s), -1) for s in cols["spectrum_id"]], dtype=np.int64)
         for name in names:
             values = getattr(b, name)
             cols[name] = np.array([values[j] if j >= 0 else "" for j in rows])
         # minutes: the spectrum's, and its scans'; ms: the drift times summed (ion mobility);
         # ppm: the file's m/z offset taken out
+        found = rows >= 0
         for name in ("rt", "rt_start", "rt_end", "drift_start", "drift_end",
                      "mz_calibration_ppm"):
             values = getattr(b, name, None)
-            cols[name] = np.array([float(values[j]) if j >= 0 and values is not None else np.nan
-                                   for j in rows])
+            column = np.full(m, np.nan)
+            if values is not None:
+                column[found] = np.asarray(values, dtype=float)[rows[found]]
+            cols[name] = column
+        # only for spectra read with a drift range, or from calibrated files (over the run)
+        for name in ("drift_start", "drift_end", "mz_calibration_ppm"):
+            values = getattr(b, name, None)
+            if values is None or not _finite_in_fit(results, values):
+                dropped.append(name)
     else:
         for name in names:
             cols[name] = np.array([""] * m)
         for name in ("rt", "rt_start", "rt_end"):
             cols[name] = np.full(m, np.nan)
-    # only for spectra read with a drift range, or from calibrated files
-    for name in ("drift_start", "drift_end", "mz_calibration_ppm"):
-        if name in cols and not np.isfinite(cols[name]).any():
-            del cols[name]
-    cols = _with_identities(cols, results, fit.data_id, after="charge")
-    cols.update(_target_columns(results))
-    cols["review_status"] = np.asarray(results.review_status).astype(str)
-    cols["review_K"] = _review_k(results)
-    cols["note"] = _review_note(results)
+    for name in dropped:
+        del cols[name]
+    cols = _with_identities(cols, results, cols["data_id"], after="charge")
+    cols.update({name: np.asarray(values)[at]
+                 for name, values in _target_columns(results).items()})
+    cols["review_status"] = np.asarray(results.review_status).astype(str)[at]
+    cols["review_K"] = _review_k(results)[at]
+    cols["note"] = _review_note(results)[at]
     q = results.quality
-    cols["flags"] = np.array([  # empty without quality flags, so the columns never change
-        ";".join(n for n in FLAG_NAMES if getattr(q, n)[i]) if q is not None else ""
-        for i in range(m)])
+    if q is None:  # empty without quality flags, so the columns never change
+        cols["flags"] = np.array(["" for _ in range(m)])
+    else:
+        raised = [(n, np.asarray(getattr(q, n), dtype=bool)[at]) for n in FLAG_NAMES]
+        cols["flags"] = np.array([";".join(n for n, on in raised if on[i]) for i in range(m)])
     if q is not None and np.isfinite(np.asarray(q.signal_to_noise, dtype=float)).any():
-        cols["signal_to_noise"] = np.asarray(q.signal_to_noise, dtype=float)  # scans recorded
+        cols["signal_to_noise"] = np.asarray(q.signal_to_noise, dtype=float)[at]  # scans recorded
     if q is not None and np.asarray(q.overlapping_ion).any():  # which ion, where flagged
         cols["overlapping_ion_with"] = np.array([
             f"{q.ion_overlap_with[i]} ({q.ion_overlap[i]:.2f})" if q.overlapping_ion[i] else ""
-            for i in range(m)])
+            for i in at])
     return cols
+
+
+def _finite_in_fit(results: Results, values) -> bool:
+    """Whether a picked-table column has a finite value for any fitted spectrum."""
+    values = np.asarray(values, dtype=float)
+    if not np.isfinite(values).any():
+        return False  # nothing to look up (the usual case)
+    index = _binned_index(results.binned)
+    rows = np.array([index.get(str(s), -1) for s in results.fit.spectrum_id], dtype=np.int64)
+    return bool(np.isfinite(values[rows[rows >= 0]]).any())
 
 
 def _review_k(results: Results) -> np.ndarray:
@@ -233,20 +280,60 @@ def _target_columns(results: Results) -> dict[str, np.ndarray]:
 def _populations(results: Results, i: int, k: int):
     """Ranked means, populations and their standard errors, and the corrected means (or None:
     no controls, or none for the spectrum's series)."""
-    results.fit.require_fitted(i, k)
-    kf = results.fit.fits[k]
-    order = np.argsort(kf.means[i])
-    mean, frac = kf.means[i][order], kf.populations[i][order]
-    boot = results.bootstrap_for(i, k)
-    nan = np.full(k, np.nan)
-    mean_se = boot.mean_se[i, :k][order] if boot is not None else nan
-    population_se = boot.population_se[i, :k][order] if boot is not None else nan
-    corrected = corrected_se = None
-    if _control_row(results, int(results.fit.data_id[i])) is not None:
-        c = correct_means(results.controls, [results.fit.data_id[i]], mean[None, :],
-                          se=mean_se[None, :])
-        corrected, corrected_se = c.mean[0], c.se[0]
-    return mean, frac, mean_se, population_se, corrected, corrected_se
+    (found,) = _population_values(results, np.array([i]), np.array([k]))
+    return found
+
+
+def _population_values(results: Results, at: np.ndarray, ks: np.ndarray) -> list[tuple]:
+    """What :func:`_populations` gives for each spectrum at positions ``at`` (in the fit) at
+    the K in ``ks``, worked out for every spectrum of one K at once: read spectrum by spectrum,
+    the fit's means and populations (worked out afresh on each access) and the correction took
+    5 of the 6 s of a whole run's table on 26,000 spectra (audit of 2026-11-15, M-2)."""
+    fit = results.fit
+    at = np.asarray(at, dtype=np.int64)
+    ks = np.asarray(ks, dtype=np.int64)
+    failing = []  # the first spectrum (in the order asked) a K was not fitted for is named
+    for k in np.unique(ks):
+        if int(k) not in fit.fits:
+            failing.append(int(np.flatnonzero(ks == k)[0]))
+            continue
+        bad = np.flatnonzero((ks == k) & ~fit.fitted(int(k))[at])
+        if len(bad):
+            failing.append(int(bad[0]))
+    if failing:
+        first = min(failing)
+        fit.require_fitted(int(at[first]), int(ks[first]))
+    out: list[tuple | None] = [None] * len(at)
+    for k in (int(k) for k in np.unique(ks)):
+        where = np.flatnonzero(ks == k)
+        idx = at[where]
+        kf = fit.fits[k]
+        means = kf.n[idx] * kf.p[idx]  # as KFit.means and .populations, these rows only
+        shares = kf.A[idx] / np.maximum(kf.A[idx].sum(axis=1, keepdims=True), 1e-10)
+        order = np.argsort(means, axis=1)
+        mean = np.take_along_axis(means, order, axis=1)
+        frac = np.take_along_axis(shares, order, axis=1)
+        mean_se = np.full((len(idx), k), np.nan)
+        population_se = np.full((len(idx), k), np.nan)
+        boots = [results.bootstrap_for(int(i), k) for i in idx]
+        for boot in {id(b): b for b in boots if b is not None}.values():
+            rows = np.array([j for j, b in enumerate(boots) if b is boot], dtype=np.int64)
+            mean_se[rows] = np.take_along_axis(boot.mean_se[idx[rows], :k], order[rows], axis=1)
+            population_se[rows] = np.take_along_axis(boot.population_se[idx[rows], :k],
+                                                     order[rows], axis=1)
+        corrected = np.array([_control_row(results, int(fit.data_id[i])) is not None
+                              for i in idx], dtype=bool)
+        cor = cor_se = None
+        if corrected.any():
+            c = correct_means(results.controls, fit.data_id[idx[corrected]], mean[corrected],
+                              se=mean_se[corrected])
+            cor = np.full((len(idx), k), np.nan)
+            cor_se = np.full((len(idx), k), np.nan)
+            cor[corrected], cor_se[corrected] = c.mean, c.se
+        for j, w in enumerate(where):
+            out[w] = (mean[j], frac[j], mean_se[j], population_se[j],
+                      cor[j] if corrected[j] else None, cor_se[j] if corrected[j] else None)
+    return out
 
 
 def components_table(results: Results, rows=None) -> dict[str, np.ndarray]:
@@ -254,17 +341,20 @@ def components_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     replicate, sample, peptide, charge, the scan target, ``review_status``, ``flags``), ``K``,
     ``rank``, ``mean``, ``mean_se``, ``mean_corrected``, ``mean_corrected_se``, ``population``,
     ``population_se``. ``rows``: only those spectra (positions in the fit, in order)."""
-    index = _index_columns(results)
     ks = results.effective_K
+    at = np.arange(len(ks)) if rows is None else np.array([int(r) for r in rows],
+                                                          dtype=np.int64)
+    index = _index_columns(results, at)
     pick: list[int] = []
     cols: dict[str, list] = {n: [] for n in (
         "K", "rank", "mean", "mean_se", "mean_corrected", "mean_corrected_se", "population",
         "population_se")}
-    for i in (range(len(ks)) if rows is None else (int(r) for r in rows)):
+    found = _population_values(results, at, ks[at])
+    for j, (i, values) in enumerate(zip(at, found, strict=True)):
         k = ks[i]
-        mean, frac, mean_se, population_se, cor, cor_se = _populations(results, i, int(k))
+        mean, frac, mean_se, population_se, cor, cor_se = values
         for c in range(int(k)):
-            pick.append(i)
+            pick.append(j)
             for name, value in (
                 ("K", int(k)), ("rank", c + 1), ("mean", mean[c]), ("mean_se", mean_se[c]),
                 ("mean_corrected", np.nan if cor is None else cor[c]),
@@ -302,7 +392,7 @@ def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     ks = results.effective_K
     k_max = int(ks.max())  # over every spectrum: the same columns whichever rows are made
     picked = np.arange(len(ks)) if rows is None else np.asarray(rows, dtype=np.int64)
-    out = {name: np.asarray(values)[picked] for name, values in _index_columns(results).items()}
+    out = _index_columns(results, picked)
     m = len(picked)
     out["K"] = ks[picked].copy()
     centroid = np.full(m, np.nan)
@@ -310,9 +400,10 @@ def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     wide = {f"{n}_{r}": np.full(m, np.nan) for r in range(1, k_max + 1)
             for n in ("mean", "mean_se", "mean_corrected", "mean_corrected_se", "population",
                       "population_se")}
+    found = _population_values(results, picked, ks[picked])
     for i, at in enumerate(picked):
         k = ks[at]
-        mean, frac, mean_se, population_se, cor, cor_se = _populations(results, int(at), int(k))
+        mean, frac, mean_se, population_se, cor, cor_se = found[i]
         centroid[i] = (mean * frac).sum()
         if cor is not None:
             centroid_cor[i] = (cor * frac).sum()
@@ -327,7 +418,7 @@ def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     out["centroid"], out["centroid_corrected"] = centroid, centroid_cor
     out.update(wide)
     out.update({k: np.asarray(v)[picked] for k, v in _test_columns(results).items()})
-    out.update({k: np.asarray(v)[picked] for k, v in _screen_columns(results).items()})
+    out.update(_screen_columns(results, picked))
     q = results.quality
     for name, attr in (("spectrum_offset_ppm", "spectrum_offset"),
                        ("spectrum_offset_limit_ppm", "spectrum_offset_limit")):
@@ -356,16 +447,19 @@ def _test_columns(results: Results) -> dict[str, np.ndarray]:
     return out
 
 
-def _screen_columns(results: Results) -> dict[str, np.ndarray]:
-    m = len(results.fit)
+def _screen_columns(results: Results, picked=None) -> dict[str, np.ndarray]:
+    """The screens' scores (and the m/z check's and profile fit's columns) of every spectrum,
+    or of those at positions ``picked`` (in the fit) only."""
+    ids = results.fit.spectrum_id if picked is None else results.fit.spectrum_id[picked]
+    m = len(ids)
     b = results.binned
     names = (*SCREEN_SCORES, *MZ_CHECK_COLUMNS)
     if b is not None and np.isfinite(np.asarray(b.fit_offset_ppm, dtype=np.float64)).any():
         names = (*names, *PROFILE_COLUMNS)  # picked with pick = "profile_fit"
     if b is None:
         return {name: np.full(m, np.nan) for name in names}
-    index = {str(s): j for j, s in enumerate(b.spectrum_id)}
-    rows = np.array([index.get(str(s), -1) for s in results.fit.spectrum_id], dtype=np.int64)
+    index = _binned_index(b, ids)
+    rows = np.array([index.get(str(s), -1) for s in ids], dtype=np.int64)
     return {name: np.where(rows >= 0, np.asarray(getattr(b, name))[rows], np.nan)
             for name in names}
 
@@ -398,7 +492,8 @@ def uptake_table(results: Results, data_ids=None) -> dict[str, np.ndarray]:
     ok = comp["review_status"] != "rejected"
     role = comp["role"] if "role" in comp else np.full(len(comp["time"]), "", dtype="<U8")
     points = time_point(comp["time"], role)  # replicates share a point: a time, or a control
-    fit_row = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
+    asked = range(len(results.fit)) if rows is None else rows  # the rows comp was made from
+    fit_row = {str(results.fit.spectrum_id[i]): int(i) for i in asked}
     amides = _site_counts(results)
     n_amides = np.array([amides[fit_row[str(s)]] for s in comp["spectrum_id"]], dtype=float)
     # each spectrum's centroid, from its rows (the components of its K in effect)
@@ -477,7 +572,7 @@ def _median_rt(binned, where, ids) -> float:
     return float(np.median(values)) if values else np.nan
 
 
-def series_table(results: Results) -> dict[str, np.ndarray]:
+def series_table(results: Results, data_ids=None) -> dict[str, np.ndarray]:
     """One row per series (a peptide at one charge in one sample), ordered by ``data_id``:
     ``data_id``, ``sample``, ``peptide_range``, ``peptide``, ``charge`` (empty or 0 without the
     picked table), ``n_spectra`` (fitted), ``n_flagged`` (with a quality flag), ``n_rejected``
@@ -495,11 +590,17 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     ``own spectrum`` when no undeuterated control of the series was fitted, or ``run's scans``
     for kinetics; :func:`hxex.noise.noise_reference_kinds`; ``per bin`` with per-bin noise,
     where the reference only sets the units) and ``rt`` (the median
-    chromatographic retention time of its spectra, minutes; NaN: unknown)."""
+    chromatographic retention time of its spectra, minutes; NaN: unknown). ``data_ids``: only
+    those series (still by ``data_id``; the window's data tab shows one series' row)."""
     fit = results.fit
     ids = np.unique(fit.data_id)
+    if data_ids is not None:
+        ids = ids[np.isin(ids, np.asarray(list(data_ids), dtype=np.int64))]
     b = results.binned
-    where = {str(s): j for j, s in enumerate(b.spectrum_id)} if b is not None else {}
+    members_of = {int(d): np.flatnonzero(fit.data_id == d) for d in ids}
+    wanted = None if data_ids is None else [fit.spectrum_id[i] for d in ids
+                                            for i in members_of[int(d)]]
+    where = _binned_index(b, wanted) if b is not None else {}
     flagged = results.quality.flagged if results.quality is not None else np.zeros(len(fit), bool)
     rejected = np.asarray(results.review_status == "rejected", dtype=bool)
     multi = (results.effective_K > 1) & ~rejected  # as the analysis: rejected ones left out
@@ -511,11 +612,14 @@ def series_table(results: Results) -> dict[str, np.ndarray]:
     ctrl_rows = {int(d): r for r, d in enumerate(ctrl.data_id)} if ctrl is not None else {}
     uncorrected = ctrl.uncorrected if ctrl is not None else np.zeros(0, dtype=bool)
     meas = results.measurements
-    refs = noise_reference_kinds(meas.data_id, meas.references, meas.role)
+    mine = (np.arange(len(meas.data_id)) if data_ids is None
+            else np.flatnonzero(np.isin(meas.data_id, ids)))  # the references point anywhere
+    refs = noise_reference_kinds(np.asarray(meas.data_id)[mine],
+                                 [meas.references[i] for i in mine], meas.role)
     if fit.noise_curve is not None:  # each bin's own noise: the reference only sets the units
         refs = dict.fromkeys(refs, "per bin")
     for d in ids:
-        members = np.flatnonzero(fit.data_id == d)
+        members = members_of[int(d)]
         j = where.get(str(fit.spectrum_id[members[0]]))
         r = ctrl_rows.get(int(d))
         values = {

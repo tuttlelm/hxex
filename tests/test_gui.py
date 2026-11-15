@@ -282,6 +282,8 @@ def test_the_status_line_shows_what_the_panel_is_doing(qtbot):
     with qtbot.waitSignal(panel.drawn, timeout=10000):
         panel.draw(figure)
     assert panel.status.full() == "" and panel.busy.isHidden()
+    # matplotlib's picture of the figure comes after it is set: faded until then (C-19)
+    qtbot.waitUntil(lambda: panel.view.ready, timeout=10000)
     assert panel._veil.isHidden()
     assert panel.scroll.graphicsEffect() is None  # the figure is drawn as it is (not blurred)
     release = threading.Event()
@@ -299,7 +301,9 @@ def test_the_status_line_shows_what_the_panel_is_doing(qtbot):
     assert not panel._veil.isHidden()  # the figure before, faded under a veil
     with qtbot.waitSignal(panel.drawn, timeout=10000):
         release.set()
-    assert panel._veil.isHidden() and panel.busy.isHidden()
+    assert panel.busy.isHidden()
+    qtbot.waitUntil(lambda: panel.view.ready, timeout=10000)
+    assert panel._veil.isHidden()
     panel.clear("reading the elution trace…")
     assert panel.status.full() == "Reading the elution trace…" and not panel.busy.isHidden()
     panel.clear("no elution trace: un2.mzML not found")
@@ -360,11 +364,12 @@ def test_the_window_opens_results_draws_a_series_and_saves_the_session(qtbot, wi
     assert page.tree.topLevelItemCount() == 1 and window.results_path == bundle.absolute()
     assert page.tree.topLevelItem(0).childCount() == 2
     uptake = page.panel("uptake")
+    page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
     with qtbot.waitSignal(uptake.drawn, timeout=30000):
-        page.tree.setCurrentItem(page.tree.topLevelItem(0).child(0))
+        page.figures.setCurrentWidget(uptake)  # a tab is drawn when opened
     assert uptake.view.figure is not None
     chosen = page.selection()
-    assert set(chosen) == {"sample", "peptide_range", "charge"}
+    assert set(chosen) == {"sample", "peptide_range", "peptide", "charge"}
     window.tabs.setCurrentIndex(2)
     assert window.modified()
     window.session_path = tmp_path / "view.hxexgui"
@@ -611,7 +616,8 @@ def test_neither_view_draws_past_the_frame(qtbot):
     assert panel.magnified
     # drawn again at the new size once the zoom settles
     qtbot.waitUntil(lambda: abs(view._image.width() - view.width()) <= 1, timeout=10000)
-    panel.set_render("svg")
+    with qtbot.waitSignal(panel.drawn, timeout=10000):  # drawn in the drawing thread (C-17)
+        panel.set_render("svg")
     assert panel.view.figure is fig and panel.render == "svg"
 
 

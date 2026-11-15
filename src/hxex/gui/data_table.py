@@ -36,6 +36,40 @@ from .tips import rich_tip, tip
 log = logging.getLogger(__name__)
 
 
+def copy_text(value) -> str:
+    """A value as it is copied or saved: as the CSV files write it (six significant digits, an
+    m/z with its 0.0001, booleans as True or False, NaN empty); the cells shown round more
+    (audit of 2026-11-15, C-3: an m/z 652.3412 pasted as 652.3)."""
+    from ..report.tables import _cell
+
+    if value is None:
+        return ""
+    if isinstance(value, (bool, np.bool_)):
+        return str(bool(value))
+    return _cell(value)
+
+
+def size_columns(table: QTableView, sample: int = 300, widest: int = 60) -> None:
+    """Set the columns' widths from their header and the first ``sample`` rows (every row, as
+    ``resizeColumnsToContents`` reads them, took 1.75 s on a list of 26,000 spectra: audit of
+    2026-11-15, M-2); a column is at most ``widest`` characters wide."""
+    model = table.model()
+    if model is None:
+        return
+    metrics = table.fontMetrics()
+    pad = 2 * metrics.horizontalAdvance("M")
+    cap = widest * metrics.averageCharWidth()
+    n = min(model.rowCount(), sample)
+    for c in range(model.columnCount()):
+        text = str(model.headerData(c, Qt.Orientation.Horizontal) or "")
+        width = metrics.horizontalAdvance(text) + pad + SORT_ARROW
+        for r in range(n):
+            shown = model.data(model.index(r, c), Qt.ItemDataRole.DisplayRole)
+            if shown:
+                width = max(width, metrics.horizontalAdvance(str(shown)) + pad)
+        table.setColumnWidth(c, int(min(width, cap)))
+
+
 def cell_text(value) -> str:
     """A value as the table shows it: numbers to four significant digits (whole numbers as
     they are), booleans as yes or nothing, NaN as nothing."""
@@ -53,6 +87,7 @@ def cell_text(value) -> str:
 
 
 MENU_LIMIT = 12  # peptides listed in a right-click menu; the rest are in the data tab
+SORT_ARROW = 20  # pixels a header keeps for its sort indicator
 
 
 def spectra_choices(rows: list[dict]) -> list[tuple[str, dict]]:
@@ -161,7 +196,15 @@ class RowsModel(QAbstractTableModel):
         missing = [r for r in self.rows if _sort_key(r.get(name))[0] == 2]
         present.sort(key=lambda r: _sort_key(r.get(name)),
                      reverse=order == Qt.SortOrder.DescendingOrder)
+        before = self.rows
         self.rows = present + missing  # missing values last either way
+        # the current row and the selection follow their rows (audit of 2026-11-15, C-4: the
+        # current row had stayed at its row number, which now held another spectrum)
+        where = {id(r): i for i, r in enumerate(self.rows)}
+        old = self.persistentIndexList()
+        new = [self.index(where[id(before[idx.row()])], idx.column())
+               if idx.isValid() and idx.row() < len(before) else QModelIndex() for idx in old]
+        self.changePersistentIndexList(old, new)
         self.layoutChanged.emit()
 
 
@@ -222,7 +265,7 @@ class DataPanel(QWidget):
         self.count.setText(f"{len(rows)} row(s)" if rows else
                            "No data table for this figure.")
         if rows:
-            self.table.resizeColumnsToContents()
+            size_columns(self.table)
 
     def clear(self) -> None:
         self.show_rows([], [])
@@ -285,7 +328,7 @@ class DataPanel(QWidget):
         picked = sorted({i.row() for i in self.table.selectionModel().selectedRows()})
         rows = [self.model.rows[i] for i in picked] or self.model.rows
         lines = ["\t".join(self.model.columns)]
-        lines += ["\t".join(cell_text(r.get(c)) for c in self.model.columns) for r in rows]
+        lines += ["\t".join(copy_text(r.get(c)) for c in self.model.columns) for r in rows]
         QApplication.clipboard().setText("\n".join(lines) + "\n")
 
     def save_dialog(self) -> None:
@@ -317,4 +360,5 @@ class DataPanel(QWidget):
         return path
 
 
-__all__ = ["DataPanel", "RowsModel", "cell_text", "spectra_choices", "spectra_menu"]
+__all__ = ["DataPanel", "RowsModel", "cell_text", "copy_text", "size_columns", "spectra_choices",
+           "spectra_menu"]

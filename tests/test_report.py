@@ -932,6 +932,46 @@ def test_series_table_and_finding_series(results):
     assert list(bare["controls"]) == ["", ""]
 
 
+
+def _same_column(got, expected) -> bool:
+    got, expected = np.asarray(got), np.asarray(expected)
+    if got.dtype.kind == "f" and expected.dtype.kind == "f":
+        return np.array_equal(got, expected, equal_nan=True)
+    return got.shape == expected.shape and np.array_equal(got.astype(str), expected.astype(str))
+
+
+@pytest.mark.parametrize("few", [32, 0])  # spectra looked up one by one, or by one dictionary
+def test_tables_of_a_few_rows_are_those_rows_of_the_whole_tables(results, monkeypatch, few):
+    """The window's data tab asks for one spectrum's or one series' rows: they are made for
+    those rows alone (audit of 2026-11-15, M-1), each spectrum's populations for a whole K at
+    once (M-2), and are the whole tables' rows, column for column, value for value."""
+    from hxex.report import tables
+
+    monkeypatch.setattr(tables, "_FEW", few)
+    fit = results.fit
+    sid = str(fit.spectrum_id[3])
+    reviewed = results.with_review(ReviewTable.empty().update(sid, k_override=2).update(
+        str(fit.spectrum_id[4]), status="rejected"))
+    for res in (results, reviewed):
+        whole = spectra_table(res)
+        assert np.isfinite(whole["mean_corrected_1"]).any()  # the correction is compared too
+        picked = [5, 0, 3, len(fit) - 1]
+        few_rows = spectra_table(res, rows=picked)
+        assert list(few_rows) == list(whole)
+        assert all(_same_column(few_rows[n], np.asarray(whole[n])[picked]) for n in whole)
+        comp, part = components_table(res), components_table(res, rows=picked)
+        at = np.concatenate([np.flatnonzero(comp["spectrum_id"] == fit.spectrum_id[i])
+                             for i in picked])
+        assert list(part) == list(comp)
+        assert all(_same_column(part[n], np.asarray(comp[n])[at]) for n in comp)
+        d = int(fit.data_id[-1])
+        for make in (series_table, uptake_table):
+            every, one = make(res), make(res, data_ids=[d])
+            keep = every["data_id"] == d
+            assert list(one) == list(every) and keep.any() and not keep.all()
+            assert all(_same_column(one[n], np.asarray(every[n])[keep]) for n in every)
+    assert spectra_table(reviewed, rows=[3])["K"][0] == 2
+
 # --- K comparison and run overviews -------------------------------------------------------------
 
 def test_k_comparison(results):

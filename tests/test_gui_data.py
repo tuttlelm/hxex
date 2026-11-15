@@ -56,7 +56,7 @@ def test_the_table_sorts_copies_and_saves_what_it_shows(qtbot, tmp_path):
     panel.table.selectRow(1)
     panel.copy()
     assert QApplication.clipboard().text().splitlines() == [
-        "sample\tstart\tend\tfD\tsignificant\tnote", "S\t10\t15\t0.5\tyes\t"]
+        "sample\tstart\tend\tfD\tsignificant\tnote", "S\t10\t15\t0.5\tTrue\t"]
     # saved: every row, in the order shown, as hxex's tables are written
     path = panel.save(tmp_path / "t.csv")
     with path.open(encoding="utf-8") as fh:
@@ -331,3 +331,37 @@ def test_cells_and_headers_naming_a_flag_say_what_it_means(qtbot):
     assert "hxex explain" not in button.toolTip()
     button.show_flags([], 1)
     assert button.text() == "Flags" and not button.isEnabled()
+
+
+def test_copy_keeps_the_digits_the_csv_files_keep(qtbot):
+    """Ctrl+C copies a value as the CSV files write it (six significant digits, an m/z with its
+    0.0001, booleans as True or False), not as the cell rounds it (audit of 2026-11-15, C-3)."""
+    from hxex.gui.data_table import copy_text
+
+    assert cell_text(652.3412) == "652.3" and copy_text(652.3412) == "652.3412"
+    assert copy_text(True) == "True" and copy_text(False) == "False"
+    assert copy_text(math.nan) == "" and copy_text(None) == "" and copy_text(3) == "3"
+    panel = DataPanel()
+    qtbot.addWidget(panel)
+    panel.show_rows(["mz", "ok"], [{"mz": 652.3412, "ok": True}])
+    panel.copy()
+    assert QApplication.clipboard().text() == "mz\tok\n652.3412\tTrue\n"
+
+
+def test_sorting_keeps_the_current_row_on_its_spectrum(qtbot):
+    """Sorting moves the rows under Qt's persistent indexes, so the current row (and a
+    selection) stays on the same row, not at the same row number (audit of 2026-11-15, C-4)."""
+    from PySide6.QtCore import QPersistentModelIndex
+
+    panel = DataPanel()
+    qtbot.addWidget(panel)
+    panel.show_rows(["sample", "start", "end"], ROWS)
+    panel.table.selectRow(0)
+    kept = QPersistentModelIndex(panel.model.index(0, 1))
+    assert panel.model.rows[0]["start"] == 10
+    panel.table.sortByColumn(1, Qt.SortOrder.AscendingOrder)  # by start: 2, 4, 10
+    assert [r["start"] for r in panel.model.rows] == [2, 4, 10]
+    assert kept.row() == 2 and panel.model.rows[kept.row()]["start"] == 10
+    current = panel.table.selectionModel().currentIndex()
+    assert current.row() == 2
+    assert [i.row() for i in panel.table.selectionModel().selectedRows()] == [2]

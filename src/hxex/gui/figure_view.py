@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 from matplotlib.figure import Figure
 from PySide6.QtCore import (
@@ -146,21 +147,27 @@ class FigureView(QWidget):
         """Each panel (matplotlib's axes, where the figure placed it) with room for its tick
         labels, in the SVG's units. Taken from the figure: an SVG group's bounds include what
         the panel clips away (a band drawn across the whole axis), so they cannot be used."""
+        return self._boxes_at(panel_positions(fig))
+
+    def _boxes_at(self, positions: list[tuple[float, float, float, float]]) -> list[QRectF]:
+        """The panels at ``positions`` (:func:`panel_positions`) in the SVG's units."""
         view = self._view_box()
         boxes = []
-        for ax in fig.axes:
-            if not ax.get_visible():
-                continue
-            pos = ax.get_position()  # figure fraction, from the bottom left
+        for px0, py0, px1, py1 in positions:
+            width, height = px1 - px0, py1 - py0
             left, right, top, bottom = PANEL_ROOM
-            x0 = pos.x0 - left * pos.width
-            x1 = pos.x1 + right * pos.width
-            y1 = pos.y1 + top * pos.height
-            y0 = pos.y0 - bottom * pos.height
+            x0 = px0 - left * width
+            x1 = px1 + right * width
+            y1 = py1 + top * height
+            y0 = py0 - bottom * height
             boxes.append(QRectF(view.x() + x0 * view.width(),
                                 view.y() + (1 - y1) * view.height(),
                                 (x1 - x0) * view.width(), (y1 - y0) * view.height()))
         return boxes
+
+    def render_now(self) -> None:
+        """Nothing to do: Qt draws the SVG as it paints (the matplotlib view draws its picture
+        here)."""
 
     def clear(self) -> None:
         self.figure, self._marks, self._panels = None, [], []
@@ -338,11 +345,17 @@ class RasterView(FigureView):
     zoom: drawn again, in a worker thread, when the size changes (the picture drawn before is
     scaled meanwhile). It shows exactly what a saved PNG shows, clipping included (Qt's SVG
     renderer ignores clipping, so :class:`FigureView` is given data cut to the panels:
-    :mod:`hxex.gui.svg_trim`; HISTORY 237)."""
+    :mod:`hxex.gui.svg_trim`; HISTORY 237). A new figure's picture is drawn when its owner asks
+    (:meth:`render_now`, once the figure is sized); until it comes (:attr:`pictured`), the
+    picture of the figure before stays, under :class:`FigurePanel`'s veil."""
+
+    pictured = Signal()  # the picture of the figure shown has come
+    failed = Signal(str)  # its picture could not be drawn: why
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._image: QImage | None = None
+        self._image_for: Figure | None = None  # the figure the picture is of
         self._marks_known = False  # found when first drawn (in the worker thread)
         self._size_pt = QSize(0, 0)
         self._drawing = Latest(self, drawing_pool())
@@ -353,19 +366,31 @@ class RasterView(FigureView):
 
     def set_figure(self, fig: Figure, svg: bytes | None = None,
                    marks: list[Mark] | None = None) -> None:
+        # a picture of the figure before, still to come, is never shown nor taken as this
+        # figure's marks (they gave the new figure the old one's clicks and tooltips: audit of
+        # 2026-11-15, C-1)
+        self._drawing.drop()
+        self._again.stop()
         self.figure = fig
         self._marks, self._marks_known = list(marks or []), marks is not None
         w, h = fig.get_size_inches()
         self._size_pt = QSize(round(w * 72), round(h * 72))  # as the SVG's points
-        self._image = None
+        # the picture before stays (stretched, under the veil) until this figure's comes: the
+        # panel went white between them (C-19)
         self._panels = self._panel_boxes(fig)
-        self._resize()
+        FigureView._resize(self)  # drawn once sized (render_now), not at this size first
+
+    def render_now(self) -> None:
+        """Draw the picture now (a new figure; a change of zoom waits until it settles)."""
+        self._again.stop()
+        self._render()
 
     def clear(self) -> None:
         self._again.stop()
         self._drawing.drop()  # a picture still being drawn would bring the figure back
         self.figure, self._marks, self._panels = None, [], []
-        self._image, self._marks_known, self._size_pt = None, False, QSize(0, 0)
+        self._image, self._image_for = None, None
+        self._marks_known, self._size_pt = False, QSize(0, 0)
         self.setFixedSize(QSize(0, 0))
         self.update()
 
@@ -374,7 +399,8 @@ class RasterView(FigureView):
 
     @property
     def ready(self) -> bool:
-        return self.figure is not None and self._image is not None
+        """Whether this figure's own picture is drawn (and what can be clicked is known)."""
+        return self.figure is not None and self._image_for is self.figure
 
     def figure_size(self) -> QSize:
         return QSize(self._size_pt)
@@ -399,22 +425,42 @@ class RasterView(FigureView):
         find = not self._marks_known
 
         def work():
-            marks = figure_marks(fig) if find else None
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", dpi=dpi)
-            return buf.getvalue(), marks
+            # the marks and panels at the picture's dpi: a figure with a layout engine is laid
+            # out again at the dpi it is drawn at, and taken at its own they could sit off the
+            # picture (audit of 2026-11-15, C-28); one job, in the drawing thread
+            own = fig.dpi
+            fig.set_dpi(dpi)
+            try:
+                marks = figure_marks(fig) if find else None
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", dpi=dpi)
+                positions = panel_positions(fig)  # as the picture laid them out
+            finally:
+                fig.set_dpi(own)
+            return fig, buf.getvalue(), marks, positions
 
-        self._drawing.submit(work, self._rendered, lambda message: log.error(
-            "could not draw the figure: %s", message))
+        self._drawing.submit(work, self._rendered, self._not_rendered)
 
     def _rendered(self, done) -> None:
-        png, marks = done
+        fig, png, marks, positions = done
+        if fig is not self.figure:  # (set_figure drops a picture of another figure)
+            return
         image = QImage.fromData(png, "PNG")
         image.setDevicePixelRatio(self.devicePixelRatioF())
-        self._image = image
+        self._image, self._image_for = image, fig
         if marks is not None:
             self._marks, self._marks_known = marks, True
+        self._panels = self._boxes_at(positions)
         self.update()
+        self.pictured.emit()
+
+    def _not_rendered(self, message: str) -> None:
+        """Said on the panel's status line (it went to the log only: C-25); the picture of
+        the figure before is not left to stand for this one."""
+        if self._image_for is not self.figure:
+            self._image, self._image_for = None, None
+            self.update()
+        self.failed.emit(message)
 
     def paintEvent(self, event):  # noqa: N802 - Qt's name
         if self._image is None:
@@ -427,6 +473,13 @@ class RasterView(FigureView):
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
             painter.drawImage(QRectF(self.rect()), self._image)
         painter.end()
+
+
+def panel_positions(fig: Figure) -> list[tuple[float, float, float, float]]:
+    """Where the figure placed each visible panel (matplotlib's axes): ``(x0, y0, x1, y1)``,
+    figure fractions from the bottom left, as last laid out."""
+    return [(p.x0, p.y0, p.x1, p.y1) for p in (ax.get_position() for ax in fig.axes
+                                               if ax.get_visible())]
 
 
 class TitleLabel(QLabel):
@@ -520,6 +573,8 @@ class FigurePanel(QWidget):
         self.help_text = hint
         self._task: str | None = None  # work of the figure's own beside its drawing (set_task)
         self._fitted = True
+        self._picturing = False  # the matplotlib view's picture of a new figure is to come
+        self._saving: list[Latest] = []  # figures being saved (in the drawing thread)
         self._drawing = Latest(self, pool or drawing_pool())
 
         self.bar = QWidget()
@@ -527,8 +582,10 @@ class FigurePanel(QWidget):
         buttons.setContentsMargins(0, 0, 0, 0)
         for text, words, slot in (("Fit page", "show the whole figure in the space there is",
                                  self.fit),
-                                ("−", "zoom out (Ctrl and the mouse wheel)", self.zoom_out),
-                                ("+", "zoom in (Ctrl and the mouse wheel)", self.zoom_in),
+                                ("−", "zoom out (or the mouse wheel over the figure)",
+                                 self.zoom_out),
+                                ("+", "zoom in (or the mouse wheel over the figure)",
+                                 self.zoom_in),
                                 ("Actual size", "show the figure at its own size (100 %)",
                                  self.actual_size),
                                 ("Save figure…", "save as SVG, PDF or PNG", self.save_dialog)):
@@ -583,6 +640,9 @@ class FigurePanel(QWidget):
         view.clicked_row.connect(self.clicked_row)
         view.rows_asked.connect(self.rows_asked)
         view.spanned.connect(self._spanned)
+        if isinstance(view, RasterView):
+            view.pictured.connect(self._pictured)
+            view.failed.connect(self._failed)
         view.span_mode = getattr(self, "span_mode", False)
         if view.span_mode:
             view.setCursor(Qt.CursorShape.CrossCursor)
@@ -614,12 +674,22 @@ class FigurePanel(QWidget):
         self.render = render
         if old is not None:
             old.deleteLater()
-        if figure is not None:
-            self.view.set_figure(figure)
-            if fitted:
-                self.fit()
-            else:
-                self.view.set_zoom(zoom)
+        if figure is None:
+            return
+        if render == "svg":  # its SVG made in the drawing thread, not in the window's (C-17)
+            if not fitted:
+                self.view.set_zoom(zoom)  # kept for the figure to come
+            self.draw(lambda: figure)
+            return
+        self.view.set_figure(figure)
+        if fitted:
+            self.fit()
+        else:
+            self.view.set_zoom(zoom)
+        self._picturing = True
+        self.view.render_now()
+        if not self.drawing:
+            self._quiet_status()
 
     def show_figure(self, fig: Figure, svg: bytes | None = None,
                     marks: list[Mark] | None = None) -> None:
@@ -629,10 +699,27 @@ class FigurePanel(QWidget):
             self.view.set_figure(fig, marks=marks)
         self.set_title(figure_title(fig))
         self.save_button.setEnabled(True)
-        self._set_status(self._task or "", busy=self._task is not None, veil=False)
         if self._fitted:
             self.fit()
+        # the matplotlib view's picture is drawn now, at the fitted size, the figure before
+        # staying under the veil until it comes (a white panel blinked between them: audit of
+        # 2026-11-15, C-19)
+        self.view.render_now()
+        self._picturing = not self.view.ready
+        self._quiet_status()
         self.drawn.emit()
+
+    def _pictured(self) -> None:
+        """The matplotlib view's picture of the figure shown has come: the veil goes."""
+        if self._picturing and not self.drawing:
+            self._picturing = False
+            self._quiet_status()
+
+    def _quiet_status(self) -> None:
+        """The status line when no figure is being drawn: the owner's work (:meth:`set_task`),
+        a figure being saved, or nothing; the figure faded while its picture is to come."""
+        text = self._task or ("Saving the figure…" if self._saving else "")
+        self._set_status(text, busy=bool(text), veil=self._picturing)
 
     def draw(self, draw: Callable[[], Figure]) -> None:
         """Draw a figure with ``draw`` in a worker thread and show it when done; a newer call
@@ -658,12 +745,14 @@ class FigurePanel(QWidget):
         would show after the panel was cleared (the elution tab drew the previous spectrum
         after it was cleared for the next; owner, 2026-11-12)."""
         self._drawing.drop()
+        self._picturing = False
         self.view.clear()
         self.set_title("")
         self.save_button.setEnabled(False)
         self._set_status(message, busy=message.endswith("…"))
 
     def _failed(self, message: str) -> None:
+        self._picturing = False
         self._set_status("Could not draw the figure (the messages say why).", error=True)
         log.error("could not draw the figure: %s", message)
         self.failed.emit(message)
@@ -675,7 +764,7 @@ class FigurePanel(QWidget):
         is not faded (it is current)."""
         self._task = text
         if not self.drawing:
-            self._set_status(text or "", busy=text is not None, veil=False)
+            self._quiet_status()
 
     def _set_status(self, text: str, busy: bool = False, error: bool = False,
                     veil: bool | None = None) -> None:
@@ -707,8 +796,9 @@ class FigurePanel(QWidget):
         self.zoom_by(1 / ZOOM_STEP)
 
     def actual_size(self) -> None:
-        self._fitted, self.magnified = False, False
-        self.view.set_zoom(1.0)
+        # about the centre of the view, as zooming is: the zoom alone kept the scroll bars'
+        # pixels, which then showed another part of the figure (audit of 2026-11-15, C-18)
+        self.zoom_by(1.0 / self.view.zoom)
 
     def zoom_by(self, factor: float, at: QPointF | None = None) -> None:
         """Zoom by ``factor``, keeping the point of the figure under ``at`` (the viewport's
@@ -830,7 +920,10 @@ class FigurePanel(QWidget):
         if watched in self._steppers and event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
             self._sync_steppers(watched)  # the list shown or hidden: its ◀ ▶ with it
             return False
-        if event.type() == QEvent.Type.Wheel and self.view.figure is not None:
+        # the wheel over the figure only: the lists in the bar are watched too (for their ◀ ▶),
+        # and their wheel zoomed the figure at a point in the list's own coordinates (C-13)
+        if (event.type() == QEvent.Type.Wheel and watched is self.scroll.viewport()
+                and self.view.figure is not None):
             notches = event.angleDelta().y() / 120
             if notches:
                 self.zoom_by(WHEEL_STEP ** notches, event.position())
@@ -840,23 +933,49 @@ class FigurePanel(QWidget):
     # --- saving ----------------------------------------------------------------------------
 
     def save_dialog(self) -> None:
-        if self.view.figure is None:
+        fig = self.view.figure
+        if fig is None:
             return
         filters = ";;".join(f"{label} (*.{fmt})" for fmt, label in SAVE_FORMATS.items())
         path, chosen = QFileDialog.getSaveFileName(self, "Save figure", self.save_name, filters)
         if not path:
             return
-        if "." not in path.rsplit("/", 1)[-1]:  # no suffix typed: the chosen format's
-            path += "." + next(f for f, label in SAVE_FORMATS.items() if chosen.startswith(label))
-        try:
-            save_figure(self.view.figure, path)
-        except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Figure not saved", str(exc))
-            return
-        window = self.window()
-        if hasattr(window, "statusBar"):  # an event, as "session saved": the window's bar
-            window.statusBar().showMessage(f"figure saved to {path}", 5000)
-        log.info("figure saved to %s", path)
+        # no known suffix typed ("fig.v2" as well as "fig"): the chosen format's (C-23)
+        if Path(path).suffix.lower().lstrip(".") not in SAVE_FORMATS:
+            fmt = next((f for f, label in SAVE_FORMATS.items() if chosen.startswith(label)), None)
+            if fmt is not None:
+                path += "." + fmt
+        # saved in the drawing thread: matplotlib drawing in the window's thread while that
+        # thread draws is the crash of HISTORY 282 (audit of 2026-11-15, C-17); each save its
+        # own job, so a second one never replaces the first
+        job = Latest(self, drawing_pool())
+        self._saving.append(job)
+
+        def finish():
+            self._saving.remove(job)
+            job.deleteLater()
+            if not self.drawing:
+                self._quiet_status()
+
+        def saved(_path):
+            finish()
+            window = self.window()
+            if hasattr(window, "statusBar"):  # an event, as "session saved": the window's bar
+                window.statusBar().showMessage(f"figure saved to {path}", 5000)
+            log.info("figure saved to %s", path)
+
+        def not_saved(message: str):
+            finish()
+            QMessageBox.warning(self, "Figure not saved", message)
+
+        job.submit(lambda: save_figure(fig, path), saved, not_saved)
+        if not self.drawing:
+            self._quiet_status()
+
+    @property
+    def saving(self) -> bool:
+        """Whether a figure is being saved."""
+        return bool(self._saving)
 
 
 class _Veil(QWidget):

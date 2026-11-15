@@ -586,6 +586,13 @@ def plot_spectrum(
             rax.vlines(x, 0, (picked["intensity"] - fit["total"]) * scale, color=STICK, lw=2.0,
                        gid="residual")
             rax.set_ylabel("residual")
+    # the panel and what it draws name the spectrum, so that a click on a spectra page selects
+    # it in hxex's window (PLAN "GUI": the figures' data rows, hxex.report.hover)
+    from .hover import set_row
+
+    for artist in (ax, rax, *ax.get_children(), *(rax.get_children() if rax else ())):
+        if artist is not None and (artist is ax or artist is rax or artist.get_gid()):
+            set_row(artist, {"spectrum_id": spectrum_id})
     ax.set_ylabel("normalised intensity" if normalize else "intensity")
     if not normalize:  # short labels (0.5, 1.0 with x10^6 once): the plot area keeps its size
         ax.yaxis.set_major_formatter(_IntensityFormatter())

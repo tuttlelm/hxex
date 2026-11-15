@@ -191,6 +191,16 @@ class ProjectWorkspace(QWidget):
             self.text.setPlainText(f"cannot read the project file: {exc}")
 
 
+def _only_the_table_named(before: dict, now: dict) -> bool:
+    """Whether the only change between the [figures] and [review] settings ``before`` and
+    ``now`` is ``[review] table`` naming a table."""
+    if "review.table" in before["values"] or "review.table" not in now["values"]:
+        return False
+    rest = {k: v for k, v in now["values"].items() if k != "review.table"}
+    tables = [t for t in now["tables"] if t != "review" or "review" in before["tables"]]
+    return rest == before["values"] and tables == before["tables"]
+
+
 def new_project(path: Path, fmt: str, name: str) -> Path:
     """Write a new project file with every default, as ``hxex init --format FMT --project NAME``
     does (the caller has asked about a file there already: it is replaced)."""
@@ -269,6 +279,7 @@ class MainWindow(QMainWindow):
         self._analysis_text: dict | None = None  # the [analysis] the tree's 'left out' follows
         # the review table as the results shown read it (gui.review.table_stamp)
         self.results_review_stamp: tuple | None = None
+        self.naming_review_table = False  # the review panel is naming its table (D q7)
         # the review table, watched: saved from the Tables view or a spreadsheet, the results
         # are read again with it (owner, 2026-11-04); the review panel's own writes update the
         # stamp, so they are not read again
@@ -316,6 +327,12 @@ class MainWindow(QMainWindow):
             lambda: self.tabs.setCurrentIndex(WORKSPACES.index("run")))
         self.running.hide()
         self.statusBar().addPermanentWidget(self.running)
+        self.replacing = QLabel("the results shown are replaced when it finishes")
+        self.replacing.setToolTip(tip("a run or resume of the project whose results are shown "
+                                      "is in progress; the window shows the new results when it "
+                                      "ends"))
+        self.replacing.hide()
+        self.statusBar().addPermanentWidget(self.replacing)
         self.run_page.activity.connect(self._run_activity)
         self.run_page.ended.connect(self._run_ended)
         self.tabs.currentChanged.connect(self._tab_opened)
@@ -336,9 +353,26 @@ class MainWindow(QMainWindow):
             self._run_tab("running", self.palette().color(QPalette.ColorRole.Highlight))
             self.running.setText(f"running: {text}")
         self.running.setVisible(bool(text))
+        self._run_notice()
+
+    def _run_notice(self) -> None:
+        """While a run or resume of the project shown runs, the Results panel and the status
+        bar say that the results shown are replaced when it ends (audit of 2026-11-15, A open
+        question 1: no blocking; the window reloads them then, with the bundle's stamp
+        checked before any figure reads it)."""
+        from .results_workspace import RUN_NOTICE
+        from .run_workspace import CHANGES_RESULTS
+
+        replacing = (self.run_page.running_command in CHANGES_RESULTS
+                     and self.project is not None
+                     and self.run_page.ran_on == self.project
+                     and self.results_page.results is not None)
+        self.results_page.set_notice(RUN_NOTICE if replacing else "")
+        self.replacing.setVisible(replacing)
 
     def _run_ended(self, how: str) -> None:
         """Outside the Run tab, its title says how the command ended until it is opened."""
+        self._run_notice()
         if self.tabs.currentIndex() == WORKSPACES.index("run"):
             self._run_tab()
             return
@@ -671,6 +705,11 @@ class MainWindow(QMainWindow):
         project = self.project if path == self.project else None
         self._loading_path = path
         self.statusBar().showMessage(f"loading {path}…")
+        # the project file's settings as the load starts: a change made while the results
+        # load is seen when they arrive (audit of 2026-11-15, A-14 and D-6)
+        before = (self._figure_and_review_settings() if project is not None else None,
+                  self._figure_and_review_settings(("analysis",)) if project is not None
+                  else None)
 
         def load():
             stamp = table_stamp(project)  # before reading: a change while it reads shows later
@@ -678,23 +717,32 @@ class MainWindow(QMainWindow):
             analysis = _analysis_settings(project)
             return results, analysis, _left_out_or_none(results, analysis), stamp
 
-        self._loading.submit(load, lambda loaded: self._results_loaded(*loaded, path),
+        self._loading.submit(load, lambda loaded: self._results_loaded(*loaded, path, before),
                              lambda message: self._results_failed(path, message))
 
     @property
     def loading(self) -> bool:
         return self._loading.running
 
-    def _results_loaded(self, results, analysis, left, stamp, path: Path) -> None:
+    def _results_loaded(self, results, analysis, left, stamp, path: Path,
+                        before: tuple = (None, None)) -> None:
         if path != self._loading_path:  # not the results asked for last (A-1)
             return
         self._loading_path = None
         self.results_path = path
         self.results_review_stamp = stamp
         self._watch_review_table()
+        again = False  # read once more: the review table or the project file changed meanwhile
         if path == self.project:
             self._view_settings = self._figure_and_review_settings()
             self._analysis_text = self._figure_and_review_settings(("analysis",))
+            view_before, analysis_before = before
+            if (view_before is not None and self._view_settings != view_before) \
+                    or (stamp is not None and table_stamp(self.project) != stamp):
+                again = True
+            elif analysis_before is not None and self._analysis_text != analysis_before:
+                analysis = _analysis_settings(self.project)  # the tree's 'left out' column
+                left = _left_out_or_none(results, analysis)
         self.results_page.show_results(results, path, left, analysis)
         self.analysis_page.results_changed()
         self._show_coverage()
@@ -709,6 +757,12 @@ class MainWindow(QMainWindow):
         if self._restoring:
             self._mark_saved()
         self.changed()
+        if again:
+            log.info("the review table or the project file changed while the results were "
+                     "being read: they are read again")
+            self._pending_selection = {**self.results_page.selection(),
+                                       **self.results_page.view_settings()}
+            self.open_results(self.project)
 
     def _show_coverage(self) -> None:
         """The coverage of the project's results under its sequences (none for results opened
@@ -767,6 +821,12 @@ class MainWindow(QMainWindow):
         return {"values": {k: v for k, v in values.items() if k.split(".")[0] in keep},
                 "tables": sorted(n for n in tables if n.split(".")[0] in keep)}
 
+    def watch_review_table(self) -> None:
+        """Watch the review table of the project whose results are shown (none otherwise):
+        called when the results are loaded, and by the review panel when its first decision
+        makes the table (the results are not read again for that: D open question 7)."""
+        self._watch_review_table()
+
     def _watch_review_table(self) -> None:
         """Watch the review table of the project whose results are shown (none otherwise)."""
         if self.review_watcher.files():
@@ -806,6 +866,10 @@ class MainWindow(QMainWindow):
         before, self._view_settings = self._view_settings, now
         if before is None or now == before or self.results_path != self.project \
                 or self.project is None or self.loading:
+            return
+        if self.naming_review_table and _only_the_table_named(before, now):
+            # the review panel's first decision named its table: the decision is in the
+            # results shown already (audit of 2026-11-15, D open question 7)
             return
         log.info("the project's [figures] or [review] changed: the results shown again with them")
         self.results_page.review.commit_note()  # a note being typed is kept

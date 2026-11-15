@@ -392,6 +392,16 @@ class RunWorkspace(QWidget):
             self.elapsed.setText(f"total {format_duration(time.monotonic() - self._started_at)}")
         self._tell()
 
+    @property
+    def running_command(self) -> str:
+        """The command running (``run``, ``resume``, ...; '' when none)."""
+        return self.args[0] if self.runner.running and self.args else ""
+
+    @property
+    def ran_on(self) -> Path | None:
+        """The project file the command running was started for (None when none)."""
+        return self._ran_on if self.runner.running else None
+
     def activity_text(self) -> str:
         """``hxex run hxex.toml: fit: 50%, about 3s left (total 1m 2s)`` while a command runs;
         "" otherwise."""
