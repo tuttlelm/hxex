@@ -9936,3 +9936,36 @@ CSVs or mzML if wanted.
     Built check: resuming a copy of the raw-file benchmark bundle flags 178 spectra (0.64 %), all
     flagged in the scratch measurement, which flagged 28 more at 6.0-6.6 times the scatter.
     Private records: hxex_private/analysis_examples/spectrum_mz_flag (README, built_check/).
+
+387. **The window audited (2026-11-14/15; docs/AUDIT_GUI_2026-11-15.md; plan
+    hxex_private/plans/gui_audit.md).** The first audit of `hxex.gui`, pinned at b91c54d (the
+    last green commit before the profile fit; its picking check tab is left to the first fix
+    session): six bug reviewers by disjoint scope (lifecycle and threads; the project editor and
+    user tables; the Results tree, list, figures and data tab; the review and every file the
+    window writes; analysis, summary, export and sequence; window editing and traces), a quality
+    review (structure, duplication, tests, the guide against the window) and a measurement job
+    (four real projects, offscreen), as docs/AUDIT_2026-11-01.md was made. Every CONFIRMED item
+    has a pytest-qt script on the pinned export; every High item was reproduced a second time by
+    a fresh agent from the item's text alone (all thirteen reproduced; two of A-1's listed symptoms withdrawn, B-3 worse at startup, C-1 and C-11 intermittent on real pages). Counts: 13 High, 47 Medium,
+    72 Low, 38 open questions; quality 13 Major and 28 Minor. The High items: results of one
+    project shown under the next after a switch during a load; project files written as invalid
+    TOML by ordinary edits (template comments read as headings, quoted keys, multi-line lists); a
+    misspelt format stops File > Open; a name typed without its extension replaces a project
+    file or review table without asking; the raster view keeps the previous figure's marks; a
+    sorted List highlights another spectrum than the one shown; two peptides at one range open
+    as each other; the data tab shows another peptide's rows; the elution tab's Undo rewrites
+    the previous project's files; a project switch during a Compute shows the old analysis as
+    the new project's; HX-Express exports of several series share one file name; the Edit window
+    boxes round an unchanged window inwards; a review decision discards the window being edited.
+    Themes: state keyed to the previous project surviving a switch, work in flight never
+    cancelled, identities weaker than the data's own, writes without the reader's check, the
+    line-based project-file editor, and the window disagreeing with the command line. Measured:
+    a selection blocks the window at most 24 ms with the data tab hidden but 0.26-0.65 s with it
+    shown (`spectra_table` and `uptake_table` cost 0.2 s whatever the rows); opening the
+    intact-peptide benchmark takes 14 s to the flat list (8 s of `spectra_table` in the
+    background); superseded drawings are never cancelled (44 s of drawing after a held arrow
+    key's last press); Compute with ladder rates 63 s in `fit_decay`'s `curve_fit`; no leak when a
+    project is reopened in one window, 61-301 MB per cycle when a new window is made each time
+    (test sessions). The owner's decisions and the fix sessions follow; the new-user evaluation
+    of the window runs after the fixes. Evidence (scripts, logs, measurements, no data):
+    hxex_private/audit_gui_2026-11/ (README there).

@@ -597,8 +597,10 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   and their figures). The review layer, the `*_data` functions, the artists' `gid`s and
   `Results.with_review` are in place for the later phases (item 31). G1 built (HISTORY
   233-235: the settings form, lists of tables, tables of names, the tables users write);
-  G2 built (HISTORY 236: the commands run from the window, Stop through the input); next:
-  G3, results and review.
+  G2 built (HISTORY 236: the commands run from the window, Stop through the input); G3 and
+  G4 built (HISTORY 237-285 and Next steps 18). Audited 2026-11-15
+  (docs/AUDIT_GUI_2026-11-15.md, HISTORY 387): the fix sessions follow that document's order;
+  the new-user evaluation of the window comes after them.
 
 ## Deliberate differences from pyHXExpress
 
@@ -1032,7 +1034,10 @@ Planned, not built:
    uptake and populations pages through the table tab (HISTORY 274). Every analysis figure now
    lists its rows. G3's exit check passes (HISTORY 285): review edits made in the window give
    the same `hxex report` tables as the same edits made in a spreadsheet.
-   Later: retention and drift windows edited in the review (item 26).
+   Later: retention and drift windows edited in the review (item 26). The window was audited
+   on 2026-11-15 (docs/AUDIT_GUI_2026-11-15.md: 13 High, 47 Medium, 72 Low; quality and speed
+   in its Part 2); the fix sessions follow that document's order, then the new-user evaluation
+   of the window.
 19. **Outputs borrowed from HDXBoxeR** (owner, 2026-11-04; for the future, not scheduled;
    item (1), the summary table, BUILT 2026-11-13, HISTORY 377: `summary.csv`/`summary.md` of
    every analysis and the window's HDX Summary Table tab, with `[analysis.summary]`).
