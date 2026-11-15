@@ -1820,6 +1820,33 @@ Planned, not built:
       the peptide's. Not pursued (owner): judging a second population by its behaviour along the
       time course. First: how many of item 33's bright spectra off their replicates and the
       silent dim ones fail (a), against how many good spectra.
+      Candidate, measured (scratch, 2026-11-14): (a) where the answer is known, the undeuterated
+      controls against the natural-abundance envelope. Bins at least 4 noise sd above it are put
+      back to the prediction; the control's score is how far that moves its centroid, in D per
+      exchangeable amide (a limit on the effect on the value, not on peak height). On the
+      exported benchmark a series whose control moves by more than 0.01 (7 % of controls) is off
+      its other charge in 37 % of its labelled spectra against 10.5 % for the rest; more than
+      0.02 (4.6 %): 50 %; more than 0.05 (2.7 %): 63 %. An interferent sitting on a bin of a 2+
+      ion in every sample was caught at 0.005 in 11 of 12 controls. Requiring the same bin in two
+      samples adds little. Not yet a flag: half the controls hit are in the dimmest fifth; bright
+      saturated controls move by more than 0.02 too (tutorial 9.7 %, mostly flagged already);
+      read from the raw files the benchmark's controls are hit in 17-38 % with a weak signal
+      (noise curve too narrow for them, or real departures: not separated). How detectable an
+      interferent is depends on the peptide (to simulate: an interferent placed on each bin of a
+      few real envelopes): bins where the natural envelope is tall allow a larger excess, an
+      excess on M or M+1 is absorbed by the scale, long and sulphur-rich peptides are harder to
+      check, and an excess near the centroid moves the value little though it can distort the
+      shape.
+      Candidate (owner, 2026-11-14), to measure: **a second isotope grid from the apexes.** In the
+      2+ control of that peptide the peptide's own peaks sat within +-7 ppm of their positions
+      while bins 4 to 8 all sat 30-40 ppm low: another ion's envelope on its own grid.
+      `screen_off_position` saw only bin 4 (it reads the five lowest bins) and weighed it by its
+      share of the picked intensity (0.065, removal at 0.20). The candidate: several bins whose
+      apexes share an offset unlike the peptide's own, beyond the run's apex scatter for peaks of
+      that height (measured on the undeuterated controls; Q-TOF deuterated peaks scatter 20-40
+      ppm, so the tolerance must come from the data), scored by what those bins add to the value
+      (as the centroid score above), not by their share of intensity. It needs no prediction of
+      the envelope, so it applies to labelled spectra too.
    Evidence (scratch, benchmark): a column-aware table (HDExaminer's per-file windows for its
    series; another charge's per-file window for 169 of the 445 series it lacks; the rest the
    single time +-0.15 min) beat the single times everywhere: replicate sd q90 0.258 -> 0.221 D
