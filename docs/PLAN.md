@@ -1733,6 +1733,107 @@ Planned, not built:
      No command-line form for now (the series is the unit); a bundle-wide HX-Express export
      can follow if users ask.
 
+33. **Windows that follow each file, and peaks chosen by identity** (owner, 2026-11-14; HISTORY
+   384). Prompted by a page of the profile-fit drafts (item 31):
+   an exported spectrum of the intact-peptide benchmark was another, brighter ion eluting just
+   before the peptide. The windows used for that dataset's series without HDExaminer windows (one
+   time per sample and labelling time, +-0.15 min, given to every replicate file) missed in files
+   whose elution ran differently, because the injections alternate between two reverse-phase
+   columns. Steps, in this order (6 independent of the rest), each measured before it is built:
+   1. **Finish the profile fit (item 31's branch), with a quality measure per spectrum.** Replace
+      `unexplained` with `purity`: within each bin's footprint (+-1 peak width around its fitted
+      position), the share of the profile the bins' model accounts for (the smaller of model and
+      profile, summed), averaged over the bins weighted by their model; high is good. Only what
+      touches the peptide's peaks counts, so species resolved between them (common on
+      high-resolution data) cost nothing (owner). `unexplained` counted strays as explained and
+      ignored overshoot (one spectrum read 0.71 or 0.23 depending on what the strays absorbed);
+      a whole-region share (`explained`) penalised crowded but clean spectra (median 0.60 on a
+      crowded Orbitrap digest against 0.87-0.88 on Q-TOF data). Measured (scratch, worst 2 % of
+      spectra by each measure, share more than 0.5 D from their replicates): purity 52 % on the
+      benchmark (38 % of all such spectra caught), 56 % Orbitrap; whole-region share 46 / 55 %; the
+      tallest stray against the tallest bin 43 / 47 %; signal-to-noise 24 / 27 %; brightness 15 /
+      33 % (overall 2.7 / 9.8 %). Purity's median is 0.94-0.97 on all three datasets, so one
+      threshold may serve every instrument (candidate 0.8: 2.4 % of Q-TOF spectra, 11 % of the
+      Orbitrap set's; pages around it for the owner). Known blind spot: when the peptide's real
+      envelope is missed and the bins sit on small leftovers, purity can stay high (seen on the
+      Orbitrap pages): the m/z flag of step 2 covers part of it. `stray_share` (or the tallest
+      stray) kept as context. Also measured: the flank pattern (a bin's fitted peak on the side
+      of a taller observed peak, which cannot be a stray within one peak width) in 0.9 % of
+      benchmark spectra, 60 % of them off their replicates; the 37 of them the default analysis
+      kept without a flag were all in the dimmest fifth, where the screens' peak floor (5 times
+      the baseline) does not see interference. Fit figures stay as they are; the profile fit
+      gets its own picking-check figure (raw profile, the bins' fitted peaks in a dark neutral,
+      the strays in orange, values as triangles, purity and stray share in the title): a tab on
+      the spectrum in the window, a figure on request in the files, never drawn over population
+      curves (owner: too busy on a fit plot). A flag points to it below the purity threshold
+      (a flag first, owner's rule for unproven rules); weighting replicates by purity when they
+      are combined (HISTORY 154's direction) to evaluate after. Purity for today's pick (a
+      stand-in from the picking windows) to test, since the profile fit is opt-in. Redraw the
+      drafts with the current branch before the figure is settled.
+   2. **A spectrum off its file's m/z.** The m/z check judges a series through its controls, so
+      single labelled spectra sitting 13-39 ppm from their file's median offset (files scatter
+      by a few ppm) were not flagged. Proposed: a per-spectrum flag (the injection's robust scatter,
+      a multiple of it), whatever the cause (window, species, column). Measure first on the
+      benchmark's raw-file runs, the pooled raw project, and the tutorial: how many it flags and
+      whether they are real problems.
+   3. **The charges of a peptide share their window.** Charges co-elute; borrowing another
+      charge's per-file window was the one rule that helped (below). Check whether `find_peak`
+      finds a peak per ion or per peptide; then measure a peak found on the summed trace of every
+      charge, and a per-file window given for one charge carried to the others in that file
+      (`rt_elution_windows` peptide rows already do this when written by hand).
+   4. **A peak chosen by identity, not height.** The tallest peak of a trace is often another
+      species. Any automatic choice (`find_peak`, `find_retention_time = "automatic"`, the
+      elution editor's spreading to other files) should score candidates on the m/z position of
+      their envelope, the drift time, and agreement between charges (the m/z check, the drift
+      peak choice of HISTORY 378, and the profile fit's offset hold the pieces). Builds on 2-3.
+   5. **Elution groups as a diagnostic.** Injections that alternate between two columns show up
+      in the relative elution order of the peptides: `hxex check` / `hxex info` could report the
+      groups, and windows would be carried only within a group. First look for the pattern in a
+      second dataset (the pooled raw project, also a Synapt). The raw files name a dual-column
+      inlet method but record no column per injection.
+   6. **Re-evaluate or remove `bright`** (owner, 2026-11-14). The flag marks a labelled spectrum
+      at least as bright as a control of its series flagged `saturated` or `tails_low`. Measured
+      (scratch): bright spectra are no further from their replicates than others and as pure; in
+      time points with both kinds, the bright replicates choose K > 1 about as often as their
+      dimmer siblings (tutorial 62 vs 52 %, benchmark 12 vs 13 %, Orbitrap 31 vs 30 %), so the flag
+      mostly marks peptides that are multimodal anyway. Saturation itself is real (HISTORY 220).
+      Options: replace it with a sign measured on the spectrum itself (its tallest peak flattened
+      against its neighbours, as `saturated` does for controls), or remove it (flags.md, outputs.md,
+      the tutorial's step on bright spectra). Measure the replacement before deciding.
+   Evidence (scratch, benchmark): a column-aware table (HDExaminer's per-file windows for its
+   series; another charge's per-file window for 169 of the 445 series it lacks; the rest the
+   single time +-0.15 min) beat the single times everywhere: replicate sd q90 0.258 -> 0.221 D
+   (HDExaminer's series), 0.328 -> 0.291 D (borrowed windows); charge pairs more than 1 D apart
+   8.3 -> 7.7 %. Windows from each file's measured apex (checked against the files on the same
+   column) were worse (sd q90 1.41 -> 1.99 D; spectra off their file's m/z 376 -> 778).
+   Also open: whether that column-aware run replaces the single-time run as the benchmark's
+   raw-file reference.
+
+34. **An overlap map from the identified peptide set** (owner, 2026-11-14: a thought for a future
+   test, not scheduled). Predict, for every ion, which other identified ions of the sample
+   (every peptide and charge of the peptide table) would land on its bins if the LC separated
+   nothing: the worst case. Then add what the run knows, and compare with the data:
+   - *Worst case (m/z only):* each other ion's natural-abundance envelope (later also its reach up
+     to full deuteration) against this ion's bins and picking windows (or one peak width for the
+     profile fit), with the offset in ppm and the bins it touches. Two ions of the same charge
+     share the isotope grid, so an ion whose mass is near an integer number of steps away sits
+     exactly on the bins, where no shape check can see it (the bright spectra off their replicates
+     of item 33 showed such envelopes).
+   - *Expected case:* the same, kept only where the retention windows overlap (and, with ion
+     mobility, the drift ranges): the ions that can actually co-elute. The ratio of the two says
+     how much each series relies on the LC.
+   - *Weights:* each other ion's own undeuterated intensity (its controls), so the map says how
+     much of a bin it could take, not only that it could.
+   - *Against the data (undeuterated controls):* peaks in the peptide's window that neither the
+     peptide nor any predicted co-eluting ion explains: m/z, charge (from the spacing), retention,
+     drift. A list of unidentified species, candidates to add to the peptide pool (to search in
+     the identification runs, as the DDA check of HISTORY 200 did).
+   Related, built: `overlapping_ion` (fragments read from the same scans, HISTORY 309, 333), the
+   m/z check (item 11), `find_retention_time` suggestions (item 16). Possible outputs: a series
+   column (worst-case and expected overlap share), a view in the window, the list of unexplained
+   species. First test: does the expected-case overlap predict the spectra that sit off their
+   replicates (item 33's lists) better than chance?
+
 ## Risks and open decisions
 
 - **Back-exchange correction of fragment ions.** Fragment series are not corrected for now

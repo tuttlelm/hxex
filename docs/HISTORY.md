@@ -9841,3 +9841,39 @@ CSVs or mzML if wanted.
     undeuterated controls as much as in labelled spectra, so not a deuterium stretch; weak bins on
     the heavy side read 4-10 ppm light on average, cause open. Private records:
     hxex_private/analysis_examples/envelope_positions (README 7a-7k), window_edge (README).
+
+384. **Two LC columns in turn: windows that follow each file (2026-11-14; docs/PLAN.md Next steps
+    33).** A page of the profile-fit drafts (item 383) showed an exported spectrum of the
+    intact-peptide benchmark that was another ion: same drift time, eluting 0.3-0.4 min before the
+    peptide, 11-37 times brighter, 43-53 ppm below its positions; it takes up deuterium itself.
+    Across the samples, 30 of 173 exported spectra of that peptide sit 37-49 ppm low, all at the two
+    earliest labelling times, in every sample; the exported spectra match the raw scans summed
+    0.3 min early (r 0.98-1.00), the unshifted replicates the peptide's own window. Read from the
+    raw files with one window per sample and labelling time (+-0.15 min, every replicate file),
+    seven spectra still caught the other ion, in files whose peptides eluted later. The elution
+    apex of every ion in all 100 files shows why: the injections alternate between two
+    chromatographic states through the whole sequence (within a state, files agree to about 0.01
+    min after a smooth curve; between states 11-18 % of ions differ by more than 0.1 min after one).
+    The difference follows composition (peptides with three His +0.05 to +0.46 min, acidic ones
+    less), the scan clocks are identical, and deuterium does not differ between the states
+    (within +-2 %). Owner: probably one digestion column and two reverse-phase columns used in
+    turn; the raw files name a dual-column inlet method but record no column per injection.
+    Windows that follow each file were then compared (scratch): HDExaminer's per-file windows,
+    another charge's per-file window where the series has none, else the single time: better on
+    every yardstick (replicate sd q90 0.258 -> 0.221 D on HDExaminer's series, 0.328 -> 0.291 D on
+    borrowed windows; charge pairs more than 1 D apart 8.3 -> 7.7 %); windows from each file's
+    measured apex were worse (sd q90 1.41 -> 1.99 D, spectra off their file's m/z 376 -> 778): the
+    tallest peak of a trace is often another species. Beyond the windows the columns matter little:
+    deuterium differs between them by about +-0.01 D per amide per peptide (random sign, unrelated
+    to how much later a peptide elutes on one column), enough to make the lone replicate on the
+    other column the outlier at a time point 1.5 times as often as chance, and replicates far from
+    their time point are not concentrated on one column across a series (p 0.34). Separately, the profile fit's `unexplained`
+    counts strays as explained (one spectrum 0.71 or 0.23 with the strays taking more or less).
+    Measured instead: `purity` (the peptide's share of the profile within one peak width of each
+    bin) picks out spectra off their replicates as well as or better than a whole-region share,
+    keeps one scale on Q-TOF and Orbitrap data (median 0.94-0.97), and clears crowded but clean
+    spectra; brightness and signal-to-noise predict less. The `bright` flag: no more disagreement
+    with replicates than other spectra, and in time points with both kinds the bright replicates
+    choose K > 1 about as often (tutorial 62 vs 52 %, benchmark 12 vs 13 %, Orbitrap 31 vs 30 %). Private records:
+    the benchmark's raw-file folder in hxex_private, rt_groups (README; columns_noapex is the
+    better run), and analysis_examples/envelope_positions/built/README.md (page 1).
