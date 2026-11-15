@@ -1775,7 +1775,14 @@ Planned, not built:
       by a few ppm) were not flagged. Proposed: a per-spectrum flag (the injection's robust scatter,
       a multiple of it), whatever the cause (window, species, column). Measure first on the
       benchmark's raw-file runs, the pooled raw project, and the tutorial: how many it flags and
-      whether they are real problems.
+      whether they are real problems. Beside it, **one verdict per peptide across samples**: the
+      series check judges each sample against its own limit (`off_mz_sd` times that sample's
+      undeuterated injections' scatter), so one species can pass in one sample and be flagged in
+      the others. In the tutorial a 2+ ion sat at -19.4, -20.4, and -21.2 ppm in its three
+      samples, against limits of 18.8, 17.9, and 22.6: flagged `off_mz` in two, passed in the
+      third. Proposed: when most samples put a peptide's ion at the same offset beyond their
+      limits, flag it in every sample (or judge the pooled offset against the pooled scatter).
+      Measure how many series change on the three datasets first.
    3. **The charges of a peptide share their window.** Charges co-elute; borrowing another
       charge's per-file window was the one rule that helped (below). Check whether `find_peak`
       finds a peak per ion or per peptide; then measure a peak found on the summed trace of every
