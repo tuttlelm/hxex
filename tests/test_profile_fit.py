@@ -199,7 +199,11 @@ def test_processes_give_what_one_process_gives(monkeypatch):
     monkeypatch.setattr(profile, "PARALLEL_FROM", 1)
     monkeypatch.setattr(profile, "CHUNK", 5)
     many = pick_spectra(s, CFG, workers=2)
-    np.testing.assert_array_equal(one.intensity, many.intensity)
+    # equal up to rounding, not bit for bit: the workers run one thread of linear algebra,
+    # this process as many as its libraries take, and the two sum the Gram matrices in
+    # different orders (the lowest-versions CI job differed by 9e-7 on values near 1e5)
+    np.testing.assert_allclose(one.intensity, many.intensity, rtol=1e-8,
+                               atol=1e-9 * np.nanmax(one.intensity))
     np.testing.assert_array_equal(one.fit_offset_ppm, many.fit_offset_ppm)
 
 
