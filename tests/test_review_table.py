@@ -188,3 +188,22 @@ def test_spectra_csv_has_the_columns_the_review_table_reads(tmp_path):
                                                            note="weak spectrum"))
     note = spectra_table(noted)["note"]
     assert note[3] == "weak spectrum" and set(note[:3]) == {""}
+
+
+def test_unreviewed_written_is_kept_as_a_clear(tmp_path):
+    """``review_status = unreviewed``, written, is a clear of a status stored in the results
+    (audit of 2026-11-15, D-2): listed in ``unreviewed``, an entry only when the row says more;
+    a spectrum whose rows say unreviewed and rejected is refused."""
+    path = tmp_path / "t.csv"
+    path.write_text("spectrum_id,review_status,review_K,note\n"
+                    "p:a,unreviewed,,\n"
+                    "p:b,Unreviewed,,a note\n"
+                    "p:c,,,\n"
+                    "p:d,rejected,,\n", encoding="utf-8")
+    sheet = read_review_table(path)
+    assert sheet.unreviewed == ("p:a", "p:b")
+    assert sheet.spectrum_id == ("p:b", "p:d") and sheet.status == ("", "rejected")
+    path.write_text("spectrum_id,review_status\np:a,unreviewed\np:a,rejected\n",
+                    encoding="utf-8")
+    with pytest.raises(ValueError, match="row 3: p:a is already in row 2"):
+        read_review_table(path)

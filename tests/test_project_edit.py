@@ -177,7 +177,12 @@ def test_a_stage_is_switched_on_and_off_with_its_settings_and_tables(project):
     switch_table(project, "run.bootstrap", False)
     assert "run.bootstrap" not in live_settings(project.read_text())[1]
     assert file_problem(project) is None
-    assert "# n_boot = 50" in project.read_text()  # kept, switched off
+    assert "#~ n_boot = 50" in project.read_text()  # kept, marked as the switch's
+    # on again: the lines the switch took come back (B-6: they were lost before)
+    said = switch_table(project, "run.bootstrap", True)
+    assert "switched off with it" in said
+    assert live_settings(project.read_text())[0]["run.bootstrap.n_boot"] == 50
+    assert "#~ n_boot" not in project.read_text()
     with pytest.raises(ProjectError, match="cannot be switched"):
         switch_table(project, "run.picker", False)
 
@@ -349,3 +354,131 @@ def test_the_correction_is_turned_off_by_a_run_setting_not_a_missing_table(proje
     with pytest.raises(ProjectError, match=r"the table \[run.controls\] is switched on"):
         set_setting(project, "run.controls", "false")
     assert project.read_text() == before
+
+
+# --- the audit of 2026-11-15 (B-1, B-2, B-5, B-6, B-7, B-8, B-24) ------------------------------
+
+def _set(project, setting, value):
+    return set_setting(project, setting, value)
+
+
+def test_comments_that_mention_a_table_are_not_headings(tmp_path):
+    """A continuation comment starting with a table name, and a comment naming a table with
+    words after it, were taken for headings: a setting written below them was inserted above
+    as a second line, and the file was no longer valid TOML (B-1, B-2)."""
+    from hxex.project_edit import live_settings
+
+    for fmt in ("mzml", "thermo", "specexport"):
+        path = tmp_path / f"{fmt}.toml"
+        path.write_text(template(fmt), encoding="utf-8")
+        _set(path, "run.quality.tails_low_ratio", "0.6")
+        assert live_settings(path.read_text())[0]["run.quality.tails_low_ratio"] == 0.6
+        assert path.read_text().count("tails_low_ratio = ") == 1
+        if fmt in ("mzml", "thermo"):
+            _set(path, "input.scans.find_peak", "true")
+            assert path.read_text().count("find_peak = ") == 1
+            assert live_settings(path.read_text())[0]["input.scans.find_peak"] is True
+        load_project(path, analysis_only=True)
+
+
+def test_a_quoted_name_is_set_in_quotes_and_found_again(project):
+    """Names that need quotes could not be added or changed (B-5), and a change to one wrote a
+    second, bare line beside it (B-1)."""
+    from hxex.project_edit import live_settings
+
+    _set(project, 'analysis.summary."A:WT"', "apo")
+    _set(project, 'analysis.summary."HDX reaction details"', "pH 7.0")
+    _set(project, "analysis.fasta.WT", "wt.fasta")
+    values = live_settings(project.read_text())[0]
+    assert values["analysis.summary.A:WT"] == "apo"
+    assert values["analysis.summary.HDX reaction details"] == "pH 7.0"
+    _set(project, 'analysis.summary."A:WT"', "holo")  # changed in place, not added
+    _set(project, 'analysis.fasta."WT"', "other.fasta")  # in quotes: the same key
+    text = project.read_text()
+    lines = text.splitlines()
+    assert sum(line.startswith('"A:WT" = ') for line in lines) == 1  # the template's own
+    assert sum(line.startswith("WT = ") for line in lines) == 1  # example stays a comment
+    values = live_settings(text)[0]
+    assert values["analysis.summary.A:WT"] == "holo"
+    assert values["analysis.fasta.WT"] == "other.fasta"
+    with pytest.raises(ProjectError, match="not a setting of a project file"):
+        _set(project, 'run.controls."d2o fraction"', "0.9")
+
+
+def test_a_quoted_heading_with_a_space_is_a_heading(project):
+    """``[analysis.summary."HDX reaction details"]`` was not seen as a heading, so a setting
+    of the table above it landed under it (B-7)."""
+    from hxex.project_edit import live_settings
+
+    project.write_text(project.read_text() + '\n[analysis.summary]\nQuench = "pH 2.5"\n\n'
+                       '[analysis.summary."HDX reaction details"]\nWT = "apo"\n',
+                       encoding="utf-8")
+    _set(project, "analysis.summary.Protease", "pepsin")
+    values = live_settings(project.read_text())[0]
+    assert values["analysis.summary.Protease"] == "pepsin"
+    assert values["analysis.summary.HDX reaction details.WT"] == "apo"
+    assert "analysis.summary.HDX reaction details.Protease" not in values
+
+
+def test_a_setting_added_after_a_list_over_several_lines(project):
+    """A new setting of the table was inserted inside a list written over several lines (B-1)."""
+    from hxex.project_edit import live_settings
+
+    project.write_text(project.read_text() + '\n[analysis]\nsamples = [\n    "WT",\n    "D109H",\n'
+                       ']\n', encoding="utf-8")
+    _set(project, "analysis.alpha", "0.02")
+    values = live_settings(project.read_text())[0]
+    assert values["analysis.samples"] == ["WT", "D109H"] and values["analysis.alpha"] == 0.02
+    _set(project, "analysis.samples", '["WT"]')  # a one-line value replaces the whole list
+    assert live_settings(project.read_text())[0]["analysis.samples"] == ["WT"]
+
+
+def test_a_continuation_comment_stays_with_its_setting(project):
+    """The template's continuation lines (spaces, then #) were not recognised, so a new
+    setting was inserted between a setting and the rest of its comment (B-24)."""
+    from hxex.project_edit import live_settings
+
+    project.write_text(project.read_text() + '\n[analysis.summary]\nProtease = "pepsin"  # the'
+                       ' enzyme\n                   # (and its column)\n', encoding="utf-8")
+    _set(project, "analysis.summary.Quench", "pH 2.5")
+    lines = project.read_text().splitlines()
+    i = next(n for n, line in enumerate(lines) if line.startswith("Quench = "))
+    assert lines[i - 1].lstrip().startswith("# (and its column)")  # after the continuation
+    assert live_settings(project.read_text())[0]["analysis.summary.Protease"] == "pepsin"
+
+
+def test_text_the_editor_cannot_place_is_never_written(project, monkeypatch):
+    """The window wrote a project file that was no longer valid TOML when the refusal named no
+    key (B-1): invalid text is never written, whatever the caller allows."""
+    import hxex.project_edit as module
+    from hxex.project_edit import set_settings
+
+    before = project.read_bytes()
+    real = module._edited
+
+    def broken(text, table, key, value):
+        new, change = real(text, table, key, value)
+        return new.replace("[run.controls]", "[run.controls"), change
+
+    monkeypatch.setattr(module, "_edited", broken)
+    with pytest.raises(ProjectError, match="could not be placed"):
+        set_settings(project, [("run.controls.d2o_fraction", "0.85")], unfinished=True)
+    assert project.read_bytes() == before
+
+
+def test_a_moved_entry_takes_its_switched_off_setting_along(tmp_path):
+    """A switched-off setting at the end of an entry was left behind under the next entry when
+    the entry moved (B-8)."""
+    from hxex.project_edit import list_entries, move_entry
+
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n\n[input]\nformat = "mzml"\n\n[[input.runs]]\n'
+                    'path = "a.mzML"\nsample = "S"\n'
+                    '# precursor_charge = 3  # MS3 scans record a wrong charge\n\n'
+                    '[[input.runs]]\npath = "b.mzML"\nsample = "S"\n', encoding="utf-8")
+    move_entry(path, "input.runs", 0, 1)
+    text = project_text = path.read_text()
+    first, second = text.split("\n[[input.runs]]")[1:]
+    assert 'path = "b.mzML"' in first and "precursor_charge" not in first
+    assert 'path = "a.mzML"' in second and "# precursor_charge = 3" in second
+    assert [e["path"] for e in list_entries(project_text, "input.runs")] == ["b.mzML", "a.mzML"]

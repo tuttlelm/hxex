@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import json
 import logging
+import numbers
 import os
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -79,21 +82,35 @@ def _string(value: str) -> str:
 
 
 def _value(value) -> str:
-    if isinstance(value, bool):
+    """``value`` as a TOML value. NumPy numbers are written as plain ones (their repr,
+    ``np.float64(600.0)``, is no TOML: audit of 2026-11-15, A-10); a value of another kind is
+    written as its text, with a warning, so that saving a session, and telling whether it
+    changed, never fails on it."""
+    if isinstance(value, (bool, np.bool_)):
         return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        if isinstance(value, float) and not value == value:  # NaN: TOML spells it nan
+    if isinstance(value, numbers.Integral):
+        return repr(int(value))
+    if isinstance(value, numbers.Real):
+        value = float(value)
+        if value != value:  # NaN: TOML spells it nan
             return "nan"
+        if value in (float("inf"), float("-inf")):
+            return "inf" if value > 0 else "-inf"
         return repr(value)
     if isinstance(value, str):
         return _string(value)
     if isinstance(value, Path):
         return _string(value.as_posix())
+    if hasattr(value, "tolist") and not isinstance(value, Mapping):  # a NumPy array
+        value = value.tolist()
+        if not isinstance(value, list):
+            return _value(value)
     if isinstance(value, (list, tuple)):
         return "[" + ", ".join(_value(v) for v in value) + "]"
     if isinstance(value, Mapping):
         return "{ " + ", ".join(f"{_key(k)} = {_value(v)}" for k, v in value.items()) + " }"
-    raise TypeError(f"a session cannot hold {value!r}")
+    log.warning("a session holds %r as its text", value)
+    return _string(str(value))
 
 
 def _key(key) -> str:
@@ -175,14 +192,31 @@ def load_session(path: str | Path) -> GuiSession:
         log.warning("%s: unknown workspace '%s'; the project workspace is shown", path.name,
                     workspace)
         workspace = "project"
+    def table(value, name):  # a hand-edited file: a table where one belongs (A-11)
+        if not isinstance(value, Mapping):
+            raise SessionError(f"{path} is not a session file: {name} is not a table")
+        return dict(value)
+
+    for name in ("project", "results", "analysis"):
+        if name in data and not isinstance(data[name], str):
+            raise SessionError(f"{path} is not a session file: {name} is not text")
     figures = []
-    for item in data.get("figures", []):
+    items = data.get("figures", [])
+    if not isinstance(items, list):
+        raise SessionError(f"{path} is not a session file: figures is not a list of tables")
+    for n, item in enumerate(items, start=1):
         if not isinstance(item, Mapping) or not isinstance(item.get("kind"), str):
             log.warning("%s: a figure without a kind is left out", path.name)
             continue
-        figures.append(FigureState(item["kind"], dict(item.get("selection", {})),
-                                   [dict(c) for c in item.get("changes", [])]))
+        changes = item.get("changes", [])
+        if not isinstance(changes, list):
+            raise SessionError(f"{path} is not a session file: the changes of figure {n} are "
+                               "not a list of tables")
+        selection = table(item.get("selection", {}), f"the selection of figure {n}")
+        figures.append(FigureState(item["kind"], selection,
+                                   [table(c, f"a change of figure {n}") for c in changes]))
     return GuiSession(project=where("project"), results=where("results"),
                       analysis=where("analysis"), workspace=workspace,
-                      selection=dict(data.get("selection", {})), figures=figures,
-                      layout={str(k): str(v) for k, v in data.get("layout", {}).items()})
+                      selection=table(data.get("selection", {}), "selection"), figures=figures,
+                      layout={str(k): str(v)
+                              for k, v in table(data.get("layout", {}), "layout").items()})

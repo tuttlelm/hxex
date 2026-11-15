@@ -508,3 +508,153 @@ def test_a_preset_is_chosen_from_a_list_and_fills_in_its_settings(editor, projec
     _page(editor, "run.fit")
     assert editor.rows["run.fit.k_max"].editor.placeholderText() == "3"
     assert editor.rows["run.fit.k_max"].reset.text() == "Default"
+
+
+# --- the audit of 2026-11-15 (B-5, B-9, B-10, B-12, B-15, B-16, B-19, B-22, B-23) ------------
+
+def test_a_name_needing_quotes_is_added_changed_and_removed(editor, project):
+    """Names with a colon or a space could not be added or changed, and a change to a quoted
+    name added a second, bare line (B-5, B-1)."""
+    from hxex.project_edit import live_settings
+
+    _page(editor, "analysis.summary")
+    names = editor.list_editor
+    names.name.setText("HDX reaction details")
+    names.value.setText("pH 7.0, 25 C")
+    names.add()
+    names.name.setText("A:WT")
+    names.value.setText("apo")
+    names.add()
+    values = live_settings(project.read_text())[0]
+    assert values["analysis.summary.HDX reaction details"] == "pH 7.0, 25 C"
+    assert values["analysis.summary.A:WT"] == "apo"
+    row = next(r for r in range(names.grid.rowCount()) if names.grid.item(r, 0).text() == "A:WT")
+    names.grid.item(row, 1).setText("holo")
+    names._changed(row, 1)
+    text = project.read_text()
+    assert sum(line.startswith('"A:WT" = ') for line in text.splitlines()) == 1
+    assert live_settings(text)[0]["analysis.summary.A:WT"] == "holo"
+    names.grid.setCurrentCell(row, 0)
+    names.remove_selected()
+    assert "analysis.summary.A:WT" not in live_settings(project.read_text())[0]
+
+
+def test_changing_the_format_switches_the_old_formats_tables_off(qtbot, tmp_path):
+    """mzml -> specexport left [input.scans], [input.target] and the [[input.runs]] on, and
+    the file then refused to load with nothing in the window to switch them off (B-9)."""
+    from hxex.project_edit import file_problem, live_settings
+
+    path = tmp_path / "hxex.toml"
+    path.write_text(template("mzml"), encoding="utf-8")
+    (tmp_path / "SpecExport").mkdir()
+    ed = ProjectEditor()
+    qtbot.addWidget(ed)
+    ed.open(path)
+    asked = []
+    ed.confirm_switch_off = lambda fmt, names: (asked.append(names), True)[1]
+    _page(ed, "input")
+    row = ed.rows["input.format"]
+    row.editor.setCurrentIndex(row.editor.findText("specexport"))
+    row._chosen(row.editor.currentIndex())
+    assert asked and {"[input.scans]", "[input.target]", "[input.runs]"} <= set(asked[0])
+    values, tables = live_settings(path.read_text())
+    assert values["input.format"] == "specexport"
+    assert not ({"input.scans", "input.target", "input.runs"} & tables)
+    assert "are for mzml" not in (file_problem(path) or "")
+    assert ed.undo()  # one step: the format and the tables back
+    assert live_settings(path.read_text())[0]["input.format"] == "mzml"
+    assert "input.scans" in live_settings(path.read_text())[1]
+
+
+def test_per_sample_tables_are_listed_on_their_page(editor, project):
+    """Per-sample and per-run tables were kept in the file but invisible in the window, whose
+    page invited the user to change the setting for every sample (B-10)."""
+    from PySide6.QtWidgets import QLabel
+
+    project.write_text(project.read_text() + '\n[analysis.labelling.D109H]\nph_read = 7.4\n'
+                       '\n[analysis.fasta.A]\nWT = "a.fasta"\n', encoding="utf-8")
+    editor.reload()
+    _page(editor, "analysis.labelling")
+    notes = [w.text() for w in editor.page.findChildren(QLabel)]
+    assert any("[analysis.labelling.D109H] ph_read = 7.4" in t for t in notes)
+    _page(editor, "analysis.fasta")
+    notes = [w.text() for w in editor.page.findChildren(QLabel)]
+    assert any('[analysis.fasta.A] WT = "a.fasta"' in t for t in notes)
+
+
+def test_a_value_none_of_the_choices_is_shown_as_such(editor, project):
+    """The format list showed "specexport" for a file saying mzML (B-12); the Tables view
+    stopped the window opening the project for it (B-3)."""
+    from hxex.gui.user_tables import kinds
+
+    project.write_text(project.read_text().replace('format = "specexport"', 'format = "mzML"'),
+                       encoding="utf-8")
+    editor.reload()
+    _page(editor, "input")
+    row = editor.rows["input.format"]
+    assert row.editor.currentText() == "mzML (not one of the choices)"
+    row._chosen(row.editor.currentIndex())  # choosing it again writes nothing
+    assert 'format = "mzML"' in project.read_text()
+    assert kinds("mzML") == []
+    row.editor.setCurrentIndex(row.editor.findText("specexport"))
+    row._chosen(row.editor.currentIndex())
+    assert 'format = "specexport"' in project.read_text()
+    row = editor.rows["input.format"]  # the page was built again for the new format
+    assert row.editor.findText("mzML (not one of the choices)") < 0
+
+
+def test_an_unset_true_or_false_setting_is_half_ticked(editor, project):
+    """A true/false setting whose default is unset ([figures] corrected) was shown as an
+    unticked box, which read as off (B-15)."""
+    from PySide6.QtCore import Qt
+
+    _page(editor, "figures")
+    row = editor.rows["figures.corrected"]
+    assert row.editor.isTristate()
+    assert row.editor.checkState() == Qt.CheckState.PartiallyChecked
+    row.editor.setCheckState(Qt.CheckState.Checked)
+    assert _data(project)["figures"]["corrected"] is True
+    row.editor.setCheckState(Qt.CheckState.PartiallyChecked)
+    assert "corrected" not in _data(project).get("figures", {})
+    _page(editor, "run.quality")  # a default of true or false: two states, as before
+    assert not editor.rows["run.quality.exclude_flagged"].editor.isTristate() \
+        if "run.quality.exclude_flagged" in editor.rows else True
+
+
+def test_a_refused_switch_shows_the_problem(editor, project, monkeypatch):
+    """A refused Use switch only logged a warning; the problem line stayed hidden (B-16)."""
+    import hxex.gui.project_editor as module
+    from hxex.config import ProjectError
+
+    _page(editor, "run.bootstrap")
+
+    def refuse(path, table, on, any_table=False, unfinished=False):
+        raise ProjectError("[run.bootstrap] was not switched on: a test refusal")
+
+    monkeypatch.setattr("hxex.project_edit.switch_table", refuse)
+    editor.switch.setChecked(not editor.switch.isChecked())
+    assert editor.problem.isVisibleTo(editor) and "test refusal" in editor.problem.text()
+    assert editor.switch.isChecked() == ("run.bootstrap" in editor.on)
+    assert module is not None
+
+
+def test_a_date_value_and_quoted_text_are_handled(editor, project):
+    """A TOML date as a value raised in the form (B-22); text typed with quotes, as the File tab
+    shows it, was written with the quotes inside (B-23)."""
+    from hxex.gui.project_editor import _shown
+
+    assert _shown(__import__("datetime").date(2026, 11, 14)) == "2026-11-14"
+    _page(editor, "output")
+    row = editor.rows["output.bundle"]
+    row.editor.setText('"res"')
+    row.editor.editingFinished.emit()
+    assert _data(project)["output"]["bundle"] == "res"
+
+
+def test_a_project_name_with_a_quote_gives_a_valid_file(tmp_path):
+    """A project name with a quote or a backslash gave a project file that was not valid TOML
+    (B-19)."""
+    from hxex.config import load_project
+
+    path = new_project(tmp_path / "q.toml", "specexport", 'my "quoted" \\ name')
+    assert load_project(path, analysis_only=True).project == 'my "quoted" \\ name'

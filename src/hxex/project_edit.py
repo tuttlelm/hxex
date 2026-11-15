@@ -9,12 +9,24 @@ added under its heading (the heading at the end of the file when there is none).
 takes its default; its heading stays on. Lists of tables (``[[input.runs]]``) and values written
 over several lines are left to the text editor.
 
+What the editor takes for a heading or a setting (the audit of 2026-11-15, B-1, B-2, B-7, B-24):
+a heading is ``[name]`` or ``[[name]]`` alone on its line (a comment may follow), live or with
+``#`` at column 0 in front; a comment that merely mentions a table (``# [run.picker] off_mz_sd
+does not ...``, or an indented continuation line) is not one. Names may carry quoted parts
+(``[analysis.summary."HDX reaction details"]``, ``"A:WT" = "WT"``); a setting is named
+``table.key`` with the key in quotes when it needs them (``analysis.merge."A:WT"``). A value
+written over several lines is skipped as a whole when a setting is added after it. A comment
+line indented under a setting goes on from that setting's comment.
+
 :func:`switch_table` switches a whole table on or off (a stage such as ``[run.bootstrap]``,
-whose heading alone turns it on), and :func:`live_settings` lists what a file sets: both are
-for hxex's window, which edits the file the same way.
+whose heading alone turns it on): off puts ``#~ `` in front of its heading, its settings and
+the tables under it (``#~`` marks lines the switch took, apart from a plain ``# `` of a
+setting at its default), and on brings exactly those lines back (B-6). :func:`live_settings`
+lists what a file sets. Both are for hxex's window, which edits the file the same way.
 
 The edited text is checked as ``hxex check`` checks a project file before anything is written;
-an edit that makes the file unusable is refused and the file is left as it was.
+an edit that makes the file unusable is refused and the file is left as it was, and text the
+editor could not place (no longer valid TOML) is never written.
 """
 
 from __future__ import annotations
@@ -38,9 +50,50 @@ SWITCHABLE = ("review", "run.controls", "run.bootstrap", "run.population_test", 
               "analysis.fragments.labels", "analysis.fragments.exchange", "analysis.labelling")
 
 _KEY = re.compile(r"[A-Za-z0-9_-]+")
-_HEADING = re.compile(r"^\s*(#\s*)?(\[+)\s*([A-Za-z0-9_.\"-]+)\s*\]+")
-_SETTING_LINE = re.compile(r"^\s*(#\s*)?[A-Za-z0-9_-]+\s*=")
-_GO_ON = re.compile(r"^\s*#\s{2,}#")  # a comment going on from the line above
+_NAME_PART = r'(?:[A-Za-z0-9_-]+|"[^"]*")'
+# the body of a heading line (after the # of a switched-off one): [name] or [[name]] alone,
+# a comment allowed after it
+_HEADING_BODY = re.compile(rf"^(\[+)\s*({_NAME_PART}(?:\.{_NAME_PART})*)\s*\]+\s*(?:#.*)?$")
+OFF_MARK = "#~ "  # in front of the lines a switch turned off (restored when it is turned on)
+_SETTING_LINE = re.compile(rf"^\s*(#~?\s*)?{_NAME_PART}\s*=")
+# a comment going on from the line above: indented under a live setting, or a switched-off
+# setting's (# then spaces then #)
+_GO_ON = re.compile(r"^(?:\s+#|\s*#\s{2,}#)")
+
+
+def _name_parts(name: str) -> list[str]:
+    """The parts of a dotted name, quotes stripped (``a."b.c"`` -> ``["a", "b.c"]``)."""
+    parts, current, quoted = [], "", False
+    for char in name:
+        if char == '"':
+            quoted = not quoted
+        elif char == "." and not quoted:
+            parts.append(current)
+            current = ""
+        else:
+            current += char
+    parts.append(current)
+    return parts
+
+
+def key_text(key: str) -> str:
+    """``key`` as it is written in the file: bare when it can be, else in quotes."""
+    from .config import _toml_value
+
+    return key if _KEY.fullmatch(key) else _toml_value(key)
+
+
+def _heading(line: str) -> tuple[str, bool, bool] | None:
+    """(table name, switched on, list of tables) when ``line`` is a heading, else None."""
+    text = line.rstrip("\r\n")
+    off = text.startswith("#")
+    body = text[1:] if off else text
+    if off and body.startswith("~"):
+        body = body[1:]
+    m = _HEADING_BODY.match(body.strip(" \t"))  # an indented comment never matches: its #
+    if m is None:
+        return None
+    return ".".join(_name_parts(m[2])), not off, len(m[1]) > 1
 
 
 @dataclass(frozen=True)
@@ -117,11 +170,16 @@ def _default_text(table: str, key: str) -> str | None:
 
 
 def _split(setting: str) -> tuple[str, str]:
-    """``table.key`` -> (table, key), checked against the settings hxex knows."""
-    parts = setting.split(".")
-    if not all(_KEY.fullmatch(p) for p in parts):
+    """``table.key`` -> (table, key), checked against the settings hxex knows. A key that
+    needs quotes (a sample name with a space, ``"A:WT"``) is written in them
+    (``analysis.merge."A:WT"``) and allowed in the tables of free keys only."""
+    quoted = '"' in setting
+    parts = _name_parts(setting) if quoted else setting.split(".")
+    if not parts or not all(_KEY.fullmatch(p) for p in parts[:-1]) or not parts[-1] \
+            or (not quoted and not _KEY.fullmatch(parts[-1])):
         raise ProjectError(f"{setting!r} is not a setting name: write it as table.key, "
-                           "e.g. run.controls.d2o_fraction (letters, digits, _ and -)")
+                           "e.g. run.controls.d2o_fraction (letters, digits, _ and -; a name "
+                           'needing other characters in quotes: analysis.merge."A:WT")')
     table, key = ".".join(parts[:-1]), parts[-1]
     known = _tables()
     if table in known:
@@ -129,7 +187,9 @@ def _split(setting: str) -> tuple[str, str]:
         if array:
             raise ProjectError(f"[[{table}]] is a list of tables (one per entry): hxex set "
                                "cannot tell which entry to change; edit the project file")
-        if keys is None or key in keys:
+        if keys is None:
+            return table, key
+        if key in keys and _KEY.fullmatch(key):
             return table, key
         if key in known and not known[key][0] and table == "":
             raise ProjectError(f"{key} is a table, not a setting: name one of its settings "
@@ -165,12 +225,18 @@ class _Line:
     on: bool
     value: str  # the value's TOML text
     comment_at: int | None  # the column of its comment
+    last: int = -1  # the last line of a value written over several lines (else index)
+
+    def __post_init__(self):
+        if self.last < 0:
+            self.last = self.index
 
 
 def _find_key(lines: list[str], start: int, end: int, key: str) -> _Line | None:
     """The line of ``key`` between ``start`` and ``end`` (0-based, end excluded): the one
-    switched on if there is one, else the first switched off."""
-    pattern = re.compile(rf"^(\s*)(#\s*)?{re.escape(key)}\s*=\s*(.*)$")
+    switched on if there is one, else the first switched off (bare or in quotes)."""
+    names = f'(?:{re.escape(key)}|"{re.escape(key)}")'
+    pattern = re.compile(rf"^(\s*)(#~?\s*)?{names}\s*=\s*(.*)$")
     found = None
     for i in range(start, end):
         m = pattern.match(lines[i].rstrip("\r\n"))
@@ -184,9 +250,13 @@ def _find_key(lines: list[str], start: int, end: int, key: str) -> _Line | None:
         try:
             tomllib.loads(f"v = {value}")
         except tomllib.TOMLDecodeError:
-            if m[2] is None:  # a live value over several lines
-                raise ProjectError(f"line {i + 1}: {key}'s value goes on over several lines; "
-                                   "edit the project file") from None
+            if m[2] is None:  # a live value over several lines: replaced as a whole
+                last = _value_end_line(lines, i, end)
+                if last == i:
+                    raise ProjectError(f"line {i + 1}: {key}'s value cannot be read; edit the "
+                                       "project file") from None
+                whole = "".join(lines[i:last + 1])
+                return _Line(i, True, whole[whole.index("=") + 1:].strip(), None, last)
             continue  # a comment that only looks like a setting
         comment_at = len(m[0]) - len(rest) + cut if cut < len(rest) else None
         line = _Line(i, m[2] is None, value, comment_at)
@@ -200,10 +270,59 @@ def _sections(lines: list[str]) -> list[tuple[int, str, bool, bool]]:
     """Every heading: (line index, table name, switched on, list of tables)."""
     out = []
     for i, text in enumerate(lines):
-        m = _HEADING.match(text)
-        if m:
-            out.append((i, m[3].replace('"', ""), m[1] is None, len(m[2]) > 1))
+        found = _heading(text)
+        if found is not None:
+            out.append((i, *found))
     return out
+
+
+def _value_end_line(lines: list[str], i: int, end: int) -> int:
+    """The last line (index) of the setting at line ``i``: its value may go on over several
+    lines (a list one name a line); a switched-off setting is one line."""
+    if not _SETTING_LINE.match(lines[i]) or lines[i].lstrip().startswith("#"):
+        return i
+    for j in range(i, end):
+        try:
+            tomllib.loads("".join(lines[i:j + 1]))
+        except tomllib.TOMLDecodeError:
+            continue
+        return j
+    return i
+
+
+def _after_settings(lines: list[str], start: int, end: int, live_only: bool = False) -> int:
+    """The line after the last setting between ``start`` and ``end`` (its whole value and
+    the comment lines going on from it), else ``start``."""
+    at = start
+    i = start
+    while i < end:
+        if _SETTING_LINE.match(lines[i]) and not (live_only
+                                                  and lines[i].lstrip().startswith("#")):
+            i = _value_end_line(lines, i, end) + 1
+            while i < end and _GO_ON.match(lines[i]):
+                i += 1
+            at = i
+            continue
+        i += 1
+    return at
+
+
+def _restore_marked(lines: list[str], head: int, table: str, newline: str) -> int:
+    """The lines a switch turned off under the heading at ``head`` (``#~ `` in front: its
+    settings and the tables under ``table``) switched on again; how many."""
+    n = 0
+    for i in range(head + 1, len(lines)):
+        found = _heading(lines[i])
+        if found is not None and found[0] != table and not found[0].startswith(table + "."):
+            break
+        stripped = lines[i].lstrip()
+        if stripped.startswith(OFF_MARK) or stripped.rstrip("\r\n") == OFF_MARK.strip():
+            indent = lines[i][:len(lines[i]) - len(stripped)]
+            lines[i] = indent + stripped[len(OFF_MARK):]
+            if not lines[i].endswith(("\n", "\r")):
+                lines[i] += newline
+            n += 1
+    return n
 
 
 def _edited(text: str, table: str, key: str, value: str | None) -> tuple[str, Change]:
@@ -238,10 +357,12 @@ def _edited(text: str, table: str, key: str, value: str | None) -> tuple[str, Ch
         old = lines[found.index].rstrip("\r\n")
         indent = old[:len(old) - len(old.lstrip())]
         shown = _default_text(table, key) or found.value  # the line as the template has it
-        new = f"{indent}# {key} = {shown}"
+        if found.last > found.index:  # a value over several lines: each of its lines
+            shown = found.value.replace("\n", newline + "# ")
+        new = f"{indent}# {key_text(key)} = {shown}"
         if found.comment_at is not None:
             new = new.ljust(found.comment_at) + old[found.comment_at:]
-        lines[found.index] = new + newline
+        lines[found.index:found.last + 1] = [new + newline]
         bare = table if table and not any(
             _SETTING_LINE.match(lines[i]) and not lines[i].lstrip().startswith("#")
             for i in range(start, end)) else None
@@ -251,11 +372,13 @@ def _edited(text: str, table: str, key: str, value: str | None) -> tuple[str, Ch
     if found is not None and found.on and found.value == value:
         return text, Change(setting, value, value, found.index + 1, unchanged=True)
     heading_on = None
-    if head is not None and not head[2]:  # switch the heading on
+    if head is not None and not head[2]:  # switch the heading on (and what a switch took off)
         old = lines[head[0]]
-        lines[head[0]] = re.sub(r"^(\s*)#\s*", r"\1", old, count=1)
+        lines[head[0]] = re.sub(r"^(\s*)#~?\s*", r"\1", old, count=1)
+        _restore_marked(lines, head[0], table, newline)
         heading_on = table
-    entry = f"{key} = {value}"
+        found = _find_key(lines, start, end, key)  # a restored line may hold the key
+    entry = f"{key_text(key)} = {value}"
     if found is not None:
         old = lines[found.index].rstrip("\r\n")
         indent = old[:len(old) - len(old.lstrip())]
@@ -264,16 +387,11 @@ def _edited(text: str, table: str, key: str, value: str | None) -> tuple[str, Ch
             comment = old[found.comment_at:]
             new = (new.ljust(found.comment_at) if len(new) < found.comment_at
                    else new + " ") + comment
-        lines[found.index] = new + newline
+        lines[found.index:found.last + 1] = [new + newline]
         before = found.value if found.on else None
         return "".join(lines), Change(setting, before, value, found.index + 1, heading_on)
     if start is not None:  # under its heading, after its last setting (and that one's comment)
-        at = start
-        for i in range(start, end):
-            if _SETTING_LINE.match(lines[i]):
-                at = i + 1
-                while at < end and _GO_ON.match(lines[at]):
-                    at += 1
+        at = _after_settings(lines, start, end)
         lines.insert(at, entry + newline)
         return "".join(lines), Change(setting, None, value, at + 1, heading_on)
     while lines and not lines[-1].strip():
@@ -348,6 +466,14 @@ def _write_checked(path: Path, text: str, new_text: str, bom: bool, what: str,
     file is written and the problem returned. A problem with the changed values themselves
     still refuses it."""
     analysis_only = _analysis_only(path, text)
+    try:
+        tomllib.loads(new_text)
+    except tomllib.TOMLDecodeError as exc:  # never written, whatever ``unfinished`` says
+        from .config import _toml_hint
+
+        raise ProjectError(f"{what}; {path} is unchanged: the change could not be placed in "
+                           f"the file (it would not be valid TOML: {exc}{_toml_hint(new_text, exc)}"
+                           "); make it in a text editor") from None
     problem = _problem(new_text, path, analysis_only)
     before = _problem(text, path, analysis_only)
     new = problem is not None and (before is None or problem[0] != before[0])
@@ -399,11 +525,15 @@ def live_settings(text: str) -> tuple[dict[str, object], set[str]]:
     return values, tables
 
 
-def switch_table(path: str | Path, table: str, on: bool) -> str:
-    """Switch ``table`` on (its heading, with its settings left as they are) or off (its
-    heading, its settings and the tables under it get a ``# `` in front), checked as
-    :func:`set_setting` checks a change. Returns one line saying what changed."""
-    if table not in SWITCHABLE:
+def switch_table(path: str | Path, table: str, on: bool, any_table: bool = False,
+                 unfinished: bool = False) -> str:
+    """Switch ``table`` on (its heading, with the lines a switch took off brought back) or
+    off (its heading, its settings and the tables under it get ``#~ `` in front), checked as
+    :func:`set_setting` checks a change (``unfinished`` as :func:`set_settings` takes it: a
+    file still being filled in may lack something afterwards). Returns one line saying what
+    changed. ``any_table`` allows a table other than the stages (the window switching an input
+    format's tables off)."""
+    if table not in SWITCHABLE and not any_table:
         raise ProjectError(f"[{table}] cannot be switched on or off: set one of its settings")
     path = Path(path)
     text, bom = _read(path)
@@ -416,18 +546,22 @@ def switch_table(path: str | Path, table: str, on: bool) -> str:
             return f"[{table}] is already on: nothing changed"
         if mine:
             i = mine[0][0]
-            lines[i] = re.sub(r"^(\s*)#\s*", r"\1", lines[i], count=1)
+            lines[i] = re.sub(r"^(\s*)#~?\s*", r"\1", lines[i], count=1)
+            restored = _restore_marked(lines, i, table, newline)
             at = i + 1
         else:
+            restored = 0
             while lines and not lines[-1].strip():
                 lines.pop()
             if lines and not lines[-1].endswith(("\n", "\r")):
                 lines[-1] += newline
             lines += [newline, f"[{table}]{newline}"]
             at = len(lines)
-        _write_checked(path, text, "".join(lines), bom, f"[{table}] was not switched on")
-        return (f"[{table}] switched on, line {at} (every setting under it at its default "
-                "unless set)")
+        _write_checked(path, text, "".join(lines), bom, f"[{table}] was not switched on",
+                       () if unfinished else None)
+        return (f"[{table}] switched on, line {at}"
+                + (f" with the {restored} line(s) switched off with it" if restored else
+                   " (every setting under it at its default unless set)"))
     under = [h for h in heads if h[2] and (h[1] == table or h[1].startswith(table + "."))]
     if not under:
         return f"[{table}] is already off: nothing changed"
@@ -438,10 +572,12 @@ def switch_table(path: str | Path, table: str, on: bool) -> str:
             line = lines[i]
             if line.strip() and not line.lstrip().startswith("#"):
                 indent = line[:len(line) - len(line.lstrip())]
-                lines[i] = f"{indent}# {line.lstrip()}"
-    _write_checked(path, text, "".join(lines), bom, f"[{table}] was not switched off")
+                lines[i] = f"{indent}{OFF_MARK}{line.lstrip()}"
+    _write_checked(path, text, "".join(lines), bom, f"[{table}] was not switched off",
+                   () if unfinished else None)
     names = ", ".join(f"[{h[1]}]" if not h[3] else f"[[{h[1]}]]" for h in under)
-    return f"switched off {names}, line {under[0][0] + 1} (a # in front of each line)"
+    return (f"switched off {names}, line {under[0][0] + 1} ({OFF_MARK.strip()} in front of each "
+            "line; switching on brings them back)")
 
 
 # --- lists of tables ([[input.runs]], the exclusion rules, ...) -----------------------------------
@@ -465,12 +601,28 @@ def _blocks(lines: list[str], table: str) -> list[tuple[int, int]]:
         if not (on and array and name == table):
             continue
         end = next((s for s in starts if s > i), len(lines))
+        # to its last setting: a switched-off one too, unless a blank line comes before it (a
+        # comment after a gap may belong to what follows; audit of 2026-11-15, B-8)
         last = i + 1
-        for j in range(i + 1, end):
-            if _SETTING_LINE.match(lines[j]) and not lines[j].lstrip().startswith("#"):
-                last = j + 1
-                while last < end and _GO_ON.match(lines[last]):
-                    last += 1
+        blank = False
+        j = i + 1
+        while j < end:
+            line = lines[j]
+            if not line.strip():
+                blank = True
+                j += 1
+                continue
+            if _SETTING_LINE.match(line):
+                live = not line.lstrip().startswith("#")
+                if live or not blank:
+                    j = _value_end_line(lines, j, end) + 1
+                    while j < end and _GO_ON.match(lines[j]):
+                        j += 1
+                    last = j
+                    if live:
+                        blank = False
+                    continue
+            j += 1
         out.append((i, last))
     return out
 
@@ -500,7 +652,7 @@ def _entry_text(lines: list[str], index: int, table: str, key: str,
         indent = old[:len(old) - len(old.lstrip())]
         lines[found.index] = f"{indent}# {old.lstrip()}"
         return lines, f"{where} switched off (line {found.index + 1})"
-    entry = f"{key} = {value}"
+    entry = f"{key_text(key)} = {value}"
     if found is not None:
         old = lines[found.index].rstrip("\r\n")
         indent = old[:len(old) - len(old.lstrip())]
@@ -567,12 +719,7 @@ def add_entry(path: str | Path, table: str, values: dict[str, str] | None = None
         for i, name, on, array in heads:
             if on and not array and name == parent:
                 end = next((h[0] for h in heads if h[0] > i and h[2]), len(lines))
-                at = i + 1
-                for j in range(i + 1, end):
-                    if _SETTING_LINE.match(lines[j]) and not lines[j].lstrip().startswith("#"):
-                        at = j + 1
-                        while at < end and _GO_ON.match(lines[at]):
-                            at += 1
+                at = _after_settings(lines, i + 1, end, live_only=True)
                 break
         if at is None:
             while lines and not lines[-1].strip():

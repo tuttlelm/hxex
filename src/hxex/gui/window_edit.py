@@ -611,6 +611,35 @@ def own_windows(project_path, peptide: str, ions: Sequence[str],
     return out
 
 
+def sibling_windows(project_path, peptide: str, ion: str, siblings: Sequence[str],
+                    places: Sequence[tuple[str, str]], shared: bool = False) -> list[str]:
+    """The ions of ``siblings`` other than ``ion`` (the one edited) with a retention window of
+    their own in ``places`` (sample, file: the edited file, for each sample reading it) of the
+    project's elution-window table: a save for the whole peptide replaces them, so the window
+    asks first (audit of 2026-11-15, D-8). A row naming the ion without a peptide counts unless
+    another peptide has an ion of that name (``shared``)."""
+    path, _named = table_path(project_path)
+    if not path.is_file():
+        return []
+    table = read_table(path)
+    names = [c.strip().lower() for c in table.columns]
+    if not {"sample", "file", "ion", "rt_start"} <= set(names):
+        return []
+
+    def cell(r, column):
+        return r[names.index(column)].strip() if column in names else ""
+
+    wanted, others = set(places), {s for s in siblings if s != ion}
+    out: dict[str, None] = {}
+    for r in table.rows:
+        if (cell(r, "sample"), cell(r, "file")) not in wanted or cell(r, "ion") not in others:
+            continue
+        if cell(r, "peptide") == peptide or (not shared and not cell(r, "peptide")):
+            if cell(r, "rt_start") or cell(r, "rt_end"):
+                out.setdefault(cell(r, "ion"))
+    return list(out)
+
+
 def _same_path(a, b) -> bool:
     """Whether two recorded run paths name the same file (as recorded: a project records its
     runs' paths one way)."""
@@ -622,7 +651,8 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
                 peptide: str | None = None, whole: bool = False, siblings=(),
                 shared: bool = False, table: str | Path | None = None,
                 samples: Sequence[str] = (),
-                more: Sequence[tuple[str, str, tuple[float, float]]] = ()) -> SavedWindow:
+                more: Sequence[tuple[str, str, tuple[float, float]]] = (),
+                keep_own: bool = False) -> SavedWindow:
     """Write ``window`` (minutes: the first and last scan of the spectrum summed again over it)
     to the project's ``[input] rt_elution_windows`` table for ``key`` (sample, file name, ion
     as the spectrum ids name it) of ``peptide`` (as :func:`hxex.io.elution_windows
@@ -632,11 +662,14 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
     charge states and fragments; the same molecules elute together), and the ion's own row
     gives up its window (it is removed, or keeps only its drift range; a row naming the ion
     without a peptide only when no other peptide has an ion of that name, ``shared`` False).
-    ``siblings`` (the other ions of the peptide, as spectrum ids name them) are looked up for
+    ``siblings`` (the ions of the peptide, as spectrum ids name them) give up their windows in
+    that file too, as in the files the window is spread to (the window asks first,
+    :func:`sibling_windows`), unless ``keep_own``: then those keeping one are named in
     :attr:`SavedWindow.own`. ``drift`` (ms) is then written to the ion's own row only (drift
     times differ between charge states): give it only when it was changed. Otherwise the row is
     the ion's own, naming its peptide too (two parents can give fragment ions of the same
-    name), with ``drift``: an exception, such as interference at its own m/z.
+    name), with ``drift``: an exception, such as interference at its own m/z. A row naming the
+    ion without a peptide is that row (unless ``shared``), and names the peptide from then on.
 
     ``samples``: the other samples that read the same file (:func:`samples_reading`; one
     injection, so one window, owner 2026-11-11): the same rows are written for each of them, as
@@ -694,6 +727,13 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
 
         def put(pep_value, ion_value):
             own = find(pep_value, ion_value)
+            if not own and pep_value and ion_value and not shared:
+                # the ion's row naming no peptide (written before peptide rows existed, or
+                # from an HDExaminer export) is its row, as the reader takes it: it names its
+                # peptide from now on (audit of 2026-11-15, D-4)
+                own = find("", ion_value)
+                if own:
+                    own[0][at["peptide"]] = pep_value
             if own:
                 return own[0], False
             row = [""] * len(table.columns)
@@ -710,7 +750,8 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
             followers = mine + ([r for s_ in siblings if s_ != ion
                                  for r in find(pep, s_) + ([] if shared else find("", s_))]
                                 if everyone else [])
-            for r in followers:  # the ion (in a spread file, every ion) follows its peptide
+            for r in followers:  # the ion (unless its siblings keep theirs, every ion)
+                # follows its peptide
                 span(r, None, 4, "rt_start", "rt_end")
             if drift is not None:
                 target, _ = (mine[0], False) if mine else put(pep, ion)
@@ -725,9 +766,11 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
             span(row, drift, 3, "drift_start", "drift_end")
         return row, added, own_rows
 
-    row, added, own_set = write_for(first)
+    # the edited file's other ions follow the peptide's row too, as in the files it is spread
+    # to (audit of 2026-11-15, D-8), unless the user chose to keep theirs (``keep_own``)
+    row, added, own_set = write_for(first, everyone=whole and not keep_own)
     for sample in written[1:]:
-        own_set |= write_for(sample)[2]
+        own_set |= write_for(sample, everyone=whole and not keep_own)[2]
     if more and not (whole and peptide):
         raise ValueError("a window spread to other files is the whole peptide's")
     for sample, other_file, other_window in more:

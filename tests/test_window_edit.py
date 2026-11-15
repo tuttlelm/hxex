@@ -18,6 +18,7 @@ from hxex.gui.window_edit import (
     saved_window,
     saved_words,
     scope_words,
+    sibling_windows,
     spread_files,
     spread_words,
     trace_shift,
@@ -386,3 +387,57 @@ def test_the_new_windows_axis_does_not_move_when_its_fit_arrives(project):
     # from 0 in both (the picked-only draw had matplotlib's margin below 0: owner, the y-min)
     assert new_window_axis(picked) == pytest.approx(new_window_axis(fitted))
     assert new_window_axis(picked)[0] == 0.0
+
+
+def _peptide_ions():
+    peptide = f"0001-{N:04d}-{PEPTIDE}"
+    return peptide, f"{peptide}-z2", f"{peptide}-z3"
+
+
+def _rows(path):
+    """The elution-window table's rows: (file, peptide, ion, rt_start)."""
+    lines = (path.parent / "rt_elution_windows.csv").read_text().splitlines()
+    names = lines[0].split(",")
+    at = [names.index(c) for c in ("file", "peptide", "ion", "rt_start")]
+    return sorted(tuple(r.split(",")[j] for j in at) for r in lines[1:])
+
+
+def test_one_charge_state_takes_its_row_that_names_no_peptide(tmp_path):
+    """A save for this charge state only changes the ion's row that names no peptide (written
+    before peptide rows existed, or from an HDExaminer export), naming its peptide from then
+    on: no second row (audit of 2026-11-15, D-4)."""
+    from test_elution_windows import _charges_project
+
+    peptide, z2, _z3 = _peptide_ions()
+    path = _charges_project(tmp_path / "p", "sample,file,peptide,ion,rt_start,rt_end\n"
+                                            f"S,un1.mzML,,{z2},0.6000,0.6600\n")
+    saved = save_window(path, ("S", "un1.mzML", z2), (0.61, 0.65), peptide=peptide)
+    assert not saved.added and saved.row["peptide"] == peptide
+    assert _rows(path) == [("un1.mzML", peptide, z2, "0.6100")]
+    assert saved_window(path, ("S", "un1.mzML", z2), peptide)[0] == (0.61, 0.65)
+
+
+def test_the_edited_files_other_charge_states_follow_the_peptide(tmp_path):
+    """Saved for every charge state of the peptide in this file, the file's other charge state
+    gives up its own window, as in the files a window is spread to (the window asks first:
+    sibling_windows); kept when the user says so; other files untouched (D-8)."""
+    from test_elution_windows import _charges_project
+
+    peptide, z2, z3 = _peptide_ions()
+    table = ("sample,file,peptide,ion,rt_start,rt_end\n"
+             f"S,un1.mzML,{peptide},{z3},0.6000,0.6600\n"
+             f"S,un2.mzML,,{z3},0.6000,0.6600\n")
+    path = _charges_project(tmp_path / "p", table)
+    key = ("S", "un1.mzML", z2)
+    assert sibling_windows(path, peptide, z2, (z2, z3), [("S", "un1.mzML")]) == [z3]
+    assert sibling_windows(path, peptide, z2, (z2, z3), [("S", "un2.mzML")]) == [z3]
+    assert sibling_windows(path, peptide, z2, (z2, z3), [("S", "un2.mzML")], shared=True) == []
+    saved = save_window(path, key, (0.61, 0.65), peptide=peptide, whole=True, siblings=(z2, z3))
+    assert saved.own == ()
+    assert _rows(path) == [("un1.mzML", peptide, "", "0.6100"), ("un2.mzML", "", z3, "0.6000")]
+    assert saved_window(path, ("S", "un1.mzML", z3), peptide)[2] == "peptide"
+    undo_window(saved)
+    kept = save_window(path, key, (0.61, 0.65), peptide=peptide, whole=True, siblings=(z2, z3),
+                       keep_own=True)
+    assert kept.own == (z3,)
+    assert saved_window(path, ("S", "un1.mzML", z3), peptide)[2] == "ion"

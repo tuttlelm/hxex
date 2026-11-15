@@ -464,3 +464,69 @@ def test_undo_stays_with_the_results_the_window_was_saved_in(qtbot, project, tmp
     editor.history.append(saved)
     editor._undo()
     assert messages[-1].startswith("not undone") and table.read_bytes() == before
+
+
+def test_a_save_for_the_peptide_asks_before_replacing_this_files_charge_states(
+        qtbot, tmp_path, monkeypatch):
+    """Save choice 2 with the file's other charge state holding a window of its own: the window
+    asks, naming this file; kept, that row keeps its window (audit of 2026-11-15, D-8)."""
+    from hxex.gui import window_editor
+    from test_elution_windows import PEPTIDE, N, _charges_project
+
+    peptide = f"0001-{N:04d}-{PEPTIDE}"
+    rows = "".join(f"S,un2.mzML,{peptide},{peptide}-z{z},0.6000,0.6600\n" for z in (2, 3))
+    path = _charges_project(tmp_path / "charges",
+                            "sample,file,peptide,ion,rt_start,rt_end\n" + rows)
+    results = _results(_read(path))
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, path)
+    series = w.tree.topLevelItem(0).child(0)
+    w.tree.expandItem(series)
+    with qtbot.waitSignal(w.panel("fits at each K").drawn, timeout=30000):
+        w.tree.setCurrentItem(series.child(0).child(1))  # UN, rep 2: un2.mzML
+    tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
+    panel = w.panel("elution")
+    w.figures.setCurrentIndex(tabs.index("elution"))
+    qtbot.waitUntil(lambda: w._shown_traces is not None and not panel.drawing, timeout=30000)
+    editor = w.window_editor
+    editor.edit.setChecked(True)
+    qtbot.waitUntil(lambda: editor.failure is not None or (
+        editor._previewed is not None and editor._previewed[1] == editor.window()
+        and editor.preview is not None), timeout=60000)
+    assert editor.failure is None
+    qtbot.waitUntil(lambda: not panel.drawing, timeout=30000)
+    asked, messages = [], []
+    editor.message.connect(messages.append)
+
+    class Box:  # the replace-or-keep question, answered "Keep them"
+        Icon = window_editor.QMessageBox.Icon
+        ButtonRole = window_editor.QMessageBox.ButtonRole
+        StandardButton = window_editor.QMessageBox.StandardButton
+
+        def __init__(self, _icon, _title, text, parent=None):
+            asked.append(text)
+            self.buttons = []
+
+        def addButton(self, label, _role=None):
+            self.buttons.append(label)
+            return label
+
+        def exec(self):
+            return 0
+
+        def clickedButton(self):
+            return next(b for b in self.buttons if b == "Keep them")
+
+    monkeypatch.setattr(window_editor, "QMessageBox", Box)
+    editor.scope.setCurrentIndex(editor.scope.findData("peptide"))  # its own row set "ion"
+    editor.save.click()
+    assert asked and "un2.mzML (this file: 1 other charge state(s))" in asked[0]
+    assert "keep a window of their own" in messages[-1]
+    lines = (path.parent / "rt_elution_windows.csv").read_text().splitlines()
+    names = lines[0].split(",")
+    rows = [dict(zip(names, r.split(","), strict=True)) for r in lines[1:]]
+    ions = [r["ion"] for r in rows if r["ion"] and r["rt_start"]]
+    assert len(ions) == 1  # the edited charge state gave its window up, the other kept its own
+    assert any(not r["ion"] and r["peptide"] == peptide for r in rows)  # the peptide's row
+    editor.edit.setChecked(False)

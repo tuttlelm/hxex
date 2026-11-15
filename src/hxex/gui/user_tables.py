@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,6 +28,12 @@ log = logging.getLogger(__name__)
 
 class TableLocked(OSError):
     """The table could not be written: another program holds it (a spreadsheet, say)."""
+
+
+class TableReadOnly(OSError):
+    """The table or its folder is read-only: it is not written over (audit of 2026-11-15,
+    B-11, B-20: a read-only file was silently replaced on Linux and blamed on another program
+    on Windows)."""
 
 
 @dataclass(frozen=True)
@@ -40,11 +47,13 @@ class TableKind:
 
 
 def kinds(fmt: str) -> list[TableKind]:
-    """The tables a project of the input format ``fmt`` can name."""
+    """The tables a project of the input format ``fmt`` can name (none for a format hxex does
+    not know: the Settings page says so; a misspelt format stopped the window opening the
+    project, audit of 2026-11-15, B-3)."""
     from ..config import FORMATS
 
     if fmt not in FORMATS:
-        raise ValueError(f"unknown input format {fmt!r}")
+        return []
     if fmt in ("mzml", "thermo"):
         peptides = TableKind("input.peptides", "peptide table",
                              ("sample", "peptide", "start_seq", "end_seq", "charge",
@@ -74,10 +83,24 @@ class Table:
     bom: bool = False
     newline: str = "\r\n"  # the csv module's default, and Excel's
     separator: str = ","  # the file's; written back with commas
+    encoding: str = "utf-8"  # the file's; written back as UTF-8
 
     def copy(self) -> Table:
         return Table(list(self.columns), [list(r) for r in self.rows], self.bom, self.newline,
-                     self.separator)
+                     self.separator, self.encoding)
+
+    @property
+    def converted(self) -> str:
+        """What writing the table back changes about its file, in words (""): its encoding
+        and its separator (audit of 2026-11-15, D-12)."""
+        out = []
+        if self.encoding != "utf-8":
+            out.append(f"read as {self.encoding}, written back as UTF-8"
+                       + (" with a byte-order mark" if self.bom else ""))
+        if self.separator != ",":
+            out.append(f"read with {'semicolons' if self.separator == ';' else 'tabs'}, "
+                       "written back with commas")
+        return "; ".join(out)
 
 
 def read_table(path: str | Path) -> Table:
@@ -89,26 +112,34 @@ def read_table(path: str | Path) -> Table:
     except PermissionError as exc:
         raise TableLocked(f"{path} cannot be read: another program holds it (close it in "
                           "the spreadsheet, then try again)") from exc
+    from ..review_table import _delimiter
+
+    encoding = "utf-8"
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
-        text, bom = raw.decode("utf-16"), True
+        text, bom, encoding = raw.decode("utf-16"), True, "UTF-16"
     else:
         bom = raw.startswith(b"\xef\xbb\xbf")
-        text = raw.decode("utf-8-sig")
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            # a spreadsheet's plain "CSV" (Windows-1252): read, said, written back as UTF-8
+            # (audit of 2026-11-15, B-18)
+            text, encoding = raw.decode("cp1252"), "Windows-1252"
     newline = "\r\n" if "\r\n" in text else "\n"
     first = text.splitlines()[0] if text else ""
-    separator = ","
-    if "," not in first:
-        separator = next((s for s in (";", "\t") if s in first), ",")
+    separator = _delimiter(first)  # as the readers decide it (audit of 2026-11-15, D-14)
     rows = list(csv.reader(io.StringIO(text, newline=""), delimiter=separator))
-    rows = [r for r in rows if any(cell.strip() for cell in r)] if rows else []
-    if not rows:
-        return Table([], [], bom, newline, separator)
+    # a blank line stays a row (empty), so the grid's row numbers are the readers' (B-21)
+    while rows and not any(cell.strip() for cell in rows[-1]):
+        rows.pop()
+    if not rows or not any(cell.strip() for cell in rows[0]):
+        return Table([], [], bom, newline, separator, encoding)
     columns = [c.strip() for c in rows[0]]
     # a row longer than the header keeps its extra cells, under columns without a name
     width = max(len(r) for r in rows)
     columns += [""] * (width - len(columns))
     body = [r + [""] * (width - len(r)) for r in rows[1:]]
-    return Table(columns, body, bom, newline, separator)
+    return Table(columns, body, bom, newline, separator, encoding)
 
 
 def table_text(table: Table) -> str:
@@ -116,7 +147,8 @@ def table_text(table: Table) -> str:
     out = io.StringIO(newline="")
     writer = csv.writer(out, lineterminator=table.newline)
     writer.writerow(table.columns)
-    writer.writerows(table.rows)
+    for row in table.rows:  # a blank line read stays a blank line
+        writer.writerow(row if any(cell.strip() for cell in row) else [])
     return out.getvalue()
 
 
@@ -124,6 +156,12 @@ def write_table(table: Table, path: str | Path) -> Path:
     """Write ``table`` to ``path`` through a temporary file beside it; a file another program
     holds raises :class:`TableLocked` (the old file is left as it was)."""
     path = Path(path)
+    if path.exists() and not os.access(path, os.W_OK):
+        raise TableReadOnly(f"{path} is read-only: make it writable (its properties), then save "
+                            "again; your changes are kept")
+    if not os.access(path.parent if path.parent.exists() else Path.cwd(), os.W_OK):
+        raise TableReadOnly(f"the folder {path.parent} is read-only: nothing can be written "
+                            "there; your changes are kept")
     data = ("﻿" if table.bom else "") + table_text(table)
     tmp = path.with_name(path.name + ".hxex-tmp")
     try:
@@ -149,8 +187,11 @@ def table_problem(setting: str, table: Table, project_path: str | Path) -> str |
     from ..io import ReadError
 
     project_path = Path(project_path)
-    with tempfile.NamedTemporaryFile("w", suffix=".csv", dir=project_path.parent,
-                                     delete=False, encoding="utf-8", newline="") as fh:
+    # beside the project file so that paths resolve as the project's do; in the system's
+    # temporary folder when that folder is read-only (audit of 2026-11-15, B-11)
+    folder = project_path.parent if os.access(project_path.parent, os.W_OK) else None
+    with tempfile.NamedTemporaryFile("w", suffix=".csv", dir=folder, delete=False,
+                                     encoding="utf-8", newline="") as fh:
         fh.write(table_text(table))
         copy = Path(fh.name)
     try:
@@ -189,7 +230,7 @@ def table_problem(setting: str, table: Table, project_path: str | Path) -> str |
                 read_peptide_table(copy, required=SCAN_REQUIRED)
         else:
             raise ValueError(f"{setting} names no table the window edits")
-    except (ReadError, ProjectError, ValueError) as exc:
+    except (ReadError, ProjectError, ValueError, OSError) as exc:
         return str(exc).replace(str(copy), "the table")
     finally:
         copy.unlink(missing_ok=True)

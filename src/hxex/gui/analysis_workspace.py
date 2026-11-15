@@ -444,16 +444,28 @@ class AnalysisWorkspace(QWidget):
         self.choose_reference.setCurrentIndex(0)
         self.no_reference.show()
 
+    def _write(self, project, changes, what: str) -> None:
+        """A change to the project file through the window's one route (the Project editor's
+        Undo records it; audit of 2026-11-15, Q-1), else directly."""
+        from ..project_edit import set_settings
+
+        writer = getattr(self.window, "write_settings", None)
+        if writer is not None:
+            writer(changes, what)
+        else:
+            set_settings(project, changes, unfinished=True)
+
     def _reference_chosen(self, index: int) -> None:
         """Write the reference chosen to the project file; the analysis then compares."""
-        from ..project_edit import ProjectError, set_settings
+        from ..project_edit import ProjectError
 
         name = self.choose_reference.itemData(index)
         project = self._project()
         if name is None or project is None:
             return
         try:
-            set_settings(project, [("analysis.reference", str(name))], unfinished=True)
+            self._write(project, [("analysis.reference", str(name))],
+                        f"[analysis] reference: {name}")
             log.info("[analysis] reference set to %s", name)
         except (ProjectError, OSError, ValueError) as exc:
             log.error("the reference was not set: %s", exc)
@@ -463,14 +475,14 @@ class AnalysisWorkspace(QWidget):
     def _set_fit_rates(self, on: bool) -> None:
         """Write ``[analysis.fragments] fit_rates`` (true or false) to the project file; the
         analysis shown is then out of date."""
-        from ..project_edit import ProjectError, set_settings
+        from ..project_edit import ProjectError
 
         project = self._project()
         if project is None:
             return
         try:
-            set_settings(project, [("analysis.fragments.fit_rates", "true" if on else "false")],
-                         unfinished=True)
+            self._write(project, [("analysis.fragments.fit_rates", "true" if on else "false")],
+                        f"[analysis.fragments] fit_rates: {'true' if on else 'false'}")
         except (ProjectError, OSError, ValueError) as exc:
             log.error("fit_rates was not changed: %s", exc)
             self.status.setText(f"fit_rates was not changed: {exc}")

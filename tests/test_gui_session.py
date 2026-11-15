@@ -129,3 +129,33 @@ def test_the_title_shown_above_a_figure():
     for ax in two.subplots(1, 2):
         ax.set_title("a panel")
     assert figure_title(two) == ""  # panels' titles are not the page's
+
+
+def test_numpy_values_are_written_as_plain_numbers(tmp_path):
+    """A NumPy float or int in the selection is written as a TOML number, so the file opens
+    again, and telling whether the session changed never fails (audit of 2026-11-15, A-10)."""
+    import numpy as np
+
+    session = GuiSession(selection={"time": np.float64(600.0), "k": np.int64(2),
+                                    "shown": np.bool_(True), "times": np.array([1.5, 2.0])})
+    path = save_session(session, tmp_path / "s.hxexgui")
+    assert "np." not in path.read_text()
+    back = load_session(path).selection
+    assert back == {"time": 600.0, "k": 2, "shown": True, "times": [1.5, 2.0]}
+    assert type(back["k"]) is int and type(back["time"]) is float
+
+
+@pytest.mark.parametrize("body, what", [
+    ("selection = 3\n", "selection is not a table"),
+    ('layout = "x"\n', "layout is not a table"),
+    ('[[figures]]\nkind = "uptake"\nselection = 3\n', "the selection of figure 1"),
+    ('[[figures]]\nkind = "uptake"\nchanges = [1]\n', "a change of figure 1"),
+])
+def test_a_hand_edited_session_whose_tables_are_not_tables_is_refused(tmp_path, body, what):
+    """``selection``, ``layout``, and a figure's ``selection`` and ``changes`` that are not
+    tables give SessionError naming the key (the window says "Session not opened"), not a
+    traceback (A-11)."""
+    path = tmp_path / "s.hxexgui"
+    path.write_text("version = 1\n" + body)
+    with pytest.raises(SessionError, match=what):
+        load_session(path)

@@ -2335,7 +2335,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# for \"not set\" where a setting can be unset (a switch set to false is off). Relative",
         "# paths are relative to this file.",
         "",
-        f'project = "{project}"              # prefixes every spectrum id',
+        f'project = {_toml_value(project)}'.ljust(34) + "# prefixes every spectrum id",
         "# threads = 4                     # CPU threads (unset: every core, right for most",
         "#                                 # computers; fewer leave cores free for other work)",
         *_preset_template_lines(),

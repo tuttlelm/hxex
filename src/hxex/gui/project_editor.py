@@ -70,12 +70,16 @@ NO_PRESET = "(none: the defaults or user specified values)"  # the preset list's
 
 
 def _shown(value) -> str:
-    """A value as the form shows it: text without quotes, anything else as TOML."""
+    """A value as the form shows it: text without quotes, anything else as TOML (a value the
+    writer has no form for, a date say, as Python prints it; audit of 2026-11-15, B-22)."""
     from ..config import _toml_value
 
     if isinstance(value, str):
         return value
-    return _toml_value(value)
+    try:
+        return _toml_value(value)
+    except TypeError:
+        return str(value)
 
 
 def _default(text: str) -> str:
@@ -142,7 +146,7 @@ class SettingRow(QWidget):
             self.editor.changed.connect(self._ordered)
         elif self.kind == "true/false":
             self.editor = QCheckBox()
-            self.editor.toggled.connect(self._toggled)
+            self.editor.stateChanged.connect(self._state_changed)
         elif choices:
             self.editor = NoWheelComboBox()
             self.editor.addItems(choices)
@@ -210,10 +214,29 @@ class SettingRow(QWidget):
         if isinstance(self.editor, OrderedList):
             self.editor.set_items([str(v) for v in value] if isinstance(value, list) else [])
         elif isinstance(self.editor, QCheckBox):
-            self.editor.setChecked(bool(value) if is_set else fallback == "true")
+            # a true/false setting whose default is neither (unset: decided from the data) is
+            # a third state, half ticked, not an unticked box (audit of 2026-11-15, B-15)
+            unset = fallback not in ("true", "false")
+            self.editor.setTristate(unset)
+            if is_set:
+                self.editor.setCheckState(Qt.CheckState.Checked if value
+                                          else Qt.CheckState.Unchecked)
+            elif unset:
+                self.editor.setCheckState(Qt.CheckState.PartiallyChecked)
+            else:
+                self.editor.setChecked(fallback == "true")
         elif isinstance(self.editor, QComboBox):
             text = value if is_set else fallback
+            for i in range(self.editor.count() - 1, -1, -1):  # an earlier file's odd value
+                if self.editor.itemData(i, Qt.ItemDataRole.UserRole) == "unknown":
+                    self.editor.removeItem(i)
             index = self.editor.findText(str(text))
+            if index < 0 and is_set:
+                # the file's value is none of the choices (a misspelt format): shown as such,
+                # not as the first choice (audit of 2026-11-15, B-12)
+                self.editor.addItem(f"{text} (not one of the choices)")
+                index = self.editor.count() - 1
+                self.editor.setItemData(index, "unknown", Qt.ItemDataRole.UserRole)
             self.editor.setCurrentIndex(max(index, 0))
         else:
             self.editor.setPlaceholderText(
@@ -235,10 +258,16 @@ class SettingRow(QWidget):
 
         self.edited.emit(self.name, _toml_value(list(items)) if items else None)
 
-    def _toggled(self, checked: bool) -> None:
-        self.edited.emit(self.name, "true" if checked else "false")
+    def _state_changed(self, state: int) -> None:
+        state = Qt.CheckState(state)
+        if state == Qt.CheckState.PartiallyChecked:  # the third state: unset
+            self.edited.emit(self.name, None)
+            return
+        self.edited.emit(self.name, "true" if state == Qt.CheckState.Checked else "false")
 
     def _chosen(self, index: int) -> None:
+        if self.editor.itemData(index, Qt.ItemDataRole.UserRole) == "unknown":
+            return  # the file's own odd value, shown: nothing to write
         text = self.editor.itemText(index)
         if text == NO_PRESET:  # the preset list's "none": the setting goes
             self.edited.emit(self.name, None)
@@ -253,6 +282,8 @@ class SettingRow(QWidget):
         if not raw:
             self.edited.emit(self.name, None)
         elif self.kind in ("text", "path"):
+            if len(raw) > 1 and raw[0] == raw[-1] == '"':  # typed as the File tab shows it
+                raw = raw[1:-1]
             self.edited.emit(self.name, _quoted(raw))  # text, even when it looks like a number
         else:
             self.edited.emit(self.name, raw)
@@ -278,6 +309,9 @@ BOTH_FORMS = {"analysis.fasta": "one file per sample",
 VALUE_OR_TABLE = (*BOTH_FORMS, "run.controls")
 # tables whose values are files: shown and typed without quotes, with Browse
 PATH_TABLES = ("analysis.fasta",)
+PATH_KEYS = ("path", "file", "fasta")  # columns of a list of tables that hold a file (Browse)
+# the scan formats' tables, switched off when a folder format is chosen
+SCAN_TABLES = ("input.target", "input.scans", "input.runs", "input.fragments")
 # tables whose values are lists of names: shown and typed as names separated by commas
 NAME_LIST_TABLES = ("input.pooled_classes",)
 
@@ -698,10 +732,15 @@ class ProjectEditor(QWidget):
             self.list_editor = ListEditor(self, table)
             form.addWidget(self.list_editor)
             return
+        nested = self._nested_note(name)
         if not table.settings:
             self.list_editor = NamesEditor(self, table)
             form.addWidget(self.list_editor)
+            if nested is not None:
+                form.addWidget(nested)
             return
+        if nested is not None:
+            form.addWidget(nested)
         names = {t.name for t in self.tables}  # a key that is a table has a page of its own
         settings = [s for s in table.settings
                     if f"{name}.{s.key}" not in names or f"{name}.{s.key}" in BOTH_FORMS]
@@ -714,6 +753,33 @@ class ProjectEditor(QWidget):
         for setting in settings:
             self._add_row(box, table, setting)
         form.addLayout(box)
+
+    def _nested_note(self, name: str) -> QLabel | None:
+        """The tables the file nests under ``name`` that are not pages of their own (a sample's
+        or run's own settings: ``[analysis.labelling.D109H]``), listed so that they are not
+        invisible from the form (audit of 2026-11-15, B-10); None without any."""
+        from ..config import _toml_value
+
+        known = {t.name for t in self.tables}
+        prefix = name + "."
+        found: dict[str, list[str]] = {}
+        for key, value in self.values.items():
+            if not key.startswith(prefix) or "." not in key[len(prefix):]:
+                continue
+            first = key[len(prefix):].split(".", 1)[0]
+            if f"{name}.{first}" in known:
+                continue
+            try:
+                shown = _toml_value(value)
+            except TypeError:
+                shown = str(value)
+            found.setdefault(first, []).append(f"{key[len(prefix) + len(first) + 1:]} = {shown}")
+        if not found:
+            return None
+        lines = [f"[{name}.{sub}] " + ", ".join(items) for sub, items in sorted(found.items())]
+        return _note("Also in the file, for one sample or run each (this page does not edit "
+                     "them; a text editor does; they override the settings above for it): "
+                     + "; ".join(lines))
 
     def _add_row(self, layout: QFormLayout, table, setting, prefix: bool = False) -> None:
         row = SettingRow(table.name, setting, self.path.parent if self.path else None,
@@ -738,15 +804,23 @@ class ProjectEditor(QWidget):
         return [f"input.{s.key}" for s in table.settings
                 if f"input.{s.key}" in self.values and not applies(s, fmt)]
 
+    def other_format_tables(self, fmt: str) -> list[str]:
+        """The input tables the file has (switched on) that the format ``fmt`` does not use:
+        the scan formats' ``[input.target]``, ``[input.scans]``, ``[[input.runs]]`` and
+        ``[[input.fragments]]`` when a folder format is chosen (audit of 2026-11-15, B-9: they
+        were left on, and the file then refused to load)."""
+        scan = fmt in _FORMAT_GROUPS["scan"]
+        return [] if scan else [t for t in SCAN_TABLES if t in self.on]
+
     def confirm_switch_off(self, fmt: str, names: list[str]) -> bool:
-        """Ask before the settings ``names`` of the old format are switched off."""
+        """Ask before the settings and tables ``names`` of the old format are switched off."""
         from PySide6.QtWidgets import QMessageBox
 
         answer = QMessageBox.question(
             self, "Change the input format?",
             f"{', '.join(names)} {'is' if len(names) == 1 else 'are'} not used by {fmt}. "
-            "Switch them off (a # in front of the line, so they can be switched on again) and "
-            f"change the format to {fmt}?")
+            "Switch them off (#~ in front of their lines, so they can be switched on again) "
+            f"and change the format to {fmt}?")
         return answer == QMessageBox.StandardButton.Yes
 
     def _edit(self, setting: str, value) -> None:
@@ -764,11 +838,14 @@ class ProjectEditor(QWidget):
             elif (setting.startswith(both + ".") and value is not None
                   and self.values.get(both) is not None):
                 changes = [(both, None)] + changes
+        tables_off: list[str] = []  # the old format's tables, switched off with its settings
         if setting == "input.format" and value is not None:
             fmt = value.strip('"')
             others = self.other_format_settings(fmt)
-            if others:
-                if not self.confirm_switch_off(fmt, others):
+            tables_off = self.other_format_tables(fmt)
+            if others or tables_off:
+                shown = others + [f"[{t}]" for t in tables_off]
+                if not self.confirm_switch_off(fmt, shown):
                     self.rows[setting].show_value(self.values.get(setting),
                                                   self.values.get("preset"))
                     return
@@ -779,9 +856,15 @@ class ProjectEditor(QWidget):
                 if table_off is not None:
                     from ..project_edit import switch_table
 
-                    said = switch_table(self.path, table_off, False)
+                    said = switch_table(self.path, table_off, False, unfinished=True)
                     log.info("%s (%s replaces it)", said, setting)
                 done = set_settings(self.path, changes, unfinished=True)
+                for name in tables_off:  # after the format: the file is checked for it
+                    from ..project_edit import switch_table
+
+                    said = "; ".join(filter(None, [
+                        said, switch_table(self.path, name, False, any_table=True,
+                                           unfinished=True)]))
                 step.what = "; ".join([said] * bool(said) + [
                     _change_words(c) for c in done if not c.unchanged])
         except ProjectError as exc:
@@ -831,11 +914,18 @@ class ProjectEditor(QWidget):
             with self.own_write() as step:
                 if on and table in VALUE_OR_TABLE and self.values.get(table) is not None:
                     set_settings(self.path, [(table, None)], unfinished=True)  # one form
-                said = switch_table(self.path, table, on)
+                said = switch_table(self.path, table, on, unfinished=True)
                 step.what = str(said)
             log.info("%s", said)
         except ProjectError as exc:
             log.warning("%s", exc)
+            self.problem.setText(str(exc))  # as the other refusals (audit, B-16)
+            self.problem.show()
+            if self.switch is not None:  # the box as the file still has it
+                self.switch.blockSignals(True)
+                self.switch.setChecked(table in self.on)
+                self.switch.blockSignals(False)
+            return
         self._after_change()
 
     def _show_controls_state(self) -> None:
@@ -1062,8 +1152,8 @@ class ListEditor(QWidget):
 
     def _browse(self) -> None:
         row, column = self.grid.currentRow(), self.grid.currentColumn()
-        if row < 0 or column < 0:
-            return
+        if row < 0 or column < 0 or self.keys[column] not in PATH_KEYS:
+            return  # only a column that holds a file (audit of 2026-11-15, B-28)
         folder = self.owner.path.parent if self.owner.path else None
         chosen, _ = QFileDialog.getOpenFileName(self, self.keys[column], str(folder or ""))
         if chosen:
@@ -1143,14 +1233,18 @@ class NamesEditor(QWidget):
         return _quoted(raw.strip('"')) if self.paths else raw
 
     def _changed(self, row: int, column: int) -> None:
+        from ..project_edit import key_text
+
         name = self.grid.item(row, 0).text()
         raw = self.grid.item(row, 1).text().strip()
-        self.owner.write(f"{self.table.name}.{name}", self._toml(raw) if raw else None)
+        self.owner.write(f"{self.table.name}.{key_text(name)}", self._toml(raw) if raw else None)
 
     def add(self) -> None:
+        from ..project_edit import key_text
+
         name, raw = self.name.text().strip(), self.value.text().strip()
-        if name and raw:
-            self.owner.write(f"{self.table.name}.{name}", self._toml(raw))
+        if name and raw:  # a name needing quotes ("A:WT", a space) gets them (audit, B-5)
+            self.owner.write(f"{self.table.name}.{key_text(name)}", self._toml(raw))
             self.name.clear()
             self.value.clear()
 
@@ -1162,9 +1256,12 @@ class NamesEditor(QWidget):
             self.value.setText(relative(Path(chosen), folder))
 
     def remove_selected(self) -> None:
+        from ..project_edit import key_text
+
         row = self.grid.currentRow()
         if row >= 0:
-            self.owner.write(f"{self.table.name}.{self.grid.item(row, 0).text()}", None)
+            self.owner.write(f"{self.table.name}.{key_text(self.grid.item(row, 0).text())}",
+                             None)
 
 
 def _swatch(value):

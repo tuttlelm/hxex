@@ -8,6 +8,7 @@ results with their review (G3), and the figures of ``hxex analyse`` (G4).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 
@@ -160,6 +161,7 @@ class ProjectWorkspace(QWidget):
         self.text.setFont(QFont("monospace"))
         self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.tables = TablesView()
+        self.tables.write_settings = window.write_settings  # recorded for the editor's Undo
         self.sequence = SequenceView()  # the protein sequence(s), as the analysis numbers them
         self.views = QTabWidget()
         for page, name in ((self.editor, "Settings"), (self.tables, "Tables"),
@@ -191,8 +193,7 @@ class ProjectWorkspace(QWidget):
 
 def new_project(path: Path, fmt: str, name: str) -> Path:
     """Write a new project file with every default, as ``hxex init --format FMT --project NAME``
-    does (a file chosen in a save dialog has been confirmed already, so one there is
-    replaced)."""
+    does (the caller has asked about a file there already: it is replaced)."""
     from ..config import template
 
     if not name or ":" in name:
@@ -511,13 +512,18 @@ class MainWindow(QMainWindow):
         dialog = NewProjectDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        # the dialog's own overwrite question would be about the name as typed, without the
+        # .toml added below: asked here, about the file written (audit of 2026-11-15, B-4)
         path, _ = QFileDialog.getSaveFileName(self, "Save the new project file", "hxex.toml",
-                                              "project files (*.toml)")
+                                              "project files (*.toml)",
+                                              options=QFileDialog.Option.DontConfirmOverwrite)
         if not path:
             return
         path = Path(path)
         if path.suffix != ".toml":
             path = path.with_name(path.name + ".toml")
+        if path.exists() and not self.ask_replace_file(path):
+            return
         try:
             new_project(path, dialog.format.currentText(), dialog.name.text().strip())
         except (OSError, ValueError) as exc:
@@ -525,6 +531,46 @@ class MainWindow(QMainWindow):
             return
         self._new_session_with(path)
         self.tabs.setCurrentIndex(0)
+
+    def ask_replace_file(self, path: Path) -> bool:
+        """Whether to write over the file at ``path`` (asked before a new project file or a
+        new table replaces one; replaced in tests)."""
+        return QMessageBox.question(
+            self, "Replace the file?",
+            f"{path.name} exists in {path.parent}. Replace it with a new project file? Its "
+            "settings and comments are lost (this cannot be undone).",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+
+    @contextlib.contextmanager
+    def recording(self, what: str):
+        """A block that writes the project file open through a library function
+        (:func:`hxex.gui.review.make_review_table`, :func:`hxex.gui.window_edit.save_window`):
+        recorded for the Project editor's Undo as ``what``, the file not watched meanwhile
+        (audit of 2026-11-15, Q-1)."""
+        editor = self.project_page.editor
+        if self.project is None or editor.path != self.project:
+            yield None
+            return
+        with editor.own_write() as step:
+            step.what = what
+            yield step
+        editor._after_change()  # shown now (the file is not watched while written)
+
+    def write_settings(self, changes, what: str) -> list:
+        """Change settings of the project file open as the Project editor does (recorded for
+        its Undo, the file not watched while written; audit of 2026-11-15, Q-1): the window's
+        one route for every setting it writes. ``what`` names the change for Undo."""
+        from ..project_edit import set_settings
+
+        editor = self.project_page.editor
+        if self.project is None or editor.path != self.project:
+            return set_settings(self.project, changes, unfinished=True)
+        with editor.own_write() as step:
+            done = set_settings(self.project, changes, unfinished=True)
+            step.what = what
+        editor._after_change()  # shown now (the file is not watched while written)
+        return done
 
     def open_project_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open project file", "",

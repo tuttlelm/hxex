@@ -80,9 +80,17 @@ every setting at its default, as `hxex init` does.
 - **Find a setting** searches every table by name and description.
 - Under `[input]`, only the settings of the chosen format are shown (tick **Show the input
   settings of every format** to see them all). Changing the format offers to switch off the
-  settings the new format does not use.
+  settings and tables the new format does not use (`[input.scans]`, `[input.target]`, and the
+  `[[input.runs]]` of the scan formats, say). A value the file holds that is none of the
+  choices (a misspelt format) is shown as such, beside the problem line.
 - A stage that its heading alone turns on (the bootstrap, the population test, the analysis,
-  the review) has a **Use** box. Setting any of its settings also switches it on. The
+  the review) has a **Use** box. Switching it off puts `#~ ` in front of its heading, its
+  settings, and the tables under it, and switching it on again brings exactly those lines
+  back (a plain `# ` marks a setting at its default, as the template writes it). Setting any
+  of its settings also switches it on. A true/false setting whose default is neither (decided
+  from the data) shows a half-ticked box; a click makes it true, another false, a third
+  unset again. Settings the file keeps for one sample or run (`[analysis.labelling.D109H]`)
+  are listed on their table's page; a text editor changes them. The
   back-exchange correction (`[run.controls]`) is different: with its table off it runs by
   itself when the data hold undeuterated and fully deuterated controls, and its page says
   which state the file is in. **Always on** switches its table on; **Off, whatever the data
@@ -147,8 +155,11 @@ the user review table. Choose one on the left to edit it as a grid.
 - A table open in a spreadsheet: Excel locks the file it has open (on Windows), so *hxex* says
   so and keeps your changes; close it there and save again. A table changed by another
   program since you opened it here is not written over without asking.
-- **New table** makes a table with the columns *hxex* reads for your format, where you choose,
-  and names it in the project file.
+- **New table** makes a table with the columns *hxex* reads for your format, where you choose
+  (the name suggested carries the project file's name unless it is `hxex.toml`, so two project
+  files in one folder keep their tables apart), and names it in the project file; a file of
+  that name already there is replaced only if you say so, and the project file's change can be
+  undone like the others.
 
 **Sequence** shows the protein sequence of each sample as the analysis numbers it: from the
 files `[analysis] fasta` names, or, for SpecExport data, the `SAMPLE.fasta` file beside each
@@ -320,8 +331,10 @@ beside it says what the row is for:
    charge states and fragment ions** when you read fragments): every charge state of the
    peptide in this file takes the window and, when you read fragments, all its fragment ions
    (MS2, MS3). They are the same molecules and elute together, so this is usually right.
-   If this charge state (or ion) had a window of its own, it now follows its peptide; the
-   message names any other one of the peptide that keeps a window of its own.
+   If this charge state (or ion) had a window of its own, it now follows its peptide; when
+   others of the peptide in this file have windows of their own, *hxex* asks first whether
+   they follow too (**Replace them**) or keep theirs (**Keep them**), as it asks for the other
+   files below, and the message names any that keeps a window of its own.
 3. **every charge state, in this file and its replicates (each shifted)**: as above, and in the
    sample's other files at the same time point (or the same control).
 4. **every charge state, in every file of this sample (each shifted)**: as above, in every file
@@ -479,8 +492,11 @@ it; its figures are those of its first charge).
   resume`, which adds it. When the run's quick screen (`[run.fit] screen`) skipped that K for
   the spectrum, the spectrum stays at the fit's K, and the panel says so, until **Resume** fits
   it (with its bootstrap). `hxex report` and `hxex analyse` wait for that too.
+- **Not reviewed** takes a decision back: it is written as `unreviewed`, which also clears a
+  status the run's own review layer holds (one set from Python, or carried over by a rerun).
 - **Note**: anything you want to keep with the spectrum. It is saved when you press Enter or
-  leave the box. With a time point or a charge selected, the box shows the note its spectra
+  leave the box. A note the run's own review layer holds cannot be cleared from the table: it
+  stays shown, and the box says so when you rest the pointer on it. With a time point or a charge selected, the box shows the note its spectra
   share, and a note typed there replaces each spectrum's own. When their notes differ, the box
   is empty and says so; leaving it empty keeps each one's note. A note needs no decision: on a
   spectrum you leave not reviewed, it is kept and shown again, and it changes nothing in the

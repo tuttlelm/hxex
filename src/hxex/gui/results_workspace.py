@@ -405,6 +405,7 @@ class ResultsWorkspace(QWidget):
                 self.window_editor = WindowEditor(panel, self._trace_context,
                                                   self._draw_plain_trace, self)
                 self.window_editor.reset(getattr(self, "results_path", None))
+                self.window_editor.recording = getattr(self.window, "recording", None)
                 if self.window is not None:
                     self.window_editor.message.connect(
                         lambda text: self.window.statusBar().showMessage(text, 15000))

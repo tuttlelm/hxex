@@ -14,8 +14,10 @@ use) and ``note`` columns, and names it in ``[review] table``.
 :func:`read_review_table` reads only ``spectrum_id`` and those three columns (every other
 column is ignored), and :func:`apply_review_table` lays the decisions over the results' review
 layer in memory, as the ``[[review.exclude]]`` rules are: the bundle is not changed, and
-editing the table needs only the command run again. A row with both
-``review_status`` and ``review_K`` empty changes nothing.
+editing the table needs only the command run again. A row with ``review_status``,
+``review_K`` and ``note`` empty changes nothing; ``review_status = unreviewed``, written,
+clears a status the bundle's review layer holds (as ``review_K = 0`` clears a K: audit of
+2026-11-15, D-2).
 
 A chosen K is drawn and tabulated with the errors of a bootstrap at that K: :func:`chosen_k`
 lists the spectra shown at a K other than the fit's choice and :func:`missing_bootstraps` those
@@ -63,13 +65,16 @@ class ReviewSettings:
 class ReviewSheet:
     """The decisions of a user review table: one entry per spectrum with ``status``
     (``rejected``, ``accepted`` or empty), ``k`` (0: none; :data:`CLEARED`: ``review_K = 0``,
-    which clears a K chosen before) and ``note``; ``path`` is the file."""
+    which clears a K chosen before) and ``note``; ``path`` is the file. ``unreviewed``: the
+    spectra whose ``review_status`` says ``unreviewed`` (written, not left empty), which clears
+    a status the bundle's review layer holds; a row saying only that is not an entry."""
 
     spectrum_id: tuple[str, ...]
     status: tuple[str, ...]
     k: tuple[int, ...]
     note: tuple[str, ...]
     path: str = ""
+    unreviewed: tuple[str, ...] = ()
 
     def __len__(self) -> int:
         return len(self.spectrum_id)
@@ -121,6 +126,8 @@ def read_review_table(path: str | Path) -> ReviewSheet:
         raise ValueError(f"the review table {path} has neither a review_status nor a review_K "
                          "column")
     entries: dict[str, tuple[str, int, str, int]] = {}
+    unreviewed: dict[str, None] = {}  # written as such: clears the bundle's status
+    seen: dict[str, tuple[str, int, int]] = {}  # each id's first row: status, K, row number
     problems: list[str] = []
     for row_number, row in enumerate(reader, start=2):
         def cell(name: str, row=row) -> str:
@@ -129,9 +136,10 @@ def read_review_table(path: str | Path) -> ReviewSheet:
 
         sid = cell("spectrum_id")
         status, k_text, note = cell("review_status").lower(), cell("review_K"), cell("note")
-        if status == "unreviewed":  # spectra.csv's word for no decision
+        said_unreviewed = status == "unreviewed"  # spectra.csv's word for no decision
+        if said_unreviewed:
             status = ""
-        if not sid or (not status and not k_text and not note):
+        if not sid or (not status and not k_text and not note and not said_unreviewed):
             continue
         if status not in ("", *STATUSES):
             problems.append(f"row {row_number}: review_status {status!r} (rejected, accepted, "
@@ -148,9 +156,14 @@ def read_review_table(path: str | Path) -> ReviewSheet:
                                 "least 1, 0 to clear a K chosen before, or empty)")
                 continue
             k = int(value) if value else CLEARED
-        if sid in entries and entries[sid][:2] != (status, k):
-            problems.append(f"row {row_number}: {sid} is already in row {entries[sid][3]} with "
+        if sid in seen and seen[sid][:2] != (status, k):
+            problems.append(f"row {row_number}: {sid} is already in row {seen[sid][2]} with "
                             "other values")
+            continue
+        seen.setdefault(sid, (status, k, row_number))
+        if said_unreviewed:
+            unreviewed.setdefault(sid)
+        if not k and not note and not status:  # unreviewed alone: a clear, not an entry
             continue
         entries.setdefault(sid, (status, k, note, row_number))
     if problems:
@@ -160,7 +173,7 @@ def read_review_table(path: str | Path) -> ReviewSheet:
     ids = list(entries)
     return ReviewSheet(tuple(ids), tuple(entries[s][0] for s in ids),
                        tuple(entries[s][1] for s in ids), tuple(entries[s][2] for s in ids),
-                       str(path))
+                       str(path), tuple(unreviewed))
 
 
 _SCANS = re.compile(r"/scans?\d+(?:-\d+)?$")
@@ -271,8 +284,9 @@ def moved_sheet(sheet: ReviewSheet, moves: Moves) -> ReviewSheet:
         return sheet
     import dataclasses
 
-    return dataclasses.replace(sheet, spectrum_id=tuple(moves.moved.get(s, s)
-                                                        for s in sheet.spectrum_id))
+    return dataclasses.replace(
+        sheet, spectrum_id=tuple(moves.moved.get(s, s) for s in sheet.spectrum_id),
+        unreviewed=tuple(moves.moved.get(s, s) for s in sheet.unreviewed))
 
 
 def _source_of(spectrum_id: str, origin: dict[str, str]) -> str:
@@ -283,18 +297,21 @@ def _source_of(spectrum_id: str, origin: dict[str, str]) -> str:
 def apply_review_table(results, sheet: ReviewSheet | None):
     """``results`` (:class:`hxex.report.Results`) with the decisions of ``sheet`` laid over its
     review layer, in memory only (the bundle is not changed): a status replaces the stored
-    one, a chosen K replaces the stored one, and a note replaces the stored one when given.
+    one, a chosen K replaces the stored one, and a note replaces the stored one when given;
+    ``review_status = unreviewed`` (written) clears the stored status, and ``review_K = 0`` the
+    stored K.
     An entry naming scans the results no longer sum follows its spectrum (:func:`move_entries`;
     logged). Spectra the results do not have are skipped with a warning; a chosen K that was
     not fitted for its spectrum (one the run did not try, or one its screen skipped, which
     ``hxex resume`` fits) raises ValueError saying which."""
     from .io.bundle import ReviewTable
 
-    if sheet is None or not len(sheet):
+    if sheet is None or not (len(sheet) or sheet.unreviewed):
         return results
     fit = results.fit
     index = {str(s): i for i, s in enumerate(fit.spectrum_id)}
-    moves = results_moves(results, sheet.spectrum_id)
+    moves = results_moves(results, list(dict.fromkeys((*sheet.spectrum_id,
+                                                       *sheet.unreviewed))))
     if moves:
         log.info("the review table %s names %d spectra by scans these results no longer "
                  "sum (a new retention window): %s (%s)", sheet.path,
@@ -334,6 +351,13 @@ def apply_review_table(results, sheet: ReviewSheet | None):
               else ["review"] * len(review))
     ids = list(map(str, review.spectrum_id))
     stamp = datetime.now(UTC).isoformat(timespec="seconds")
+    unreviewed = set(sheet.unreviewed)
+    for sid in unreviewed:  # a status the bundle holds, cleared (a K or note set below)
+        j = stored.get(sid)
+        if j is not None and sid in index and status[j]:
+            status[j] = ""
+            stale[j] = False
+            source[j] = _source_of(sid, origin)
     for sid, st, k, nt in zip(sheet.spectrum_id, sheet.status, sheet.k, sheet.note,
                               strict=True):
         if sid not in index:

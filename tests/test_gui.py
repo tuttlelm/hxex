@@ -920,3 +920,29 @@ def test_results_whose_bundle_was_replaced_say_so_instead_of_reading_it(bundle):
     finally:
         manifest.write_text(text, encoding="utf-8")
     assert results.loader(ids) is not None
+
+
+def test_a_new_project_file_asks_before_replacing_one(window, tmp_path, monkeypatch):
+    """A name typed without .toml replaced the project file open with a fresh template, every
+    setting and comment gone, without a question (audit of 2026-11-15, B-4)."""
+    from PySide6.QtWidgets import QDialog, QFileDialog
+
+    from hxex.config import template
+    from hxex.gui import window as module
+
+    project = tmp_path / "hxex.toml"
+    project.write_text(template().replace("# threads = 4", "threads = 4"), encoding="utf-8")
+    assert window.open_asking(project)
+    monkeypatch.setattr(module.NewProjectDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(tmp_path / "hxex"), "")))
+    asked = []
+    window.ask_replace_file = lambda path: (asked.append(path), False)[1]
+    def set_threads():
+        return any(line.startswith("threads = 4") for line in project.read_text().splitlines())
+
+    window.new_project_dialog()
+    assert asked == [project] and set_threads()
+    window.ask_replace_file = lambda path: True
+    window.new_project_dialog()
+    assert not set_threads()

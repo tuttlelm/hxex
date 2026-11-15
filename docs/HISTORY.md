@@ -10006,3 +10006,51 @@ CSVs or mzML if wanted.
     from a bundle replaced since they were opened (`created` stamp; C-16). Tests: one per item
     (tests/test_gui_tasks.py new; the others in their files). Guide gui.md: closing with a
     command running, Undo's scope, dropped waiting decisions.
+
+389. **The window's project editor and every file it writes (2026-11-15; fix Session 2
+    of docs/AUDIT_GUI_2026-11-15.md).** The line editor of the project file (`project_edit`,
+    shared by `hxex set`): a heading is `[name]` or `[[name]]` alone on its line (a comment may
+    follow; `#` at column 0 for one switched off), so the template's continuation comments
+    naming a table no longer end a table for the editor (ordinary edits had written a second
+    line for a setting below them, and the file was not valid TOML: B-1, B-2, B-24); names
+    may carry quoted parts (`[analysis.summary."HDX reaction details"]`, `analysis.merge."A:WT"`;
+    `key_text`, `_name_parts`: B-5, B-7); a value written over several lines is skipped or
+    replaced as a whole (B-1); an entry of a list of tables runs to its last setting, a
+    switched-off one too unless a blank line comes before it, so a moved entry takes it along
+    (B-8); text that does not parse is never written, whatever `unfinished` says (B-1); a stage
+    switched off gets `#~ ` in front of its heading, settings and tables, and switching it on
+    (the Use box, or setting one of its settings) brings exactly those lines back (B-6; the
+    template's plain `# ` stays the mark of a setting at its default). The editor: a value none
+    of the choices is shown as such (B-12), a true/false setting whose default is unset is a
+    half-ticked third state (B-15), a refused switch shows the problem line (B-16), a date value
+    and text typed in quotes are handled (B-22, B-23), per-sample and per-run tables are listed
+    on their page (B-10), changing the format switches the old format's tables off too
+    (`[input.scans]`, `[input.target]`, `[[input.runs]]`, `[[input.fragments]]`: B-9), Browse
+    fills path columns only (B-28). The user tables: a misspelt format lists no tables and says
+    so instead of stopping File > Open (B-3); New table and New project file ask before
+    replacing a file, about the name with its extension (B-4), New table's name carries the
+    project file's name (Q-14) and its project-file change goes through the editor's Undo
+    (B-17), as every setting the window writes now does (`MainWindow.write_settings`,
+    `TablesView.write_settings`, the Analysis page: Q-1); a table opens in its file's order
+    (B-13) and is not read again for a settings edit (B-14); unsaved edits keep their table's
+    row chosen (B-25); a table named before it exists opens once it does (B-27); a
+    Windows-1252 "CSV" is read and said to be written back as UTF-8 (B-18, with UTF-16 and other
+    separators: `Table.converted` in the heading, D-12); blank lines stay rows (B-21); a
+    read-only table or folder is refused with its own message (`TableReadOnly`, B-11, B-20);
+    the separator is the readers' (D-14). A project name with a quote gives a valid file
+    (B-19). The review table and the elution-window table (an Opus builder): a decision is
+    written into every row of its spectrum id, stripped (a row pasted twice, a padded id: the
+    commands refused the table after a decision; D-1); `review_status = unreviewed` written in
+    the table clears a status the bundle's own review layer holds (`ReviewSheet.unreviewed`,
+    `apply_review_table`), the panel writes it for Not reviewed when a status is shown, and a
+    note the bundle holds stays shown with a tooltip instead of looking cleared (D-2; the K
+    case is left: the fit's choice empties the table's K and the bundle's returns); a table
+    the window makes leaves the `[[review.exclude]]` rules' rejections out, so a rule removed
+    gives its spectra back (D-15); a save for one charge state takes the ion's row that names
+    no peptide instead of adding a second row (D-4); at save levels 2 to 4 the edited file's
+    other charge states follow the peptide row like the spread files' do, after the same
+    "Windows set before" question, which level 2 now asks too (`keep_own`,
+    `sibling_windows`; D-8); the session file writes NumPy numbers as plain numbers (A-10) and
+    refuses, naming the key, a hand-edited file whose tables are not tables (A-11). Not done: B-29 (latent), B-30 (config.py's Python wording), and a
+    TOML round-tripping library (open question B 7: the line editor was extended instead).
+    Guide gui.md: the `#~` mark, the half-ticked box, per-sample tables, New table.

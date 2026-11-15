@@ -12,6 +12,7 @@ table is not changed) and
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import logging
 from collections.abc import Callable
@@ -101,6 +102,9 @@ class WindowEditor(QObject):
         self.failure: str | None = None
         self.history: list = []  # SavedWindow, the latest last (Undo); the results' own
         self._results_path: Path | None = None  # where the results shown come from
+        # the window's context manager recording a write of the project file for the Project
+        # editor's Undo (hxex.gui.window.MainWindow.recording; None: not recorded; Q-1)
+        self.recording = None
         self._target: tuple | None = None  # (results, spectrum id) the boxes were set for
         self._has_drift = False  # the spectrum was summed over a drift range
         self._drift_shown: tuple | None = None  # the drift range the boxes were set to
@@ -557,6 +561,7 @@ class WindowEditor(QObject):
             samples_reading,
             save_window,
             saved_words,
+            sibling_windows,
             spread_words,
             table_path,
         )
@@ -591,22 +596,34 @@ class WindowEditor(QObject):
         samples = samples_reading(ctx.reader, ctx.spectrum_id, ctx.data_id,
                                   siblings if whole else (key[2],), peptide)
         window = (spectrum.rt_start, spectrum.rt_end)
+        fragments = has_fragments(ctx.reader)
+        # the edited file's other ions with windows of their own: a save for the whole peptide
+        # replaces them, as in the files it is spread to, after asking (audit of 2026-11-15,
+        # D-8)
+        own_here = sibling_windows(project, peptide, key[2], siblings,
+                                   [(sample, key[1]) for sample in (key[0], *samples)],
+                                   shared) if whole else []
+        here = (f"{key[1]} (this file: {len(own_here)} other "
+                + ("ion(s)" if fragments else "charge state(s)") + ")")
 
-        def write(plans=(), kept=()):
+        def write(plans=(), kept=(), keep_own=False):
             more = [(sample, p.file, p.window) for p in plans
                     if p.window is not None and p.file not in kept for sample in p.samples]
+            record = self.recording
             try:
-                saved = save_window(project, key, window, drift, peptide=peptide, whole=whole,
-                                    siblings=siblings, shared=shared, table=chosen,
-                                    samples=samples, more=more)
+                with (record("an elution window saved (the table named in the project file)")
+                      if record is not None else contextlib.nullcontext()):
+                    saved = save_window(project, key, window, drift, peptide=peptide,
+                                        whole=whole, siblings=siblings, shared=shared,
+                                        table=chosen, samples=samples, more=more,
+                                        keep_own=keep_own)
             except Exception as exc:  # noqa: BLE001 (said in the window: nothing was written)
                 self.message.emit(f"not saved: {exc}")
                 return
             self.history.append(saved)
             self.undo.setEnabled(True)
             text = saved_words(saved, peptide=peptide, ion=key[2], file=key[1], whole=whole,
-                               fragments=has_fragments(ctx.reader),
-                               drift_written=drift is not None)
+                               fragments=fragments, drift_written=drift is not None)
             if level in ("replicates", "everywhere"):
                 spread = spread_words(plans, kept) or "no other file of it to spread to"
                 text = text.replace(f"; {APPLY}", f"; {spread}; {APPLY}", 1)
@@ -614,7 +631,11 @@ class WindowEditor(QObject):
             self.saved.emit(str(saved.path))
 
         if level not in ("replicates", "everywhere"):
-            write()
+            answer = self._replace_or_keep([here]) if own_here else "replace"
+            if answer is None:
+                self.message.emit("not saved")
+                return
+            write(keep_own=answer == "keep")
             return
         results = ctx.results
         ready = self.alignment if self._aligned_key == (ctx.spectrum_id, level,
@@ -632,23 +653,16 @@ class WindowEditor(QObject):
                       for sample in p.samples]
             own = own_windows(project, peptide, siblings, places)
             kept: list[str] = []
-            if own:
-                files = sorted({f for _s, f in own})
-                box = QMessageBox(QMessageBox.Icon.Question, "Windows set before",
-                                  f"{len(files)} of the files already have a window of this "
-                                  f"peptide set before: {', '.join(files)}. Replace them with "
-                                  "the shifted window, or keep them?", parent=self.panel)
-                replace_button = box.addButton("Replace them", QMessageBox.ButtonRole.AcceptRole)
-                keep_button = box.addButton("Keep them", QMessageBox.ButtonRole.RejectRole)
-                box.addButton(QMessageBox.StandardButton.Cancel)
-                box.exec()
-                clicked = box.clickedButton()
-                if clicked is keep_button:
-                    kept = files
-                elif clicked is not replace_button:
+            files = sorted({f for _s, f in own})
+            answer = "replace"
+            if own or own_here:
+                answer = self._replace_or_keep(([here] if own_here else []) + files)
+                if answer is None:
                     self.message.emit("not saved")
                     return
-            write(plans, kept)
+                if answer == "keep":
+                    kept = files
+            write(plans, kept, keep_own=answer == "keep")
 
         def failed(message: str) -> None:
             self.panel.set_task(None)
@@ -662,6 +676,23 @@ class WindowEditor(QObject):
         self.save.setEnabled(False)
         self._spread_task.submit(work, done, failed)
 
+    def _replace_or_keep(self, files: list[str]) -> str | None:
+        """Asks whether the windows of this peptide set before in ``files`` (their names, the
+        edited file's with what it holds) are replaced or kept: ``"replace"``, ``"keep"``, or
+        None (cancelled)."""
+        box = QMessageBox(QMessageBox.Icon.Question, "Windows set before",
+                          f"{len(files)} of the files already have a window of this peptide "
+                          f"set before: {', '.join(files)}. Replace them with the new window "
+                          "(shifted in each other file), or keep them?", parent=self.panel)
+        replace_button = box.addButton("Replace them", QMessageBox.ButtonRole.AcceptRole)
+        keep_button = box.addButton("Keep them", QMessageBox.ButtonRole.RejectRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is keep_button:
+            return "keep"
+        return "replace" if clicked is replace_button else None
+
     def _undo(self) -> None:
         from .window_edit import undo_window
 
@@ -674,8 +705,11 @@ class WindowEditor(QObject):
             self.message.emit(f"not undone: that window was saved in {project}, not in the "
                               "project shown")
             return
+        record = self.recording
         try:
-            undo_window(last)
+            with (record("an elution window's save undone") if record is not None
+                  else contextlib.nullcontext()):
+                undo_window(last)
         except (OSError, ValueError) as exc:
             self.message.emit(f"not undone: {exc}")
             return

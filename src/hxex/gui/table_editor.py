@@ -40,6 +40,7 @@ from .user_tables import (
     Table,
     TableKind,
     TableLocked,
+    TableReadOnly,
     kinds,
     read_table,
     results_ids,
@@ -268,6 +269,8 @@ class TableEditor(QWidget):
         """Show the table ``kind`` at ``path`` (None: no table)."""
         if self.watcher.files():
             self.watcher.removePaths(self.watcher.files())
+        if path != self.path:
+            self._sort = None  # another table opens in its file's order (audit, B-13)
         self.kind, self.path, self.project = kind, path, project
         self.modified = False
         self._sized = False  # another table: its columns fitted to it
@@ -290,6 +293,12 @@ class TableEditor(QWidget):
         except (OSError, UnicodeDecodeError) as exc:
             self.table = None
             self._show_problem(str(exc))
+        if self.table is not None and self.kind is not None:
+            # a file written back in another encoding or with other separators says so
+            # (audit of 2026-11-15, B-18, D-12)
+            note = self.table.converted
+            self.heading.setText(f"{self.kind.title}: {self.path}" + (f" ({note})" if note
+                                                                      else ""))
         self._stamp = _stamp(self.path)
         self.modified = False
         self._fill()
@@ -540,7 +549,7 @@ class TableEditor(QWidget):
                 write_table(self.table, self.path)
             finally:
                 self.watcher.addPath(str(self.path))
-        except TableLocked as exc:
+        except (TableLocked, TableReadOnly) as exc:
             log.warning("%s", exc)
             self.tell("Table not saved", str(exc))
             return False
@@ -587,6 +596,12 @@ class TablesView(QWidget):
                                        "project file"))
         self.new_button.clicked.connect(lambda checked=False: self.new_table())
         self.editor = TableEditor()
+        # how the project file is written (the window's one route, recorded for Undo; audit
+        # of 2026-11-15, B-17, Q-1): (changes, what) -> the changes made; None: directly
+        self.write_settings = None
+        # a table the project names before it exists is shown once it does (B-27)
+        self.folder_watcher = QFileSystemWatcher(self)
+        self.folder_watcher.directoryChanged.connect(self._folder_changed)
         left = QWidget()
         side = QVBoxLayout(left)
         side.setContentsMargins(0, 0, 0, 0)
@@ -607,6 +622,10 @@ class TablesView(QWidget):
         """List the tables of the project file (its settings ``values``, input format
         ``fmt``); the table shown stays when it is still named."""
         self.project, self.values, self.fmt = project, values, fmt
+        if self.folder_watcher.directories():
+            self.folder_watcher.removePaths(self.folder_watcher.directories())
+        if project is not None and project.parent.is_dir():
+            self.folder_watcher.addPath(str(project.parent))
         keep = self.list.currentRow()
         self.list.blockSignals(True)
         self.list.clear()
@@ -617,11 +636,33 @@ class TablesView(QWidget):
             item = QListWidgetItem(f"{kind.title}\n    {state}")
             item.setData(Qt.ItemDataRole.UserRole, kind.setting)
             self.list.addItem(item)
+        if not kinds(fmt) and project is not None:  # a format hxex does not know (B-3)
+            item = QListWidgetItem(f"No tables: the input format {fmt!r} is not one hxex knows "
+                                   "(the Settings page says which it knows).")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.list.addItem(item)
         self.list.blockSignals(False)
         if self.editor.modified and self.editor.kind is not None:
-            return  # unsaved edits stay on screen
+            # unsaved edits stay on screen, their table's row shown as chosen (B-25)
+            self.list.blockSignals(True)
+            for i in range(self.list.count()):
+                if self.list.item(i).data(Qt.ItemDataRole.UserRole) == self.editor.kind.setting:
+                    self.list.setCurrentRow(i)
+                    self._row = i
+            self.list.blockSignals(False)
+            return
         self.list.setCurrentRow(keep if 0 <= keep < self.list.count() else 0)
         self._chosen(self.list.currentRow(), force=True)
+
+    def _folder_changed(self, _path: str) -> None:
+        """A file appeared or went in the project's folder: a named table now there is
+        opened; one gone is said."""
+        kind = self.kind_at(self._row)
+        if kind is None or self.editor.modified:
+            return
+        path = self.path_of(kind)
+        if path is not None and path.exists() != (self.editor.path is not None):
+            self.show_project(self.project, self.values, self.fmt)
 
     def path_of(self, kind: TableKind) -> Path | None:
         value = self.values.get(kind.setting)
@@ -652,7 +693,15 @@ class TablesView(QWidget):
         kind = self.kind_at(row)
         path = self.path_of(kind) if kind is not None else None
         exists = path is not None and path.exists()
-        self.editor.open(kind, path if exists else None, self.project)
+        shown = path if exists else None
+        if force and kind is not None and self.editor.kind is not None \
+                and kind.setting == self.editor.kind.setting and shown == self.editor.path \
+                and self.editor.project == self.project:
+            # the same table (a settings edit elsewhere in the file): not read again, its
+            # selection and scroll position kept (audit of 2026-11-15, B-14); its own watcher
+            # reloads it when its file changes
+            return
+        self.editor.open(kind, shown, self.project)
         self.new_button.setEnabled(kind is not None and self.project is not None)
 
     def new_table(self, path: Path | None = None) -> Path | None:
@@ -666,19 +715,26 @@ class TablesView(QWidget):
         if kind is None or self.project is None or not self.editor.may_leave():
             return None
         if path is None:
+            # the dialog's overwrite question would be about the name as typed, without the
+            # .csv added below: asked here, about the file written (audit of 2026-11-15, B-4)
+            start = self.project.parent / _suggested(kind, self.project)
             name, _ = QFileDialog.getSaveFileName(
-                self, f"New {kind.title}", str(self.project.parent / _suggested(kind)),
-                "tables (*.csv)")
+                self, f"New {kind.title}", str(start), "tables (*.csv)",
+                options=QFileDialog.Option.DontConfirmOverwrite)
             if not name:
                 return None
             path = Path(name)
         if path.suffix.lower() != ".csv":
             path = path.with_name(path.name + ".csv")
+        if path.exists() and not self.ask_replace(path):
+            return None
+        changes = [(kind.setting, _quoted(relative(path, self.project.parent)))]
         try:
             write_table(Table(list(kind.columns)), path)
-            set_settings(self.project, [(kind.setting,
-                                         _quoted(relative(path, self.project.parent)))],
-                         unfinished=True)
+            if self.write_settings is not None:
+                self.write_settings(changes, f"{kind.title} made: {path.name}")
+            else:
+                set_settings(self.project, changes, unfinished=True)
         except (OSError, ProjectError) as exc:
             self.editor.tell("Table not made", str(exc))
             return None
@@ -687,9 +743,24 @@ class TablesView(QWidget):
         return path
 
 
-def _suggested(kind: TableKind) -> str:
-    from ..review_table import SUGGESTED_NAME
+    def ask_replace(self, path: Path) -> bool:
+        """Whether a new table may replace the file at ``path`` (replaced in tests)."""
+        return QMessageBox.question(
+            self, "Replace the file?",
+            f"{path.name} exists in {path.parent}. Replace it with an empty table? Its rows "
+            "are lost (this cannot be undone).",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
 
-    return {"input.peptides": "peptides.csv", "input.retention_times": "retention_times.csv",
+
+def _suggested(kind: TableKind, project: Path | None = None) -> str:
+    """The name a new table starts with: as the first save of the window's own tables
+    suggests it, with the project file's name in front unless it is hxex.toml (audit of
+    2026-11-15, Q-14: two project files in one folder kept their tables apart only there)."""
+    from ..review_table import SUGGESTED_NAME
+    from .table_choice import suggested_name
+
+    base = {"input.peptides": "peptides.csv", "input.retention_times": "retention_times.csv",
             "input.rt_elution_windows": "rt_elution_windows.csv",
             "review.table": SUGGESTED_NAME}.get(kind.setting, "table.csv")
+    return base if project is None else suggested_name(project, base)

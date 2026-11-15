@@ -91,8 +91,7 @@ def test_the_readers_check_a_table_before_it_is_saved(tmp_path):
     folder.write_text(template("specexport"), encoding="utf-8")
     files = Table(list(kinds("specexport")[0].columns), [["a.csv", "WT", "AAAK", "1", "4", "2"]])
     assert table_problem("input.peptides", files, folder) is None
-    with pytest.raises(ValueError):
-        kinds("csv")
+    assert kinds("csv") == []  # a format hxex does not know: no tables, no error (B-3)
 
 
 # --- the Tables view of the window (offscreen) ---------------------------------------------------
@@ -383,3 +382,105 @@ def test_the_review_table_shades_rows_the_results_do_not_have(tables_view, monke
     assert editor.model.headerData(position, Qt.Orientation.Vertical) == "2"
     editor.set_cell(position, 0, "WT/a.mzML/6-9-GGGK-z2/scans30-40")  # corrected
     assert editor.notice_row.isHidden() and not editor.match.unmatched
+
+
+# --- the audit of 2026-11-15 (B-3, B-4, B-13, B-14, B-17, B-18, B-20, B-21, B-25, Q-14) -------
+
+def test_an_unknown_format_lists_no_tables_and_says_so(tables_view):
+    view, project = tables_view
+    view.show_project(project, {}, "mzML")
+    assert view.list.count() == 1 and "not one hxex knows" in view.list.item(0).text()
+    assert view.kind_at(0) is None and view.editor.table is None
+
+
+def test_a_new_table_asks_before_replacing_a_file_and_is_undoable(tables_view):
+    """A name typed without .csv replaced an existing table without asking, and the project
+    file's change was not recorded for Undo (B-4, B-17); the name suggested carries the project
+    file's name (Q-14)."""
+    from hxex.gui.table_editor import _suggested
+    from hxex.gui.user_tables import kinds
+
+    view, project = tables_view
+    view.show_table("review.table")
+    existing = project.parent / "user_review_table.csv"
+    existing.write_text("spectrum_id,review_status,review_K,note\ns1,rejected,,\n")
+    asked = []
+    view.ask_replace = lambda path: (asked.append(path), False)[1]
+    assert view.new_table(project.parent / "user_review_table") is None
+    assert asked == [existing] and "rejected" in existing.read_text()
+    written = []
+    view.write_settings = lambda changes, what: (written.append((changes, what)), [])[1]
+    view.ask_replace = lambda path: True
+    assert view.new_table(project.parent / "user_review_table") == existing
+    assert "rejected" not in existing.read_text() and written and "made" in written[0][1]
+    other = project.parent / "arm2.toml"
+    assert _suggested(kinds("mzml")[0], other) == "arm2_peptides.csv"
+    assert _suggested(kinds("mzml")[0], project) == "peptides.csv"
+
+
+def test_a_table_opens_in_its_files_order_and_is_not_read_again_for_a_settings_edit(tables_view,
+                                                                                   qtbot):
+    """A table opened sorted by the previous table's column (B-13), and every edit of a
+    setting read the table shown again, losing the selection (B-14)."""
+    view, project = tables_view
+    editor = view.editor
+    rt = project.parent / "retention_times.csv"
+    rt.write_text("sample,start_seq,end_seq,charge,rt\nS,1,8,2,5.0\nS,9,12,2,3.0\n")
+    pep = project.parent / "peptides.csv"
+    pep.write_text("Peptide,start_seq,end_seq,charge,rt_start,rt_end\nB,1,8,2,1,2\nA,9,12,2,1,2\n")
+    from hxex.project_edit import set_settings
+
+    set_settings(project, [("input.retention_times", '"retention_times.csv"'),
+                           ("input.peptides", '"peptides.csv"')], unfinished=True)
+    view.refresh()
+    view.show_table("input.peptides")
+    editor._sort_by(0)
+    assert editor._sort == (0, True) and editor._order == [1, 0]
+    view.show_table("input.retention_times")
+    assert editor._sort is None and editor._order == [0, 1]
+    editor.grid.setCurrentIndex(editor.model.index(1, 4))
+    reads = []
+    real = editor.reload
+    editor.reload = lambda: (reads.append(1), real())[1]
+    view.refresh()  # a settings edit: show_project again
+    assert not reads and editor.grid.currentIndex().row() == 1
+
+
+def test_encodings_blank_lines_and_read_only_files_are_handled(tmp_path):
+    """A plain "CSV" (Windows-1252) gave a codec error (B-18); blank lines shifted the row
+    numbers (B-21); a read-only table was replaced on Linux (B-20)."""
+    import os
+
+    from hxex.gui.user_tables import TableReadOnly, read_table, write_table
+
+    path = tmp_path / "t.csv"
+    path.write_bytes("spectrum_id,note\r\ns1,caf\xe9\r\n\r\ns2,x\r\n".encode("cp1252"))
+    table = read_table(path)
+    assert table.encoding == "Windows-1252" and "Windows-1252" in table.converted
+    assert [r[0] for r in table.rows] == ["s1", "", "s2"] and table.rows[0][1] == "café"
+    write_table(table, path)
+    assert path.read_bytes() == "spectrum_id,note\r\ns1,café\r\n\r\ns2,x\r\n".encode()
+    assert read_table(path).converted == ""
+    path.chmod(0o444)
+    try:
+        with pytest.raises(TableReadOnly, match="read-only"):
+            write_table(table, path)
+        assert os.access(path, os.R_OK)
+    finally:
+        path.chmod(0o644)
+
+
+def test_unsaved_edits_keep_their_tables_row_chosen(tables_view):
+    """With unsaved edits, the list showed no table as chosen beside the one being edited
+    (B-25)."""
+    view, project = tables_view
+    view.show_table("review.table")
+    path = view.new_table(project.parent / "user_review_table.csv")
+    view.refresh()
+    view.show_table("review.table")
+    view.editor.add_row()
+    assert view.editor.modified
+    view.refresh()
+    chosen = view.list.currentItem()
+    assert chosen is not None and chosen.data(0x0100) == "review.table"
+    assert path.exists()

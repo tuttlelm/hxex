@@ -223,9 +223,14 @@ and you can make them in a spreadsheet.
    replaces those whenever it writes the results.
 2. Open the copy in Excel (or any spreadsheet program). It has one row per spectrum. Fill in, for
    the spectra you have a view on:
-   - `review_status`: `rejected` to leave the spectrum out, or `accepted`. `unreviewed` or an
-     empty cell means no decision. An `accepted` spectrum is also kept when `hxex analyse`
-     would leave it out (it lists those in `left_out_spectra.csv`).
+   - `review_status`: `rejected` to leave the spectrum out, or `accepted`. An empty cell means
+     no decision, and so does `unreviewed`, which also clears a status stored in the results
+     themselves (one set from Python, or carried over by a rerun); a note stored there cannot
+     be cleared from the table. An `accepted` spectrum is also kept when `hxex analyse`
+     would leave it out (it lists those in `left_out_spectra.csv`). In a copy of `spectra.csv`,
+     a spectrum a `[[review.exclude]]` rule rejected reads `rejected`: empty that cell, or
+     removing the rule later leaves the spectrum rejected (the window's own copy leaves such
+     cells empty).
    - `review_K`: the number of populations to use for that spectrum, instead of the one the fit
      chose (`K`). *hxex* has already fitted every spectrum with each number from `k_min` to
      `k_max`, so this picks one of those fits; nothing is refitted. (With `[run.fit] screen =

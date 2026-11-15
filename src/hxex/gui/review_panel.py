@@ -10,6 +10,7 @@ without a bootstrap at it offers Resume, as ``hxex resume`` adds one.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 
@@ -58,6 +59,8 @@ class ReviewPanel(QGroupBox):
         self.workspace = workspace
         self.rows: list[int] = []  # the spectra's positions in the results
         self.pending: dict[str, Decision] = {}  # decisions not written yet (the table held)
+        # the notes of the bundle's own review layer, read when first needed: (key, notes)
+        self._bundle_cache: tuple[tuple | None, dict[str, str]] = (None, {})
         self.heading = QLabel("Select a spectrum, a time point or a series.")
         self.heading.setWordWrap(True)
         self.status = QButtonGroup(self)
@@ -250,9 +253,12 @@ class ReviewPanel(QGroupBox):
             self.k.insertItem(0, "(differs between the spectra)", "mixed")
             self.k.setCurrentIndex(0)
         notes = {self._note_of(i) for i in self.rows}
+        self.note.setToolTip("")
         if len(notes) == 1:  # one spectrum, or every one with the same note: shown
             self._shown_note = notes.pop()
             self.note.setText(self._shown_note)
+            if self._shown_note and self._notes_from_bundle(self._shown_note):
+                self.note.setToolTip(tip(BUNDLE_NOTE))
             self.note.setPlaceholderText("a note (kept with the decision)" if len(self.rows) == 1
                                          else "a note for each of these spectra")
         else:  # left empty: a note typed here replaces each one's, leaving it empty keeps them
@@ -260,6 +266,38 @@ class ReviewPanel(QGroupBox):
                                          "all")
         self.k.blockSignals(False)
         self.note.blockSignals(False)
+
+    def _bundle_notes(self) -> dict[str, str]:
+        """The notes the bundle's own review layer holds (set from Python, or carried over by
+        a rerun), by spectrum: a review table cannot clear them, as its empty note cell keeps
+        the stored note (audit of 2026-11-15, D-2). Read from the bundle once per results."""
+        project, results = self.project, self.workspace.results
+        if project is None or results is None:
+            return {}
+        created = results.settings.created if results.settings is not None else ""
+        key = (str(project), created)
+        if self._bundle_cache[0] != key:
+            notes: dict[str, str] = {}
+            try:
+                from ..config import load_project
+                from ..io import open_bundle
+
+                bundle = load_project(project, analysis_only=True).output.bundle
+                if bundle is not None and Path(bundle).exists():
+                    with open_bundle(bundle) as b:
+                        review = b.review()
+                    notes = {str(s): str(n) for s, n in zip(review.spectrum_id, review.note,
+                                                            strict=True) if n}
+            except Exception as exc:  # noqa: BLE001 (only the note's tooltip depends on it)
+                log.info("the bundle's own review notes were not read: %s", exc)
+            self._bundle_cache = (key, notes)
+        return self._bundle_cache[1]
+
+    def _notes_from_bundle(self, note: str) -> bool:
+        """Whether ``note``, shown for every spectrum of the selection, is the bundle's own."""
+        ids = [str(self.workspace.results.fit.spectrum_id[i]) for i in self.rows]
+        held = self._bundle_notes()
+        return bool(ids) and all(held.get(sid) == note for sid in ids)
 
     def _note_of(self, i: int) -> str:
         review = self.workspace.results.review
@@ -306,8 +344,13 @@ class ReviewPanel(QGroupBox):
         if status is not None or k_given or note is not None:
             for sid in ids:
                 old = self.pending.get(sid, Decision())
+                st = status
+                if status == "" and self._status_shown(sid):
+                    # not reviewed: written as such, as an empty cell keeps a status the
+                    # bundle's own review layer holds (audit of 2026-11-15, D-2)
+                    st = "unreviewed"
                 self.pending[sid] = Decision(
-                    status=old.status if status is None else status,
+                    status=old.status if st is None else st,
                     k=k if k_given else old.k, k_given=old.k_given or k_given,
                     note=old.note if note is None else note)
         if not self.pending:
@@ -328,7 +371,10 @@ class ReviewPanel(QGroupBox):
                 self.message.setText("Not saved: no review table chosen")
                 return False
         try:
-            path = make_review_table(project, results, chosen)
+            record = getattr(self.workspace.window, "recording", None)
+            with (record("the review table named in the project file") if record is not None
+                  else contextlib.nullcontext()):
+                path = make_review_table(project, results, chosen)
             write_decisions(path, self.pending, bundle_k, results=results)
         except TableLocked as exc:
             self.message.setText(f"Not saved yet: {exc}")
@@ -341,30 +387,44 @@ class ReviewPanel(QGroupBox):
             return False
         if self.workspace.window is not None:  # the results shown have this table's decisions
             self.workspace.window.results_review_stamp = table_stamp(project)
-        changed = self._lay_over(self.pending)
+        changed, kept = self._lay_over(self.pending)
         log.info("review: %d spectra in %s", len(self.pending), path.name)
         self.pending = {}
         self.retry.hide()
-        self.message.setText(f"Saved in {path.name}.")
+        self.message.setText(f"Saved in {path.name}." + (
+            f" The run's own note stays on {kept} spectra: the review table cannot clear it."
+            if kept else ""))
         self._offer_resume()
         self.decided.emit(changed)
         self._show_values()
         return True
 
-    def _lay_over(self, decisions: dict[str, Decision]) -> list[int]:
+    def _status_shown(self, sid: str) -> bool:
+        review = self.workspace.results.review
+        entry = review.get(sid) if review is not None else None
+        return bool(entry and entry["status"])
+
+    def _lay_over(self, decisions: dict[str, Decision]) -> tuple[list[int], int]:
         """The decisions laid over the results' review layer in memory (as reading the table
-        again would); the positions of the spectra they touch."""
+        again would: an emptied note gives back the bundle's own note); the positions of the
+        spectra they touch, and how many kept the bundle's note."""
         from ..io.bundle import ReviewTable
 
         results = self.workspace.results
         review = results.review if results.review is not None else ReviewTable.empty()
         index = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
+        held = self._bundle_notes() if any(d.note == "" for d in decisions.values()) else {}
+        kept = 0
         for sid, d in decisions.items():
+            note = d.note
+            if note == "" and held.get(sid):
+                note = held[sid]
+                kept += 1
+            status = "" if d.status == "unreviewed" else d.status
             review = review.update(
-                sid, status=d.status, k_override=(d.k or 0) if d.k_given else None,
-                note=d.note)
+                sid, status=status, k_override=(d.k or 0) if d.k_given else None, note=note)
         self.workspace.results = results.with_review(review)
-        return [index[s] for s in decisions if s in index]
+        return [index[s] for s in decisions if s in index], kept
 
     def _offer_resume(self) -> None:
         from ..review_table import missing_bootstraps
@@ -391,6 +451,8 @@ class ReviewPanel(QGroupBox):
             self.decide(status=status)
 
 
+# the note box's tooltip when its note is the bundle's own review layer's (D-2)
+BUNDLE_NOTE = "from the run's review layer; the table cannot clear it"
 # the message line when results are open without their project file
 RESULTS_ONLY = "Session is results only: open the project toml file to record decisions."
 

@@ -557,3 +557,113 @@ def test_decisions_waiting_for_a_held_table_do_not_follow_other_results(qtbot, w
     assert not page.review.pending and page.review.retry.isHidden()
     assert not page.review.message.text().startswith("Not saved")
     assert any("waiting for a held table dropped" in r.message for r in caplog.records)
+
+
+# --- the table as the commands read it (audit of 2026-11-15) -------------------------------------
+
+def test_a_spectrum_listed_twice_or_with_spaces_gets_the_decision_in_each_row(project_run,
+                                                                              tmp_path):
+    """A row pasted twice, and an id with spaces around it, read as one spectrum: the decision
+    goes in every row of it (no row added), so the commands still read the table (D-1)."""
+    _, results = project_run
+    ids = [str(s) for s in results.fit.spectrum_id]
+    path = tmp_path / "pasted.csv"
+    path.write_text("spectrum_id,review_status,review_K,note\n"
+                    f"{ids[0]},accepted,,\n{ids[0]},,,\n {ids[1]} ,,,\n", encoding="utf-8")
+    assert read_review_table(path).status == ("accepted",)  # reads as the user left it
+    write_decisions(path, {ids[0]: Decision(status="rejected", note="pasted twice"),
+                           ids[1]: Decision(status="accepted", k=1, k_given=True)})
+    table = read_table(path)
+    assert len(table.rows) == 3
+    sheet = read_review_table(path)
+    got = dict(zip(sheet.spectrum_id, zip(sheet.status, sheet.k, sheet.note, strict=True),
+                   strict=True))
+    assert got == {ids[0]: ("rejected", 0, "pasted twice"), ids[1]: ("accepted", 1, "")}
+
+
+def test_unreviewed_clears_a_status_the_bundle_holds(project_run, tmp_path):
+    """A status stored in the bundle's review layer comes back through an empty cell, and is
+    cleared by ``unreviewed`` written in the table (D-2)."""
+    from hxex.io.bundle import ReviewTable
+    from hxex.review_table import apply_review_table
+
+    _, results = project_run
+    ids = [str(s) for s in results.fit.spectrum_id]
+    stored = results.with_review(ReviewTable.empty().update(ids[0], status="rejected")
+                                 .update(ids[1], status="rejected"))
+    path = tmp_path / "t.csv"
+    path.write_text("spectrum_id,review_status,review_K,note\n"
+                    f"{ids[0]},,,\n{ids[1]},,,\n", encoding="utf-8")
+    write_decisions(path, {ids[0]: Decision(status="unreviewed"),
+                           ids[1]: Decision(status="")})
+    shown = apply_review_table(stored, read_review_table(path))
+    assert shown.review_status[0] == "unreviewed"
+    assert shown.review_status[1] == "rejected"  # an empty cell keeps the stored status
+
+
+def test_a_table_made_by_the_window_leaves_the_rules_to_the_rules(project_run, tmp_path):
+    """The spectra an [[review.exclude]] rule rejects are written without a status or the
+    rule's note, so a rule removed later gives them back (D-15)."""
+    from hxex.exclusions import Exclusion, exclude_from_results
+
+    project, results = project_run
+    ids = [str(s) for s in results.fit.spectrum_id]
+    excluded = exclude_from_results(results, [Exclusion(spectrum_id=ids[3], note="co-elution")])
+    assert excluded.review_status[3] == "rejected"
+    copy = tmp_path / "copy.toml"
+    copy.write_text(project.read_text().split("\n[review]")[0])
+    path = make_review_table(copy, excluded, tmp_path / "made.csv")
+    table = read_table(path)
+    col = {name: table.columns.index(name) for name in ("spectrum_id", "review_status", "note")}
+    row = next(r for r in table.rows if r[col["spectrum_id"]] == ids[3])
+    assert row[col["review_status"]] == "" and row[col["note"]] == ""
+    assert ids[3] not in read_review_table(path).spectrum_id
+
+
+def test_a_decision_the_bundle_holds_is_cleared_or_said_to_stay(qtbot, window_on):
+    """A status and a note stored in the bundle's own review layer (set from Python): "not
+    reviewed" writes ``unreviewed``, which the commands read as cleared; an emptied note is
+    written empty, but the bundle's note comes back, so the window keeps showing it and says
+    why (D-2)."""
+    from hxex.gui.review_panel import BUNDLE_NOTE
+    from hxex.gui.tips import tip
+    from hxex.io import open_bundle
+    from hxex.report.notebook import load_results
+
+    window, project, open_ = window_on
+    sid = _first_spectrum(open_(project))[1].toolTip(0)
+    with open_bundle(project.parent / "out") as b:
+        b.set_review(b.review().update(sid, status="rejected", note="from Python"))
+    page = _reopened(qtbot, window, project)
+    i = page.results.find(sid)
+    assert page.results.review_status[i] == "rejected"
+    page.tree.setCurrentItem(_first_spectrum(page)[1])
+    panel = page.review
+    assert panel.note.text() == "from Python" and panel.note.toolTip() == tip(BUNDLE_NOTE)
+    panel.decide(status="")
+    table = project.parent / "user_review_table.csv"
+    cells = read_table(table)
+    row = next(r for r in cells.rows if r[cells.columns.index("spectrum_id")] == sid)
+    assert row[cells.columns.index("review_status")] == "unreviewed"
+    assert load_results(project).review_status[i] == "unreviewed"
+    page = _reopened(qtbot, window, project)
+    page.tree.setCurrentItem(_first_spectrum(page)[1])
+    panel = page.review
+    assert panel.status.checkedId() == 0  # read back cleared
+    panel.note.setText("")
+    panel.note.editingFinished.emit()
+    cells = read_table(table)
+    row = next(r for r in cells.rows if r[cells.columns.index("spectrum_id")] == sid)
+    assert row[cells.columns.index("note")] == ""
+    assert panel.note.text() == "from Python" and panel.note.toolTip() == tip(BUNDLE_NOTE)
+    assert "cannot clear it" in panel.message.text()
+    assert load_results(project).review.get(sid)["note"] == "from Python"  # as the commands
+
+
+
+def _reopened(qtbot, window, project):
+    """The project's results read again, as reopening the project does."""
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    window.open_results(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    return window.results_page
