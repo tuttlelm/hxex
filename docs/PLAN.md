@@ -1739,7 +1739,7 @@ Planned, not built:
    before the peptide. The windows used for that dataset's series without HDExaminer windows (one
    time per sample and labelling time, +-0.15 min, given to every replicate file) missed in files
    whose elution ran differently, because the injections alternate between two reverse-phase
-   columns. Steps, in this order (6 independent of the rest), each measured before it is built:
+   columns. Steps, in this order (6 and 7 independent of the rest), each measured before it is built:
    1. **Finish the profile fit (item 31's branch), with a quality measure per spectrum.** Replace
       `unexplained` with `purity`: within each bin's footprint (+-1 peak width around its fitted
       position), the share of the profile the bins' model accounts for (the smaller of model and
@@ -1807,6 +1807,19 @@ Planned, not built:
       Options: replace it with a sign measured on the spectrum itself (its tallest peak flattened
       against its neighbours, as `saturated` does for controls), or remove it (flags.md, outputs.md,
       the tutorial's step on bright spectra). Measure the replacement before deciding.
+   7. **Can the peptide's envelope explain the picked values?** (owner, 2026-11-14: "maybe 1,
+      not 2, maybe 3".) No one check answers it: `screen_beyond_reach`, `screen_below_mono`,
+      `narrow_component`, `above_amides` and `poor_fit` each cover a part, and `poor_fit` judges a
+      spectrum against its series' median misfit, so a series wrong throughout passes. With K
+      free, a shape the peptide could not make is usually explained by one more population (an
+      interferent on the isotope grid becomes population 2). Maybe: (a) an absolute lack-of-fit
+      test at the chosen K against the per-bin noise model (now the default and roughly
+      calibrated); tried once in the presets study, where the per-bin chi-square was heavy-tailed
+      and the gate was left as it is; retry with today's noise model; (b) the existing pieces
+      gathered into one per-spectrum verdict, so a user sees in one place that the shape is not
+      the peptide's. Not pursued (owner): judging a second population by its behaviour along the
+      time course. First: how many of item 33's bright spectra off their replicates and the
+      silent dim ones fail (a), against how many good spectra.
    Evidence (scratch, benchmark): a column-aware table (HDExaminer's per-file windows for its
    series; another charge's per-file window for 169 of the 445 series it lacks; the rest the
    single time +-0.15 min) beat the single times everywhere: replicate sd q90 0.258 -> 0.221 D
