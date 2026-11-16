@@ -22,11 +22,13 @@ from .tables import find_series, series_table
 log = logging.getLogger(__name__)
 
 
-def load_results(path: str | Path = "hxex.toml") -> Results:
+def load_results(path: str | Path = "hxex.toml", *, unfitted: str = "raise") -> Results:
     """The results of a project file (its bundle with its ``[review]`` applied, as ``hxex report
     hxex.toml`` uses them, and its ``[figures]`` settings, which :func:`show_series` draws
     with) or of a bundle folder or zip (its own review layer only). Load them again after
-    changing the project file."""
+    changing the project file. A review choosing a K the run's screen skipped for a spectrum
+    is refused (``hxex resume`` fits it), or with ``unfitted="keep"`` kept and the spectrum
+    shown at the fit's K (:attr:`Results.unfitted_choices`), as the window loads results."""
     from ..io import open_bundle
     from ..review_table import apply_view
 
@@ -43,7 +45,8 @@ def load_results(path: str | Path = "hxex.toml") -> Results:
         if b.pending:
             log.warning("%s is waiting for its %s ('hxex resume' adds it)", bundle,
                         ", ".join(b.pending))
-        results = dataclasses.replace(apply_view(Results.from_bundle(b), review), figures=figures)
+        results = dataclasses.replace(apply_view(Results.from_bundle(b), review,
+                                                 unfitted=unfitted), figures=figures)
     if results.loader is not None:  # the bundle is closed now (a zip cannot be read closed)
         created = results.settings.created if results.settings is not None else ""
         results = dataclasses.replace(results, loader=_reopening(bundle, created))

@@ -8,7 +8,11 @@ would type it: ``review_status`` (``accepted``, ``rejected``, empty, or ``unrevi
 clears a status the bundle itself holds), ``review_K`` (a K, or empty for the fit's choice; ``0``
 clears a K the bundle itself chose), and ``note``, in the row of the spectrum (in every row of it,
 when the table lists it twice; a row is added for a spectrum the table does not list). Other
-columns, and columns of the user's own, stay as they are. When the project names no table,
+columns, and columns of the user's own, stay as they are. A row that says something carries
+its note cell, empty included (the commands read it so: the notes rule, owner 2026-11-15), so a
+decision without a note of its own fills an empty cell with the note shown, and a note emptied
+on a spectrum with no other decision is written with ``unreviewed`` (or the status shown)
+beside it. When the project names no table,
 :func:`make_review_table` writes one from the results' spectra (the guide's suggested name, beside
 the project file) and names it in the project file.
 """
@@ -142,6 +146,17 @@ def write_decisions(path: Path, decisions: dict[str, Decision], bundle_k: dict[s
         from ..review_table import results_moves
 
         moved = {new: old for old, new in results_moves(results, list(rows)).moved.items()}
+    # a row that says something replaces the stored note with its own note cell, empty
+    # included (the notes rule): a decision without a note of its own writes the note shown
+    # (the results' review layer's) into a row whose cell is empty, so that a status or K
+    # chosen does not lose the run's own note
+    shown: dict[str, str] = {}
+    if results is not None and results.review is not None:
+        for sid, d in decisions.items():
+            if d.note is None and (d.status is not None or d.k_given):
+                entry = results.review.get(str(sid).strip())
+                if entry and entry["note"]:
+                    shown[str(sid).strip()] = str(entry["note"])
     for sid, d in decisions.items():
         sid = str(sid).strip()
         mine = rows.get(sid)
@@ -166,4 +181,6 @@ def write_decisions(path: Path, decisions: dict[str, Decision], bundle_k: dict[s
                 row[col["review_K"]] = fit_k if d.k is None else str(int(d.k))
             if d.note is not None:
                 row[col["note"]] = d.note
+            elif sid in shown and not row[col["note"]].strip():
+                row[col["note"]] = shown[sid]
     write_table(table, path)

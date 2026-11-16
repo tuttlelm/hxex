@@ -802,11 +802,24 @@ click **Export data** above its figures (see [The *hxex* window](gui.md#exportin
   that keeps it a whole number (`20 h`, `30 min`, `90 sec`, `500 ms`), with the second and
   later replicates of a time marked as HX-Express marks them: `30 min`, `30.01 min`,
   `30.02 min`. Results whose points have no real times (`[input] time_scale =
-  "order"`) get dummy times, each point's place in the order in seconds (`1 sec`, `2 sec`, and
-  so on); the messages list which point became which time. Rejected spectra are left out
+  "order"`) get each point's own value from your files as that many seconds (a point you
+  numbered 2 is written `2 sec`), so every series of the results labels a point the same way;
+  the messages list which point became which time. Rejected spectra are left out
   (accept one again to include it). The file is named as *hxex* reads HX-Express files,
   `SAMPLE_START-END-SEQUENCE-zCHARGE-hxex.xlsx`, with the sequence in one-letter form:
-  modifications and terminal groups are not in the name, so enter them in HX-Express. On a
+  modifications and terminal groups are not in the name, so enter them in HX-Express. The
+  last part of the name (after the charge) is free text that HX-Express does not read. *hxex*
+  writes `hxex` there for a peptide, and for a fragment ion its ion type and the scans it was
+  read in (`c_1_MS2`, `c_1_MS3`, `M_MS2` for the precursor read with the fragments). No two
+  series of the results get the same name: where two would, the free text also says what
+  tells them apart, the modified form the one-letter sequence leaves out (`hxex_PEPacKTIDE`),
+  the fragment list's label or scan conditions (`c_MS2_ETD`), or the parent's residues when one
+  fragment ion comes from two parents (`c_1_MS2_parent_12_20`), and the series' number
+  (`hxex_id12`) only when nothing else does. A peptide numbered below residue 0 (a sequence
+  numbered from a tag) is written all the same (`WT_-3-10-...`; HX-Express does not mind), but
+  the window and the messages warn that *hxex* cannot read the peptide back from that name
+  by itself, because `-` separates the name's parts: to read such a file into *hxex* again, list
+  it with its peptide in [a peptide table](inputs.md#listing-the-files-in-a-table). On a
   peptide's row, the same writes one file for each of its charges.
 - **Export plot data** writes CSV files with what the series' figures draw, so you can draw
   them in your own style. Select a time point or a replicate to export only that part.
@@ -823,13 +836,15 @@ click **Export data** above its figures (see [The *hxex* window](gui.md#exportin
   | `_components.csv` | these spectra's rows of `components.csv`, one row per spectrum and population: the points of the populations page, the deuterium level across (`mean_corrected`, or `mean` for a series without controls) and the share up (`population`), with their error bars (`mean_corrected_se` or `mean_se`, `population_se`); `rank` numbers the populations from the lowest deuterium level, as `population_1`, `population_2`, ... do in `_bins.csv` |
   | `_components_bootstrap.csv` | one row per spectrum, population, and bootstrap resample: the cloud of pale points the populations page draws behind each population (`mean`, `mean_corrected`, `population`, with `rank` as in `_components.csv` and the resample's number in `resample`). Written when the results kept the resamples: they do by default since 2026-11-13 (`[run.bootstrap] keep_draws`); earlier results have none |
   | `_uptake.csv` | these spectra's rows of `uptake.csv`: the uptake page's values for each time point, the replicates combined |
-  | `_about.csv` | the *hxex* version, the run, whether the bins hold peak heights or areas, whether the values are corrected for back-exchange, which fits were written, and whether the raw spectra and the bootstrap resamples are included |
+  | `_about.csv` | the *hxex* version, the run, whether the bins hold peak heights or areas, whether the values are corrected for back-exchange, which fits were written, whether the raw spectra and the bootstrap resamples are included, and the files that belong to this export (`files`) |
 
   The values are as measured (not scaled to the tallest peak). By default the bins file holds
   each spectrum's fit at the number of populations in effect; choose **every fitted K** to
   have them all.
 
-Both ask for a folder (by default `hxex_exports` beside the results) and take an optional
+Both ask for a folder (by default `hxex_exports` beside the results; a folder you type
+without its full location, such as `exports`, is counted from the results' folder too, and
+the window shows its full location under it) and take an optional
 prefix and suffix for the names. For HX-Express the suffix goes at the end of the name
 (`...-hxex_SUFFIX.xlsx`) and the prefix before the sample, so *hxex* reads it as part of the
 sample's name if the file is read back; neither may hold `-`, which separates the fields of an
@@ -837,8 +852,14 @@ HX-Express file name (use `_`). The plot-data files take the prefix at the start
 and the suffix after the series' name (`..._z2_SUFFIX_bins.csv`), and any characters a file
 name can hold. Where two series of the results have the same label (sample, residues, peptide,
 and charge), the plot-data names end in the series' number (`_id12`) to keep them apart.
-The window shows the names before writing, and asks before replacing a file that is already
-there.
+A name too long for your computer's file system is refused with the reason (shorten the
+prefix or suffix). The window shows the names, and how many files it writes, before writing;
+it refuses to export when two of the things selected would get the same name. It asks before
+replacing files that are already there, naming the files this export writes. A file of an
+earlier export with the same name that this export does not write (for example an earlier
+`_components_bootstrap.csv`, after the review changed a spectrum's number of populations) is
+named in the question as left from the earlier export: *hxex* never deletes it, so check
+`_about.csv`'s `files` for which files belong together.
 
 ## Sharing results
 

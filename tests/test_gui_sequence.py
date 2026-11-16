@@ -77,6 +77,8 @@ def test_the_sequences_a_run_stored_stand_in_for_missing_files(tmp_path):
     data.mkdir()
     (data / "WT.fasta").write_text(">WT/3-12\nMKPLAAGDKE\n", encoding="utf-8")
     (data / "M1.fasta").write_text(">M1/3-12\nMKPLAHGDKE\n", encoding="utf-8")
+    (data / "WT").mkdir()
+    (data / "M1").mkdir()
     (tmp_path / "out").mkdir()
     stored = {"WT": {"sequence": "MKPLAAGDKE", "first": 3, "file": "WT.fasta"},
               "M1": {"sequence": "MKPLAAGDKE", "first": 3, "file": "M1.fasta"}}
@@ -89,7 +91,7 @@ def test_the_sequences_a_run_stored_stand_in_for_missing_files(tmp_path):
     rows, _, message = project_sequences(path)
     assert [r.samples for r in rows] == [["M1"], ["WT"]]  # the files, as they are now
     assert message.startswith("M1.fasta differs from the copy the run stored")
-    for f in data.iterdir():
+    for f in data.glob("*.fasta"):
         f.unlink()
     rows, _, message = project_sequences(path)
     assert [r.samples for r in rows] == [["M1", "WT"]] and rows[0].first == 3
@@ -105,6 +107,8 @@ def test_only_the_samples_the_project_reads(tmp_path):
     (data / "WT.fasta").write_text(">WT/3-12\nMKPLAAGDKE\n", encoding="utf-8")
     (data / "M1.fasta").write_text(">M1/3-12\nMKPLAHGDKE\n", encoding="utf-8")
     (data / "M2.FASTA").write_text(">M2/3-12\nMKPLAWGDKE\n", encoding="utf-8")
+    for name in ("WT", "M1", "M2"):
+        (data / name).mkdir()
     path = tmp_path / "hxex.toml"
     head = 'project = "seq"\n\n[input]\nformat = "specexport"\ndata_dir = "SpecExport"\n'
     path.write_text(head, encoding="utf-8")
@@ -139,7 +143,7 @@ def test_coverage_runs_under_each_samples_sequence(tmp_path):
                         "WT": [(3, 7, "0003-0007"), (5, 8, "0005-0008")]}  # 9-12 rejected
     assert [depth(coverage["WT"], n) for n in (3, 5, 9)] == [1, 2, 0]
     text = sequence_html(rows, annotations, coverage=coverage)
-    assert "peptides covering a residue (1 to 2)" in text and "·" in text
+    assert "MS1 peptides covering a residue (1 to 2;" in text and "·" in text
     assert text.count("█") >= 1  # residues 5-7 of WT, at the most
     said = describe(rows, annotations, 0, 6, coverage)
     assert "WT: 2 peptide(s), 3-7, 5-8" in said
@@ -267,3 +271,107 @@ def test_a_project_without_sequences_leaves_nothing_of_the_one_before(qtbot, tmp
     view.show_project(None)
     assert view.text.toPlainText() == "No project file open."
     assert view.about.text() == ABOUT and view._message == ""
+
+
+def _stored_project(tmp_path, fasta_line: str = "") -> object:
+    """A SpecExport project whose run stored WT's and M1's sequences in its bundle, with
+    WT.fasta and M1.fasta beside their sample folders."""
+    import json
+
+    from hxex.io.bundle import KIND, MANIFEST
+
+    data = tmp_path / "SpecExport"
+    data.mkdir()
+    for name, seq in (("WT", "MKPLAAGDKE"), ("M1", "MKPLAHGDKE")):
+        (data / f"{name}.fasta").write_text(f">{name}/3-12\n{seq}\n", encoding="utf-8")
+        (data / name).mkdir()
+    (tmp_path / "out").mkdir()
+    stored = {"WT": {"sequence": "MKPLAAGDKE", "first": 3, "file": "WT.fasta"},
+              "M1": {"sequence": "MKPLAHGDKE", "first": 3, "file": "M1.fasta"}}
+    (tmp_path / "out" / MANIFEST).write_text(json.dumps(
+        {"kind": KIND, "configs": {"spectra_source": {"reader": "specexport",
+                                                      "sequences": stored}}}))
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "seq"\n\n[input]\nformat = "specexport"\ndata_dir = "SpecExport"\n'
+                    '\n[output]\nbundle = "out"\n' + fasta_line, encoding="utf-8")
+    return path
+
+
+def test_one_missing_fasta_takes_the_stored_copy_with_a_note(tmp_path):
+    """E-14: one sample's FASTA deleted: that sample is shown with the copy the run stored in
+    its bundle, and a note names the file (it no longer drops out without a word)."""
+    path = _stored_project(tmp_path)
+    (tmp_path / "SpecExport" / "M1.fasta").unlink()
+    rows, _, message = project_sequences(path)
+    assert sorted(s for r in rows for s in r.samples) == ["M1", "WT"]
+    m1 = next(r for r in rows if "M1" in r.samples)
+    assert m1.first == 3 and m1.at(8) == "H"  # the stored copy, numbered as stored
+    assert message == ("M1.fasta is not found: the sequence the run stored in its bundle is "
+                       "shown for M1.")
+
+
+def test_a_missing_analysis_fasta_file_takes_the_stored_copy(tmp_path):
+    """Open question 6: an [analysis] fasta entry naming a missing file shows the sequence the
+    run stored, with a note naming the file, not an error; a sample the run stored nothing
+    for is said."""
+    path = _stored_project(tmp_path, '\n[analysis.fasta]\nWT = "SpecExport/WT.fasta"\n'
+                                     'M1 = "gone/M1.fasta"\n')
+    rows, _, message = project_sequences(path)
+    assert sorted(s for r in rows for s in r.samples) == ["M1", "WT"]
+    assert "does not read" not in message
+    assert message == ("M1.fasta is not found: the sequence the run stored in its bundle is "
+                       "shown for M1.")
+    path.write_text(path.read_text(encoding="utf-8").replace("M1 =", "M9 ="), encoding="utf-8")
+    rows, _, message = project_sequences(path)
+    assert [r.samples for r in rows] == [["WT"]]
+    assert "M1.fasta ([analysis] fasta, M9) is not found, and the run stored no copy" in message
+    # one file for every sample, missing: each sample's stored copy
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text[:text.index("\n[analysis.fasta]")]
+                    + '\n[analysis]\nfasta = "gone/all.fasta"\n', encoding="utf-8")
+    rows, _, message = project_sequences(path)
+    assert sorted(s for r in rows for s in r.samples) == ["M1", "WT"]
+    assert message == ("all.fasta is not found: the sequences the run stored in its bundle are "
+                       "shown.")
+
+
+def test_a_fasta_without_its_sample_folder_is_left_out(tmp_path):
+    """Open question 7: a SAMPLE.fasta with no sample folder of its name beside it (the reader
+    does not read it) is left out of the view, with a note."""
+    data = tmp_path / "SpecExport"
+    data.mkdir()
+    (data / "WT.fasta").write_text(">WT/3-12\nMKPLAAGDKE\n", encoding="utf-8")
+    (data / "WT").mkdir()
+    (data / "M1.fasta").write_text(">M1/3-12\nMKPLAHGDKE\n", encoding="utf-8")
+    (data / "m1").mkdir()  # another case: not M1's folder for the reader
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "seq"\n\n[input]\nformat = "specexport"\n'
+                    'data_dir = "SpecExport"\n', encoding="utf-8")
+    rows, _, message = project_sequences(path)
+    assert [r.samples for r in rows] == [["WT"]]
+    assert message == ("M1.fasta has no sample folder of its name beside it, so hxex does not "
+                       "read it: left out.")
+
+
+def test_the_coverage_counts_ms1_peptides_only(tmp_path):
+    """E-21: fragment ions (an ion type other than M) do not count as peptides covering a
+    residue; the legend says the coverage is of MS1 peptides."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from hxex.gui.sequence_view import coverage_of
+
+    binned = SimpleNamespace(
+        spectrum_id=np.array(["a", "b", "c"]), sample=np.array(["WT", "WT", "WT"]),
+        start_seq=np.array([3, 3, 3]), end_seq=np.array([12, 4, 5]),
+        peptide_range=np.array(["0003-0012", "0003-0004", "0003-0005"]),
+        data_id=np.array([0, 1, 2]),
+        modification=np.array(["", "ion_type:c", "ion_type:z"]))
+    results = SimpleNamespace(binned=binned, fit=SimpleNamespace(spectrum_id=binned.spectrum_id),
+                              review_status=np.array(["", "", ""]), settings=None)
+    assert coverage_of(results) == {"WT": [(3, 12, "0003-0012")]}
+    rows, annotations, _ = project_sequences(_project(tmp_path, "/3-12"))
+    text = sequence_html(rows, annotations, coverage=coverage_of(results))
+    assert "MS1 peptides covering a residue (1 to 1; fragment ions not counted)" in text
+

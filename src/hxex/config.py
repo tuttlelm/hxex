@@ -347,11 +347,44 @@ def run_config_from(data: Mapping) -> RunConfig:
             try:
                 cls.from_dict(value)
             except (TypeError, ValueError) as exc:
-                raise ProjectError(f"[run.{key}]: {exc}") from exc
+                raise ProjectError(_section_message(f"run.{key}", exc)) from exc
     try:
         return RunConfig.from_dict(merged)
     except (TypeError, ValueError) as exc:
-        raise ProjectError(f"[run]: {exc}") from exc
+        raise ProjectError(_section_message("run", exc)) from exc
+
+
+# the config classes of the tables nested under [run.fit], for naming them in a refusal
+_NESTED_TABLES = {"Backend": "run.fit.backend", "NoiseConfig": "run.fit.noise"}
+_UNEXPECTED = re.compile(r"(\w+)\.__init__\(\) got an unexpected keyword argument '(\w+)'")
+
+
+def _section_message(where: str, exc: Exception) -> str:
+    """A config class's own refusal as a line for people: ``[run.fit.backend] has no setting
+    named foo`` for Python's unexpected-keyword error, and a nested table's value refusal
+    named by its table (``[run.fit.backend] device must be ...``), not its parent's (the
+    window showed Python's wording unchanged: audit of 2026-11-15, B-30)."""
+    text = str(exc)
+    if (m := _UNEXPECTED.fullmatch(text)) is not None:
+        table = _NESTED_TABLES.get(m.group(1), where)
+        return f"[{table}] has no setting named {m.group(2)}"
+    for table in _NESTED_TABLES.values():
+        cls = _nested_class(table)
+        if cls is not None and table.startswith(where + ".") \
+                and text.split(" ")[0] in {f.name for f in fields(cls)}:
+            return f"[{table}] {text}"
+    return f"[{where}]: {text}"
+
+
+def _nested_class(table: str):
+    """The config class of a table nested under [run.fit] (``run.fit.backend``)."""
+    try:
+        from .fit import FitConfig
+
+        hints = _hints(FitConfig)
+        return _config_class(hints[table.rsplit(".", 1)[1]])
+    except (KeyError, ImportError, TypeError):
+        return None
 
 
 @dataclass(frozen=True)

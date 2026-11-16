@@ -56,10 +56,21 @@ def test_the_analysis_is_computed_shown_and_marked_out_of_date(qtbot, tmp_path, 
     assert page.change.isVisibleTo(page) and page.change.text() == "Change [[analysis.regions]]…"
     page.change.click()
     assert window.tabs.currentWidget() is window.project_page
-    # a review decision (new results) marks it out of date, keeping the figures
+    # the same results read again (a [figures] change) are no change (E-9) ...
     window.tabs.setCurrentWidget(page)
     shown = page.outputs
-    window.results_page.results = dataclasses.replace(window.results_page.results)
+    results = window.results_page.results
+    window.results_page.results = dataclasses.replace(results)
+    page.refresh()
+    assert page.why_out_of_date() == "" and "as hxex analyse would write them" in page.status.text()
+    # ... and the analysis keeps no Results object (E-22)
+    assert not isinstance(page._analyses["S"][1][0], type(results))
+    # a review decision (new results) marks it out of date, keeping the figures
+    from hxex.io.bundle import ReviewTable
+
+    review = results.review if results.review is not None else ReviewTable.empty()
+    window.results_page.results = results.with_review(
+        review.update(str(results.fit.spectrum_id[0]), status="rejected"))
     page.refresh()
     assert "Out of date: the results changed" in page.status.text()
     assert page.outputs is shown and page.compute_button.text() == "Recompute"
@@ -117,8 +128,9 @@ def test_several_references_are_chosen_and_kept(qtbot, tmp_path, project):
     assert names.index("coverage") < names.index(None, 1) < names.index("woods")
     assert not heads[0].flags() & Qt.ItemFlag.ItemIsSelectable
     coverage = _items(page)["coverage"].child(0)
-    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
-        page.list.setCurrentItem(coverage)
+    page.list.setCurrentItem(coverage)  # the first figure: drawn by the Compute already (E-20)
+    qtbot.waitUntil(lambda: page.panel.view.figure is not None and not page.panel.drawing,
+                    timeout=60000)
     drawn = page.panel.view.figure
     page.reference.setCurrentIndex(1)  # V: computed when asked
     assert page.outputs is None and "Not computed yet against V" in page.status.text()
@@ -417,3 +429,112 @@ def test_a_recompute_waiting_for_its_results_does_not_start_for_others(
                     and window.results_path == two_sample_bundle.absolute(), timeout=30000)
     qtbot.wait(300)
     _nothing_computed(page)  # not started for the bundle
+
+
+# --- fix Session 5 (audit of 2026-11-15) ---------------------------------------------------------
+
+def _computed_window(qtbot, tmp_path, project):
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    page.compute()
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    qtbot.waitUntil(lambda: page.panel.view.figure is not None and not page.panel.drawing,
+                    timeout=60000)
+    return window, page
+
+
+def test_a_reference_named_like_a_number_or_a_date_is_written_as_text(qtbot, tmp_path, project):
+    """E-8: the reference chosen in the bar is written quoted, so a sample named "37" or
+    "2026-11-01" is read as text, not refused or taken for a number."""
+    from hxex.config import load_project
+
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    for name in ("37", "2026-11-01"):
+        page.choose_reference.addItem(name, name)
+        page._reference_chosen(page.choose_reference.count() - 1)
+        assert load_project(project, analysis_only=True).analysis.reference == name
+        assert f'reference = "{name}"' in project.read_text(encoding="utf-8")
+
+
+def test_a_recompute_draws_the_figure_shown_once(qtbot, tmp_path, project):
+    """E-15: a Recompute drew the figure shown twice (refresh, then _computed again)."""
+    window, page = _computed_window(qtbot, tmp_path, project)
+    draws = []
+    page.panel.drawn.connect(lambda: draws.append(1))
+    first = page.outputs
+    page.compute()
+    qtbot.waitUntil(lambda: page.outputs is not first and not page.computing, timeout=120000)
+    qtbot.waitUntil(lambda: not page.panel.drawing and bool(draws), timeout=60000)
+    qtbot.wait(500)
+    assert len(draws) == 1
+
+
+def test_a_refresh_keeps_the_kinds_opened(qtbot, tmp_path, project):
+    """E-16: every refresh closed the kinds the user had opened."""
+    window, page = _computed_window(qtbot, tmp_path, project)
+    items = _items(page)
+    for kind in ("coverage", "woods"):
+        items[kind].setExpanded(True)
+    assert items["coverage"].isExpanded() and items["woods"].isExpanded()
+    page.refresh()
+    items = _items(page)
+    assert items["coverage"].isExpanded() and items["woods"].isExpanded()
+    assert not items["butterfly"].isExpanded()
+
+
+def test_a_refresh_while_the_results_are_read_again_keeps_compute_busy(qtbot, tmp_path, project):
+    """E-19: during the re-read before a Recompute, a refresh enabled Compute and replaced the
+    line."""
+    window, page = _computed_window(qtbot, tmp_path, project)
+    window.results_review_stamp = ("a review table", "changed since")  # read again first
+    page.compute()
+    assert window.loading and not page.computing
+    page.refresh()
+    assert not page.compute_button.isEnabled()
+    assert "Reading the results again" in page.status.text()
+    qtbot.waitUntil(lambda: not window.loading and not page.computing, timeout=120000)
+    assert page.compute_button.isEnabled()
+
+
+def test_relative_analysis_paths_count_from_the_project_files_real_folder(qtbot, tmp_path,
+                                                                        project):
+    """E-25: a project file reached through a link takes its relative [analysis] paths from
+    the real folder, as hxex analyse does."""
+    link = tmp_path / "elsewhere"
+    link.mkdir()
+    linked = link / "hxex.toml"
+    try:
+        linked.symlink_to(project)
+    except (OSError, NotImplementedError):
+        pytest.skip("no symbolic links here")
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(linked)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    assert window.analysis_page._settings()[1] == project.parent
+
+
+def test_stop_ends_the_computation_and_keeps_the_figures(qtbot, tmp_path, project, monkeypatch):
+    """E open question 2: a Stop beside Compute; the library stops at its next step, nothing
+    of it is shown, and the figures of the earlier analysis stay."""
+    window, page = _computed_window(qtbot, tmp_path, project)
+    first = page.outputs
+    started, release, outcome = _held_analysis(monkeypatch)
+    assert not page.stop_button.isVisibleTo(page)
+    page.compute()
+    assert started.wait(30) and page.computing
+    assert page.stop_button.isVisibleTo(page) and not page.compute_button.isEnabled()
+    page.stop()
+    assert not page.computing and not page.stop_button.isVisibleTo(page)
+    assert page.status.text().startswith("The computation was stopped")
+    assert page.compute_button.isEnabled() and page.outputs is first
+    release.set()
+    qtbot.waitUntil(lambda: "end" in outcome, timeout=120000)
+    qtbot.wait(300)
+    assert outcome["end"] == "cancelled" and page.outputs is first

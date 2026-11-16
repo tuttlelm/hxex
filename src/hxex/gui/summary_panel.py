@@ -122,25 +122,31 @@ class SummaryPanel(DataPanel):
             "CSV (*.csv);;Markdown table (*.md)")
         if not path:
             return
-        markdown = path.lower().endswith(".md") or (
-            "Markdown" in chosen and not path.lower().endswith(".csv"))
-        if not Path(path).suffix:
+        # the filter chosen decides, unless the name ends in the other one's suffix; Markdown
+        # chosen for a name without .md gets it (E-17: summary.txt saved with the Markdown
+        # filter was written as CSV), a name without a suffix gets the format's
+        suffix = Path(path).suffix.lower()
+        markdown = suffix == ".md" or ("Markdown" in chosen and suffix != ".csv")
+        if (markdown and suffix != ".md") or not suffix:
             path += ".md" if markdown else ".csv"
         try:
-            self.save(path)
+            self.save(path, markdown=markdown)
         except OSError as exc:
             self.count.setText(f"Not saved: {exc}")
             log.error("the summary was not saved: %s", exc)
 
-    def save(self, path: str | Path) -> Path:
+    def save(self, path: str | Path, markdown: bool | None = None) -> Path:
         """Write the summary as ``summary.csv`` holds it (the notes after a blank row), or as
-        the Markdown table for a path ending in ``.md``."""
+        the Markdown table with ``markdown`` true (None: for a path ending in ``.md``). The
+        path is written as given."""
         from ..report.summary import summary_markdown
         from ..report.tables import write_csv
 
         path = Path(path)
         columns = {n: np.asarray(v, dtype=object) for n, v in (self._columns or {}).items()}
-        if path.suffix.lower() == ".md":
+        if markdown is None:
+            markdown = path.suffix.lower() == ".md"
+        if markdown:
             path.write_text(summary_markdown(columns), encoding="utf-8")
         else:
             path = Path(write_csv(columns, path))

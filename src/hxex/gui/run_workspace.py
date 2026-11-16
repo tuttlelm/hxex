@@ -17,6 +17,7 @@ the others (:mod:`hxex.gui.logs`; owner, 2026-11-08).
 
 from __future__ import annotations
 
+import contextlib
 import html
 import logging
 import time
@@ -64,7 +65,12 @@ COMMANDS = (("Check", "check", "check the project file and show what would be re
             ("Info", "info", "what the results hold"))
 CHANGES_RESULTS = ("run", "resume", "report")  # the window shows the results again after these
 DEVICE_SETTING = "[run.fit.backend] device"  # the project file's device setting, by its name
-REFUSED = "--keep-previous"  # in the message of a command refusing to write over its output
+# the commands that take --overwrite and --keep-previous, and the words their refusal to write
+# over earlier output has (hxex.io.outputs.prepare_output, cmd_run, cmd_report); any other
+# line naming the options (resume's settings mismatch, check's outputs block) is not that
+# refusal (audit of 2026-11-15, A-4)
+REPLACEABLE = ("run", "report", "analyse")
+REFUSED = "--keep-previous moves"
 # before the window closes (or shows another project) with a command running: stopped after
 # its step, aborted when the step has not ended after STOP_WAIT_MS, killed ABORT_WAIT_MS
 # after that; the window's events are handled meanwhile (audit of 2026-11-15, A-5)
@@ -360,18 +366,41 @@ class RunWorkspace(QWidget):
         if self.log_file is None:
             return
         took = time.monotonic() - self._began
-        self.log_file.write(f"\n[{shown_command(self.args)}: {how}, after "
-                            f"{format_duration(took)}, {datetime.now():%Y-%m-%d %H:%M:%S}]\n")
-        self.log_file.close()
+        try:
+            self.log_file.write(f"\n[{shown_command(self.args)}: {how}, after "
+                                f"{format_duration(took)}, {datetime.now():%Y-%m-%d %H:%M:%S}]\n")
+            self.log_file.close()
+        except OSError as exc:
+            self._log_lost(exc)
         self.log_file = None
+        if self.log_path is not None and not self.log_path.exists():
+            # the log folder was removed during the command: the lines went to the unlinked
+            # file, silently (audit of 2026-11-15, A-9)
+            self.console.appendPlainText(f"(the log {self.log_path} is gone: its folder was "
+                                         "removed while the command ran, so this command's "
+                                         "output is kept nowhere but here)")
+            self.log_path = None
         self._fill_history()  # the command just ended first
+
+    def _log_lost(self, exc: OSError) -> None:
+        """A log write failed (a disk full, say): said once in the console, the log closed, the
+        console going on without it (audit of 2026-11-15, A-17)."""
+        self.console.appendPlainText(f"(the log {self.log_path} cannot be written any more: "
+                                     f"{exc}; the output goes on here only)")
+        log.warning("the log %s cannot be written any more: %s", self.log_path, exc)
+        with contextlib.suppress(OSError):
+            self.log_file.close()
+        self.log_file, self.log_path = None, None
 
     def _line(self, text: str, which: str) -> None:
         self.console.appendPlainText(text)
         self._tail = (self._tail + [text])[-20:]
         if self.log_file is not None:
-            self.log_file.write(text + "\n")
-            self.log_file.flush()  # a record even if the window ends during the command
+            try:
+                self.log_file.write(text + "\n")
+                self.log_file.flush()  # a record even if the window ends during the command
+            except OSError as exc:
+                self._log_lost(exc)
 
     def _progress(self, record: dict) -> None:
         overall = record.get("overall")
@@ -437,13 +466,22 @@ class RunWorkspace(QWidget):
             log.info("%s ended for another project (%s): nothing to show here",
                      shown_command(self.args), self._ran_on)
             return
-        if code != 0 and any(REFUSED in line for line in self._tail):
-            choice = self.ask_output_exists()
-            if choice is not None:
-                self.run_command(command, (f"--{choice}",))
+        if code != 0 and command in REPLACEABLE and any(REFUSED in line for line in self._tail):
+            # asked once this slot has returned (it may run inside a close's wait: a question
+            # there could start a command the close then abandons; audit of 2026-11-15, A-16)
+            QTimer.singleShot(0, lambda: self._ask_replace(command))
             return
         if code == 0 and command in CHANGES_RESULTS:
             self.results_changed.emit()
+
+    def _ask_replace(self, command: str) -> None:
+        """The Replace question for a command that refused to write over its output, unless
+        the window is closing, another command has started, or the project changed."""
+        if self._closing or self.runner.running or self.project != self._ran_on:
+            return
+        choice = self.ask_output_exists()
+        if choice is not None:
+            self.run_command(command, (f"--{choice}",))
 
     def may_close(self) -> bool:
         """Before the window closes or shows another project: a running command is stopped

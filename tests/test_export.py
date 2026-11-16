@@ -3,12 +3,13 @@
 hxex's own reader, and the plot data agreeing with what the figures draw."""
 
 import csv
+import dataclasses
 import logging
 
 import numpy as np
 import pytest
 
-from hxex.io import ReviewTable
+from hxex.io import ReadError, ReviewTable
 from hxex.io.hxexpress import (
     hxexpress_control_label,
     hxexpress_filename,
@@ -24,9 +25,11 @@ from hxex.report.export import (
     export_hxexpress,
     hxexpress_name,
     hxexpress_spectra,
+    hxexpress_warning,
     plain_sequence,
     plot_data,
     plot_data_name,
+    plot_data_tables,
     plot_tables,
     write_plot_data,
 )
@@ -39,6 +42,14 @@ def results():
     raw = raw_spectra(n_series=2)
     res = run(raw, config(bootstrap=boot_config(ks="all", keep_draws=False)))
     return Results.from_run(res, spectra=raw)
+
+
+@pytest.fixture(scope="module")
+def kept():
+    """Results whose bootstrap kept its resamples (``keep_draws``)."""
+    raw = raw_spectra(n_series=1)
+    return Results.from_run(run(raw, config(bootstrap=boot_config(keep_draws=True))),
+                            spectra=raw)
 
 
 def _read(path):
@@ -100,7 +111,9 @@ def test_a_series_round_trips_through_the_reader(results, tmp_path):
     """Every spectrum is written raw, in the order undeuterated, times, fully deuterated, and
     hxex's reader gives back the same spectra, times, roles, and replicates."""
     path = export_hxexpress(results, 0, tmp_path)
-    assert path.name == f"S_1-10-{PEPTIDE}-z2-hxex.xlsx"
+    # the two test series share sample, residues, sequence, and charge: the series' number in
+    # the free-text field keeps their files apart
+    assert path.name == f"S_1-10-{PEPTIDE}-z2-hxex_id0.xlsx"
     entry, back = _read(path)
     assert [s.label for s in back] == ["undeut", "undeut2", "undeut3", "1 min", "1.01 min",
                                        "1.02 min", "TD", "TD2"]
@@ -153,14 +166,14 @@ def test_existing_files_are_kept_unless_overwritten(results, tmp_path):
 
 def test_a_prefix_and_a_suffix_name_the_file(results, tmp_path):
     name = hxexpress_name(results, 0, prefix="exp2", suffix="raw_v1")
-    assert name == f"exp2_S_1-10-{PEPTIDE}-z2-hxex_raw_v1.xlsx"
+    assert name == f"exp2_S_1-10-{PEPTIDE}-z2-hxex_id0_raw_v1.xlsx"
     assert parse_hxexpress_filename(name).sample == "exp2_S"
     path = export_hxexpress(results, 0, tmp_path, prefix="exp2", suffix="raw_v1")
     assert path.name == name
     for bad in ("a-b", "a/b", "a:b"):
         with pytest.raises(ExportError, match="file name"):
             hxexpress_name(results, 0, suffix=bad)
-    assert hxexpress_name(results, 0, suffix="a b").endswith("-hxex_a b.xlsx")
+    assert hxexpress_name(results, 0, suffix="a b").endswith("-hxex_id0_a b.xlsx")
     # plot-data names may hold '-': the rule is the HX-Express name's own
     name = plot_data_name(results, 0, prefix="talk-2026", suffix="v 2")
     assert name.startswith("talk-2026_") and name.endswith("_z2_id0_v 2")
@@ -168,13 +181,150 @@ def test_a_prefix_and_a_suffix_name_the_file(results, tmp_path):
         plot_data_name(results, 0, suffix="a/b")
 
 
-def test_points_without_real_times_take_their_rank(results, monkeypatch, caplog):
-    """time_scale = "order": each point gets its rank in seconds as a dummy time (owner)."""
+def test_points_without_real_times_keep_their_own_values(results, monkeypatch, caplog,
+                                                         tmp_path):
+    """time_scale = "order": each point's own value, as stored, is written as that many
+    seconds, never its rank among the series' points, so sibling series agree on which point
+    is which (audit E-6: a series that lost a point wrote its later points one rank early)."""
     monkeypatch.setattr(Results, "time_scale", property(lambda self: "order"))
     with caplog.at_level(logging.INFO, logger="hxex.report.export"):
         labels = [c[0] for c in hxexpress_spectra(results, 0)]
-    assert labels[3:6] == ["1 sec", "1.01 sec", "1.02 sec"]
-    assert "point 60 -> 1 sec" in caplog.text
+    assert labels[3:6] == ["1 min", "1.01 min", "1.02 min"]  # the point's value is 60
+    assert "point 60 -> 1 min" in caplog.text
+    # a sibling series whose other spectra were rejected writes the point with the same time
+    fit = results.fit
+    rows = np.flatnonzero(fit.data_id == 1)
+    review = ReviewTable.empty()
+    for i in rows[3:5]:  # two of the three replicates of the point
+        review = review.update(str(fit.spectrum_id[i]), status="rejected")
+    reviewed = results.with_review(review)
+    times = set()
+    for d in (0, 1):
+        path = export_hxexpress(reviewed, d, tmp_path)
+        times |= {s.time for s in _read(path)[1] if not s.role}
+    assert times == {60.0}
+
+
+def _renamed(results, **columns):
+    """The results with some columns of the picked table changed (a function of the column
+    and the series' numbers)."""
+    b = results.binned
+    changed = {name: make(getattr(b, name), b.data_id) for name, make in columns.items()}
+    return dataclasses.replace(results, binned=dataclasses.replace(b, **changed))
+
+
+def _read_as(results, targets):
+    """The results read as fragment ions from scan files: ``targets`` gives each series'
+    (``data_id``) entry extras and target settings."""
+    from hxex.io.mzml import MzmlTarget
+    from hxex.spectra import PeptideEntry
+
+    entry = PeptideEntry("f.mzML", "S", PEPTIDE, "1-10", 1, 10, 2)
+    source = {"reader": "mzml", "series": [], "targets": []}
+    for d, (extra, target) in targets.items():
+        source["targets"].append(MzmlTarget(dataclasses.replace(entry, extra=extra),
+                                            **target).to_dict())
+        source["series"].append({"data_id": d, "target": len(source["targets"]) - 1,
+                                 "sample": "S"})
+    settings = dataclasses.replace(results.settings, configs={**results.settings.configs,
+                                                              "spectra_source": source})
+    return dataclasses.replace(results, settings=settings)
+
+
+def test_a_series_of_its_own_keeps_the_plain_name(results):
+    """Names given before the names were made unique stay as they were for a peptide read in
+    MS1 that shares its name with no other series."""
+    apart = _renamed(results, sample=lambda v, d: np.where(d == 1, "T", v))
+    assert hxexpress_name(apart, 0) == f"S_1-10-{PEPTIDE}-z2-hxex.xlsx"
+    assert hxexpress_name(apart, 1) == f"T_1-10-{PEPTIDE}-z2-hxex.xlsx"
+
+
+@pytest.mark.parametrize(("targets", "texts"), [
+    # one fragment ion read in the MS2 and the MS3 scans: the channel is in every fragment name
+    ({0: ({"fragment": "c-1:6", "parent_range": "1-12"}, {"ms_level": 2}),
+      1: ({"fragment": "c-1:6", "parent_range": "1-12"}, {"ms_level": 3})},
+     ("c_1_MS2", "c_1_MS3")),
+    # the precursor read with the fragments beside its MS1 peptide
+    ({0: ({}, {}), 1: ({"fragment": "M:10", "parent_range": "1-10"}, {"ms_level": 2})},
+     ("hxex", "M_MS2")),
+    # one fragment of two parents
+    ({0: ({"fragment": "z+1:4", "parent_range": "1-12"}, {"ms_level": 2}),
+      1: ({"fragment": "z+1:4", "parent_range": "-2-12"}, {"ms_level": 2})},
+     ("zp1_MS2_parent_1_12", "zp1_MS2_parent_minus2_12")),
+    # two activations
+    ({0: ({"fragment": "c:6", "parent_range": "1-12"}, {"ms_level": 2, "activation": "ETD"}),
+      1: ({"fragment": "c:6", "parent_range": "1-12"},
+          {"ms_level": 2, "activation": "EThcD"})},
+     ("c_MS2_ETD", "c_MS2_EThcD")),
+    # nothing tells them apart but the series' number
+    ({0: ({"fragment": "c:6", "parent_range": "1-12"}, {"ms_level": 2}),
+      1: ({"fragment": "c:6", "parent_range": "1-12"}, {"ms_level": 2})},
+     ("c_MS2_id0", "c_MS2_id1")),
+])
+def test_series_that_differ_only_in_what_the_name_leaves_out_get_names_of_their_own(
+        results, targets, texts, tmp_path):
+    """Audit E-2: the channel, parent, or scan conditions go into the free-text field (the field
+    after the charge, which HX-Express does not read), so one export never writes two series
+    into one file; the reader still takes sample, residues, sequence, and charge."""
+    read = _read_as(results, targets)
+    names = [hxexpress_name(read, d) for d in (0, 1)]
+    assert [n.rsplit("-", 1)[1] for n in names] == [f"{t}.xlsx" for t in texts]
+    paths = {export_hxexpress(read, d, tmp_path) for d in (0, 1)}
+    assert len(paths) == 2
+    for name in names:
+        entry = parse_hxexpress_filename(name)
+        assert (entry.sample, entry.start_seq, entry.end_seq, entry.peptide, entry.charge) == (
+            "S", 1, 10, PEPTIDE, 2)
+    assert hxexpress_name(read, 1, suffix="v2").endswith(f"-{texts[1]}_v2.xlsx")
+
+
+def test_a_modified_form_is_named_where_the_one_letter_sequence_drops_it(results):
+    form = PEPTIDE[:5] + "ac" + PEPTIDE[5:]  # RDKVQacKEYAL: one-letter RDKVQKEYAL
+    modified = _renamed(results, peptide=lambda v, d: np.where(d == 1, form, v))
+    assert plain_sequence(form) == PEPTIDE
+    assert hxexpress_name(modified, 0) == f"S_1-10-{PEPTIDE}-z2-hxex.xlsx"
+    assert hxexpress_name(modified, 1) == f"S_1-10-{PEPTIDE}-z2-hxex_{form}.xlsx"
+
+
+def test_names_that_differ_only_in_case_are_kept_apart(results):
+    """Windows and macOS do not tell WT from wt: two files of one name in any case would be
+    one file there."""
+    cased = _renamed(results, sample=lambda v, d: np.where(d == 1, "s", v))
+    assert [hxexpress_name(cased, d).rsplit("-", 1)[1] for d in (0, 1)] == [
+        "hxex_id0.xlsx", "hxex_id1.xlsx"]
+
+
+def test_a_series_numbered_below_residue_0_is_written_with_a_warning(results, tmp_path,
+                                                                       caplog):
+    """Audit E-7: residues may be numbered from a tag (a FASTA header >NAME/-3-...). The file
+    is written all the same (HX-Express does not mind), with a warning that hxex's reader
+    cannot take the peptide from its name, whose range then holds the fields' separator."""
+    tagged = _renamed(results, start_seq=lambda v, d: np.where(d == 0, -3, v),
+                      end_seq=lambda v, d: np.where(d == 0, 6, v))
+    name = hxexpress_name(tagged, 0)
+    assert name == f"S_-3-6-{PEPTIDE}-z2-hxex.xlsx"
+    assert "below residue 0" in hxexpress_warning(tagged, 0)
+    assert hxexpress_warning(tagged, 1) == ""
+    with caplog.at_level(logging.WARNING, logger="hxex.report.export"):
+        path = export_hxexpress(tagged, 0, tmp_path)
+    assert path.name == name and "peptide table" in caplog.text
+    with pytest.raises(ReadError, match="below 0"):
+        parse_hxexpress_filename(name)
+    # read back with the peptide given, as a table gives it
+    entry = dataclasses.replace(parse_hxexpress_filename(f"S_1-10-{PEPTIDE}-z2-hxex.xlsx"),
+                                file=name)
+    assert len(read_hxexpress_file(path, entry)) == 8
+    assert hxexpress_filename("S", 0, 9, "PE", 2) == "S_0-9-PE-z2-hxex.xlsx"
+    assert parse_hxexpress_filename("S_0-9-PE-z2-hxex.xlsx").start_seq == 0  # 0 reads
+
+
+def test_a_name_too_long_for_the_file_system_is_named(results, tmp_path):
+    with pytest.raises(ExportError, match="characters long"):
+        hxexpress_name(results, 0, suffix="x" * 260)
+    with pytest.raises(ExportError, match="characters long"):
+        export_hxexpress(results, 0, tmp_path, suffix="x" * 260)
+    with pytest.raises(ExportError, match="characters long"):
+        plot_data_name(results, 0, suffix="x" * 260)
 
 
 def test_raw_spectra_missing_from_the_results_are_named(results):
@@ -223,7 +373,8 @@ def test_plot_data_holds_what_the_spectrum_figure_draws(results):
     assert set(tables["uptake"]["data_id"]) == {0}
 
 
-def test_the_bootstrap_cloud_is_written_when_the_resamples_were_kept(results, tmp_path):
+def test_the_bootstrap_cloud_is_written_when_the_resamples_were_kept(results, kept,
+                                                                      tmp_path):
     """``components_bootstrap`` holds the points the populations page draws behind each
     population (owner, 2026-11-13: named to go with components.csv), only when the run kept
     the resamples (``keep_draws``)."""
@@ -231,9 +382,6 @@ def test_the_bootstrap_cloud_is_written_when_the_resamples_were_kept(results, tm
     assert "components_bootstrap" not in plot_tables(results)
     about = dict(zip(*plot_data(results, data_id=0)["about"].values(), strict=True))
     assert about["bootstrap_resamples"].startswith("not kept")
-    raw = raw_spectra(n_series=1)
-    kept = Results.from_run(run(raw, config(bootstrap=boot_config(keep_draws=True))),
-                            spectra=raw)
     assert "components_bootstrap" in plot_tables(kept)
     tables = plot_data(kept, data_id=0)
     cloud, parts = tables["components_bootstrap"], tables["components"]
@@ -299,3 +447,49 @@ def test_plot_data_files_are_named_by_the_series(results, tmp_path):
         plot_data(results, data_id=1)["spectra"]["spectrum_id"][:1])
     with pytest.raises(ExportError, match="name"):
         write_plot_data(results, folder, spectrum_ids=sids)
+
+
+def _without_its_bootstrap(kept):
+    """``kept`` with a spectrum reviewed to a K the bootstrap was not made at, and its id."""
+    fit = kept.fit
+    i = int(np.flatnonzero(fit.data_id == 0)[3])
+    other = next(k for k in (1, 2) if k != int(kept.effective_K[i]) and fit.fitted(k)[i])
+    sid = str(fit.spectrum_id[i])
+    reviewed = kept.with_review(ReviewTable.empty().update(sid, k_override=other))
+    assert reviewed.bootstrap_for(i, other) is None
+    return reviewed, sid
+
+
+def test_the_tables_written_are_counted_from_what_is_exported(results, kept, tmp_path):
+    """Audit E-12: the tables of an export are the ones its spectra have (no bootstrap cloud
+    for a spectrum whose K in effect has no bootstrap), not every table of the results."""
+    reviewed, sid = _without_its_bootstrap(kept)
+    assert "components_bootstrap" in plot_tables(reviewed)
+    tables = plot_data_tables(reviewed, spectrum_ids=[sid])
+    assert "components_bootstrap" not in tables
+    assert set(tables) == set(plot_data(reviewed, spectrum_ids=[sid]))
+    paths = write_plot_data(reviewed, tmp_path, name="one", spectrum_ids=[sid])
+    assert [p.name for p in paths] == [f"one_{t}.csv" for t in tables]
+    for res, d in ((kept, 0), (results, 1)):
+        assert set(plot_data_tables(res, data_id=d)) == set(plot_data(res, data_id=d))
+    bare = Results(measurements=results.measurements, fit=results.fit, binned=results.binned,
+                   settings=results.settings)
+    assert "raw" not in plot_data_tables(bare, data_id=0)
+
+
+def test_an_earlier_exports_other_files_are_left_and_named(kept, tmp_path, caplog):
+    """Audit E-5: nothing of the user's is deleted. A file of the same name an earlier export
+    wrote and this one does not (here the bootstrap cloud, the review having changed the
+    spectrum's K) stays, is named in the messages, and is not among the files ``_about.csv``
+    lists as this export's."""
+    reviewed, sid = _without_its_bootstrap(kept)
+    first = write_plot_data(kept, tmp_path, name="one", spectrum_ids=[sid])
+    cloud = tmp_path / "one_components_bootstrap.csv"
+    assert cloud in first
+    with caplog.at_level(logging.WARNING, logger="hxex.report.export"):
+        again = write_plot_data(reviewed, tmp_path, name="one", spectrum_ids=[sid],
+                                overwrite=True)
+    assert cloud.is_file() and cloud not in again
+    assert "one_components_bootstrap.csv" in caplog.text and "earlier export" in caplog.text
+    about = {r["item"]: r["value"] for r in _rows(tmp_path / "one_about.csv")}
+    assert about["files"].split("; ") == [p.name for p in again]

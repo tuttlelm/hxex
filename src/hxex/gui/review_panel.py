@@ -195,7 +195,10 @@ class ReviewPanel(QGroupBox):
             self.message.setText("")
 
     def show_spectra(self, rows: list[int], what: str) -> None:
-        """The decision of the spectra at ``rows`` (``what`` names them)."""
+        """The decision of the spectra at ``rows`` (``what`` names them). A note being typed
+        for the spectra shown before is written to them first (on macOS a click on another
+        row does not move the keyboard focus out of the box: audit of 2026-11-15, D-3)."""
+        self.commit_note()
         self.rows = [int(r) for r in rows]
         results = self.workspace.results
         usable = bool(self.rows) and results is not None and self.project is not None
@@ -269,8 +272,8 @@ class ReviewPanel(QGroupBox):
 
     def _bundle_notes(self) -> dict[str, str]:
         """The notes the bundle's own review layer holds (set from Python, or carried over by
-        a rerun), by spectrum: a review table cannot clear them, as its empty note cell keeps
-        the stored note (audit of 2026-11-15, D-2). Read from the bundle once per results."""
+        a rerun), by spectrum, for the note box's tooltip (audit of 2026-11-15, D-2). Read
+        from the bundle once per results."""
         project, results = self.project, self.workspace.results
         if project is None or results is None:
             return {}
@@ -328,9 +331,11 @@ class ReviewPanel(QGroupBox):
         window calls it before reading the results again, so a note being typed is kept).
         False when there was nothing to write or it is waiting."""
         text = self.note.text().strip()
-        if not self.rows or text == self._shown_note.strip():
+        if not self.rows or self._deciding or text == self._shown_note.strip():
             return False
         return self.decide(note=text)
+
+    _deciding = False  # a decision being written: what it sets off writes no second one
 
     def decide(self, status: str | None = None, k: int | None = None, k_given: bool = False,
                note: str | None = None) -> bool:
@@ -338,17 +343,39 @@ class ReviewPanel(QGroupBox):
         results. False when it is waiting (the table is held) or nothing is shown."""
         results = self.workspace.results
         project = self.project
-        if results is None or project is None:
+        if results is None or project is None or self._deciding:
             return False
+        self._deciding = True
+        try:
+            return self._decide(status, k, k_given, note)
+        finally:
+            self._deciding = False
+
+    def _decide(self, status, k, k_given, note) -> bool:
+        results = self.workspace.results
+        project = self.project
+        if note is None and self.rows:
+            # a note being typed joins the decision (a status clicked or a K chosen before the
+            # box lost the focus, which on macOS a button click does not take: D-3)
+            typed = self.note.text().strip()
+            if typed != self._shown_note.strip():
+                note = typed
         ids = [str(results.fit.spectrum_id[i]) for i in self.rows]
         if status is not None or k_given or note is not None:
             for sid in ids:
                 old = self.pending.get(sid, Decision())
                 st = status
-                if status == "" and self._status_shown(sid):
+                if status == "" and self._layer_status(sid):
                     # not reviewed: written as such, as an empty cell keeps a status the
                     # bundle's own review layer holds (audit of 2026-11-15, D-2)
                     st = "unreviewed"
+                if note == "" and st is None and old.status is None \
+                        and not (k_given or old.k_given):
+                    # the note emptied with no other decision: a row that says something
+                    # replaces the stored note with its own (empty) note cell, an empty row
+                    # keeps it (the notes rule, owner 2026-11-15): the status shown is
+                    # written as it is, or unreviewed
+                    st = self._layer_status(sid) or "unreviewed"
                 self.pending[sid] = Decision(
                     status=old.status if st is None else st,
                     k=k if k_given else old.k, k_given=old.k_given or k_given,
@@ -395,44 +422,39 @@ class ReviewPanel(QGroupBox):
         if window is not None:  # the results shown have this table's decisions
             window.results_review_stamp = table_stamp(project)
             window.watch_review_table()  # a table just made: a change elsewhere is seen
-        changed, kept = self._lay_over(self.pending)
+        changed = self._lay_over(self.pending)
         log.info("review: %d spectra in %s", len(self.pending), path.name)
+        if note is not None:  # what the rows show now (a selection made while the workspace
+            self._shown_note = note  # redraws must not write it again)
         self.pending = {}
         self.retry.hide()
-        self.message.setText(f"Saved in {path.name}." + (
-            f" The run's own note stays on {kept} spectra: the review table cannot clear it."
-            if kept else ""))
+        self.message.setText(f"Saved in {path.name}.")
         self._offer_resume()
         self.decided.emit(changed)
         self._show_values()
         return True
 
-    def _status_shown(self, sid: str) -> bool:
+    def _layer_status(self, sid: str) -> str:
+        """The status the results' review layer holds for ``sid`` ('' for none)."""
         review = self.workspace.results.review
         entry = review.get(sid) if review is not None else None
-        return bool(entry and entry["status"])
+        return str(entry["status"] or "") if entry else ""
 
-    def _lay_over(self, decisions: dict[str, Decision]) -> tuple[list[int], int]:
+    def _lay_over(self, decisions: dict[str, Decision]) -> list[int]:
         """The decisions laid over the results' review layer in memory (as reading the table
-        again would: an emptied note gives back the bundle's own note); the positions of the
-        spectra they touch, and how many kept the bundle's note."""
+        again does: a row that says something carries its note cell, empty included); the
+        positions of the spectra they touch."""
         from ..io.bundle import ReviewTable
 
         results = self.workspace.results
         review = results.review if results.review is not None else ReviewTable.empty()
         index = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
-        held = self._bundle_notes() if any(d.note == "" for d in decisions.values()) else {}
-        kept = 0
         for sid, d in decisions.items():
-            note = d.note
-            if note == "" and held.get(sid):
-                note = held[sid]
-                kept += 1
             status = "" if d.status == "unreviewed" else d.status
             review = review.update(
-                sid, status=status, k_override=(d.k or 0) if d.k_given else None, note=note)
+                sid, status=status, k_override=(d.k or 0) if d.k_given else None, note=d.note)
         self.workspace.results = results.with_review(review)
-        return [index[s] for s in decisions if s in index], kept
+        return [index[s] for s in decisions if s in index]
 
     def _offer_resume(self) -> None:
         from ..review_table import missing_bootstraps
@@ -459,8 +481,9 @@ class ReviewPanel(QGroupBox):
             self.decide(status=status)
 
 
-# the note box's tooltip when its note is the bundle's own review layer's (D-2)
-BUNDLE_NOTE = "from the run's review layer; the table cannot clear it"
+# the note box's tooltip when its note is the bundle's own review layer's (D-2; emptying the
+# box clears it, as the row then says something: the notes rule)
+BUNDLE_NOTE = "from the run's review layer (one set from Python, or carried over by a rerun)"
 # the message line when results are open without their project file
 RESULTS_ONLY = "Session is results only: open the project toml file to record decisions."
 

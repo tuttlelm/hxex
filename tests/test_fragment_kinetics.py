@@ -1022,3 +1022,27 @@ def test_an_ion_inside_a_fragments_reach_flags_it():
     assert other[0] == "c 11-15 1+"
     assert share[1] == pytest.approx(0.0)  # the dim one's peaks lie off the bright one's bins
 
+
+
+def test_the_fragment_outputs_stop_at_their_cancel_hook():
+    """The window's Stop reaches the ladder rate fits (minutes on a large run): the hook is
+    asked before the uptake, before each parent's fits and between the closure tables
+    (audit of 2026-11-15, E open question 2)."""
+    from hxex.analysis import FragmentAnalysis
+    from hxex.hooks import Cancelled
+    from hxex.report.fragments import fragment_outputs
+
+    run = stub_run(conditions=("gentle",))
+    cfg = FragmentAnalysis(min_time=10.0, fit_rates=True)
+    with pytest.raises(Cancelled):
+        fragment_outputs(run, cfg, cancel=lambda: True)
+    asked = []
+
+    def later():  # trips once the rate fits have started
+        asked.append(1)
+        return len(asked) > 2
+
+    with pytest.raises(Cancelled):
+        fragment_outputs(run, cfg, cancel=later)
+    assert len(asked) == 3
+    assert fragment_outputs(run, cfg, cancel=lambda: False)[0]

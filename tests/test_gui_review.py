@@ -135,6 +135,12 @@ def _first_spectrum(page):
     return series, series.child(0).child(0)
 
 
+def _second_spectrum(page):
+    """The first spectrum of the first series' second time point."""
+    series = _first_spectrum(page)[0]
+    return series.child(1).child(0)
+
+
 def test_a_key_in_the_tree_rejects_and_the_table_and_tree_show_it(qtbot, window_on):
     from PySide6.QtCore import Qt
 
@@ -620,20 +626,25 @@ def test_a_table_made_by_the_window_leaves_the_rules_to_the_rules(project_run, t
     assert ids[3] not in read_review_table(path).spectrum_id
 
 
-def test_a_decision_the_bundle_holds_is_cleared_or_said_to_stay(qtbot, window_on):
+def test_a_decision_the_bundle_holds_is_cleared_and_its_note_kept_or_emptied(qtbot, window_on):
     """A status and a note stored in the bundle's own review layer (set from Python): "not
-    reviewed" writes ``unreviewed``, which the commands read as cleared; an emptied note is
-    written empty, but the bundle's note comes back, so the window keeps showing it and says
-    why (D-2)."""
+    reviewed" writes ``unreviewed``, which the commands read as cleared, and the note shown
+    goes into the row with it (a row that says something carries its note cell: the notes
+    rule, owner 2026-11-15), so the note stays; emptying the note then clears it, for the
+    window and the commands alike; on a spectrum with no other decision an emptied note is
+    written with ``unreviewed`` beside it, so that its row says something."""
     from hxex.gui.review_panel import BUNDLE_NOTE
     from hxex.gui.tips import tip
     from hxex.io import open_bundle
     from hxex.report.notebook import load_results
 
     window, project, open_ = window_on
-    sid = _first_spectrum(open_(project))[1].toolTip(0)
+    page = open_(project)
+    sid = _first_spectrum(page)[1].toolTip(0)
+    other = _second_spectrum(page).toolTip(0)
     with open_bundle(project.parent / "out") as b:
-        b.set_review(b.review().update(sid, status="rejected", note="from Python"))
+        b.set_review(b.review().update(sid, status="rejected", note="from Python")
+                     .update(other, note="from Python too"))
     page = _reopened(qtbot, window, project)
     i = page.results.find(sid)
     assert page.results.review_status[i] == "rejected"
@@ -642,23 +653,34 @@ def test_a_decision_the_bundle_holds_is_cleared_or_said_to_stay(qtbot, window_on
     assert panel.note.text() == "from Python" and panel.note.toolTip() == tip(BUNDLE_NOTE)
     panel.decide(status="")
     table = project.parent / "user_review_table.csv"
-    cells = read_table(table)
-    row = next(r for r in cells.rows if r[cells.columns.index("spectrum_id")] == sid)
-    assert row[cells.columns.index("review_status")] == "unreviewed"
-    assert load_results(project).review_status[i] == "unreviewed"
+
+    def row_of(spectrum):
+        cells = read_table(table)
+        row = next(r for r in cells.rows if r[cells.columns.index("spectrum_id")] == spectrum)
+        return row[cells.columns.index("review_status")], row[cells.columns.index("note")]
+
+    assert row_of(sid) == ("unreviewed", "from Python")  # the note shown goes with it
+    loaded = load_results(project)
+    assert loaded.review_status[i] == "unreviewed" and loaded.review.get(sid)["note"] == \
+        "from Python"
     page = _reopened(qtbot, window, project)
     page.tree.setCurrentItem(_first_spectrum(page)[1])
     panel = page.review
     assert panel.status.checkedId() == 0  # read back cleared
+    assert panel.note.text() == "from Python"
     panel.note.setText("")
     panel.note.editingFinished.emit()
-    cells = read_table(table)
-    row = next(r for r in cells.rows if r[cells.columns.index("spectrum_id")] == sid)
-    assert row[cells.columns.index("note")] == ""
-    assert panel.note.text() == "from Python" and panel.note.toolTip() == tip(BUNDLE_NOTE)
-    assert "cannot clear it" in panel.message.text()
-    assert load_results(project).review.get(sid)["note"] == "from Python"  # as the commands
-
+    assert row_of(sid) == ("unreviewed", "")
+    assert panel.note.text() == "" and panel.note.toolTip() == ""
+    assert load_results(project).review.get(sid)["note"] == ""  # cleared, as the commands read
+    # a note alone, emptied: unreviewed written beside it, so the row says something
+    page.tree.setCurrentItem(_second_spectrum(page))
+    panel = page.review
+    assert panel.note.text() == "from Python too"
+    panel.note.setText("")
+    panel.note.editingFinished.emit()
+    assert row_of(other) == ("unreviewed", "")
+    assert load_results(project).review.get(other)["note"] == ""
 
 
 def _reopened(qtbot, window, project):
@@ -667,3 +689,121 @@ def _reopened(qtbot, window, project):
     window.open_results(project)
     qtbot.waitUntil(lambda: not window.loading, timeout=30000)
     return window.results_page
+
+
+# --- the notes rule, D-3 and D-9 (audit of 2026-11-15, fix Session 5) ---------------------------
+
+def test_a_row_that_says_something_carries_its_note_cell(project_run, tmp_path):
+    """The notes rule (owner, 2026-11-15): a row with a status (``unreviewed`` included) or a K
+    replaces the stored note with its own note cell, empty included; a row with a note alone
+    replaces the note; a row that is entirely empty keeps the stored note; a table without a
+    note column leaves every note alone."""
+    from hxex.io.bundle import ReviewTable
+    from hxex.review_table import apply_review_table
+
+    _, results = project_run
+    ids = [str(s) for s in results.fit.spectrum_id]
+    review = ReviewTable.empty()
+    for sid in ids[:5]:
+        review = review.update(sid, status="rejected", note="stored")
+    stored = results.with_review(review)
+    path = tmp_path / "t.csv"
+    path.write_text("spectrum_id,review_status,review_K,note\n"
+                    f"{ids[0]},accepted,,\n{ids[1]},unreviewed,,\n{ids[2]},,,\n"
+                    f"{ids[3]},,1,\n{ids[4]},,,new\n", encoding="utf-8")
+    shown = apply_review_table(stored, read_review_table(path))
+    assert [shown.review.get(sid)["note"] for sid in ids[:5]] == ["", "", "stored", "", "new"]
+    assert shown.review_status[1] == "unreviewed" and shown.review_status[2] == "rejected"
+    without = tmp_path / "no_notes.csv"
+    without.write_text(f"spectrum_id,review_status\n{ids[0]},accepted\n", encoding="utf-8")
+    kept = apply_review_table(stored, read_review_table(without))
+    assert kept.review.get(ids[0])["note"] == "stored"
+
+
+def test_a_note_being_typed_joins_a_status_click_and_a_step(qtbot, window_on):
+    """D-3: on macOS a click on a button does not move the keyboard focus out of the note box,
+    so the note being typed was lost by a status click or a step; now it joins the decision,
+    and a new selection writes it before the rows are replaced."""
+    from PySide6.QtCore import QPoint, Qt
+
+    window, project, open_ = window_on
+    page, series, leaf = _typing_ready(qtbot, window, open_, project)
+    panel = page.review
+    for button in panel.status.buttons():
+        button.setFocusPolicy(Qt.FocusPolicy.TabFocus)  # as QMacStyle gives them
+    page.tree.setCurrentItem(leaf)
+    sid = leaf.toolTip(0)
+    assert panel.note.text() == "its own note"
+    panel.note.setFocus()
+    qtbot.waitUntil(panel.note.hasFocus, timeout=5000)
+    panel.note.end(False)
+    qtbot.keyClicks(panel.note, " and more")
+    button = panel.status.buttons()[2]  # a click on its indicator (its centre may lie outside)
+    qtbot.mouseClick(button, Qt.MouseButton.LeftButton, pos=QPoint(8, button.height() // 2))
+    assert _notes(project)[sid] == "its own note and more"
+    assert panel.note.text() == "its own note and more" and panel.status.checkedId() == 2
+    # a step to another spectrum: the note typed goes to the spectrum it was typed for
+    panel.note.setFocus()
+    qtbot.waitUntil(panel.note.hasFocus, timeout=5000)
+    panel.note.end(False)
+    qtbot.keyClicks(panel.note, "!")
+    page.tree.setCurrentItem(_second_spectrum(page))
+    assert _notes(project)[sid] == "its own note and more!"
+    assert panel.note.text() == ""  # the other spectrum's (none)
+
+
+@pytest.fixture(scope="module")
+def screened_run(tmp_path_factory):
+    """A run whose screen skipped K = 2 for some spectrum: (project, results, that spectrum)."""
+    from hxex.report.notebook import load_results
+
+    folder = tmp_path_factory.mktemp("screened")
+    project = mzml_project(folder)
+    project.write_text(project.read_text().replace("k_max = 1", "k_max = 2\nscreen = true"))
+    assert main(["-q", "run", str(project)]) == 0
+    results = load_results(project)
+    skipped = [i for i in range(len(results.fit)) if not results.fit.fitted(2)[i]]
+    assert skipped, "the screen skipped K = 2 for no spectrum: no case"
+    return project, results, str(results.fit.spectrum_id[skipped[0]])
+
+
+def test_a_skipped_k_chosen_keeps_the_window_working_and_the_commands_refusing(
+        qtbot, tmp_path, screened_run):
+    """D-9 option (a): a K the screen skipped, chosen in the review, is kept unfitted when the
+    window loads the project's results (shown at the fit's K, as the panel says), while the
+    commands and load_results refuse it; E-4: Compute refuses it as hxex analyse does, with
+    the Resume button."""
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QMessageBox
+
+    from hxex.gui.window import MainWindow
+    from hxex.report.notebook import load_results
+
+    project, results, sid = screened_run
+    path = make_review_table(project, results)
+    write_decisions(path, {sid: Decision(k=2, k_given=True)}, {}, results=results)
+    with pytest.raises(ValueError, match="screen skipped"):
+        load_results(project)
+    kept = load_results(project, unfitted="keep")
+    assert kept.unfitted_choices == {sid: 2}
+    assert int(kept.effective_K[kept.find(sid)]) == int(kept.fit.selected_K[kept.find(sid)])
+    assert main(["-q", "analyse", str(project)]) != 0
+    window = MainWindow(settings=QSettings(str(tmp_path / "g.ini"), QSettings.Format.IniFormat))
+    window.ask_to_save = lambda: QMessageBox.StandardButton.Discard
+    qtbot.addWidget(window)
+    window.open_asking(project)
+    qtbot.waitUntil(lambda: not window.loading and window.results_path is not None,
+                    timeout=60000)
+    shown = window.results_page.results
+    assert shown is not None and shown.unfitted_choices == {sid: 2}
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    asked = []
+    window.run_resume = lambda: asked.append(1)
+    assert page.resume.isVisibleTo(page)
+    page.compute()
+    assert not page.computing and page.outputs is None
+    assert "as hxex analyse refuses it" in page.status.text()
+    assert "was not fitted" in page.status.text() and "Resume" in page.status.text()
+    page.resume.click()
+    assert asked == [1]

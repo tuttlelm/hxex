@@ -72,6 +72,12 @@ class CommandRun(QObject):
             raise RuntimeError("a command is running")
         self.stops = 0
         self._buffers = {"out": "", "err": ""}
+        if self.process is not None:
+            # the finished process is let go here, outside its own signals (one object per
+            # command accumulated as a child of this one, with its connected slots: audit of
+            # 2026-11-15, A-8); unparented, Python owns it, and it goes with this reference
+            self.process.setParent(None)
+            self.process = None
         process = QProcess(self)
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")  # lines as they are written, not in bursts

@@ -110,6 +110,11 @@ def test_toml_values_are_type_checked(tmp_path, capsys):
         ('[output]\noverwrite = "false"\n', '[output] overwrite = "false": expected true or'),
         ('[output]\nkeep_spectra = "no"\n', '[output] keep_spectra = "no": expected true or'),
         ('[output]\ntables = "true"\n', 'write true or false without quotes'),
+        # a config class's own refusal in words for people (audit of 2026-11-15, B-30)
+        ("[run.fit.backend]\nfoo = 1\n", "[run.fit.backend] has no setting named foo"),
+        ('[run.fit.backend]\ndevice = "gpu"\n', "[run.fit.backend] device must be 'auto'"),
+        ('[figures]\nseries = "some"\n',
+         '[figures]: series must be "flagged", "all", or a list of series numbers'),
     ]:
         with pytest.raises(ProjectError) as info:
             project(text)
@@ -2123,6 +2128,9 @@ def test_stop_from_input_stops_the_command_and_a_second_aborts():
         assert cli._Stop.early
         with cli._Stop().installed() as early:
             assert early.asked
+        assert not cli._Stop.early  # taken once (audit of 2026-11-15, A open question 5)
+        with cli._Stop().installed() as later:
+            assert not later.asked
     finally:
         cli._Stop.early = False
 

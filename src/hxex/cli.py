@@ -332,7 +332,9 @@ class _Stop:
     @contextlib.contextmanager
     def installed(self):
         _Stop.active = self
-        if _Stop.early:
+        if _Stop.early:  # taken once: a process running two commands in turn stops only the
+            # one the stop was for (audit of 2026-11-15, A open question 5)
+            _Stop.early = False
             self.asked = True
             log.warning("stopping after the current step (Stop again to abort now)")
         try:

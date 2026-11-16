@@ -40,6 +40,9 @@ def parse_hxexpress_filename(name: str) -> PeptideEntry:
     if len(labels) < 5:
         raise fail(f"expected at least five '-' separated fields, found {len(labels)}")
     if len(labels) > 5:
+        if labels[0].endswith("_") or "" in labels[1:3]:
+            raise fail("a residue number below 0 cannot be read from a file name ('-' separates "
+                       "its fields): list the file and its peptide in a peptide table")
         raise fail("the last field (free text) cannot contain '-', nor can the sample")
     if "_" not in labels[0]:
         raise fail(f"the first field {labels[0]!r} needs SAMPLE_START (the sample, '_', "
@@ -317,14 +320,17 @@ def hxexpress_filename(sample: str, start: int, end: int, sequence: str, charge:
                        text: str = HXEXPRESS_TEXT) -> str:
     """``SAMPLE_START-END-SEQUENCE-zCHARGE-TEXT.xlsx``, the name
     :func:`parse_hxexpress_filename` reads. The fields must not contain ``-`` (it separates
-    them) nor a path separator; ``sequence`` is one-letter residues (capital letters only)."""
+    them) nor a path separator; ``sequence`` is one-letter residues (capital letters only).
+    Residues may be numbered below 1 (a sequence numbered from a tag): a range below 0 is
+    written as it is (``WT_-3-10-...``), which HX-Express takes, but whose peptide
+    :func:`parse_hxexpress_filename` cannot read (the peptide is then given in a table)."""
     for name, value in (("sample", sample), ("text", text)):
         if not value or "-" in value or "/" in value or "\\" in value:
             raise ValueError(f"the {name} {value!r} cannot be written in an HX-Express file name "
                              "(empty, or holds '-' or a path separator)")
     if not sequence or not (sequence.isascii() and sequence.isalpha() and sequence.isupper()):
         raise ValueError(f"the sequence {sequence!r} is not one-letter residues (capital letters)")
-    if int(start) < 0 or int(end) < int(start):
+    if int(end) < int(start):
         raise ValueError(f"residues {start}-{end} are not a range")
     return f"{sample}_{int(start)}-{int(end)}-{sequence}-z{int(charge)}-{text}.xlsx"
 

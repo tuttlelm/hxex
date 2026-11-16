@@ -10154,3 +10154,76 @@ CSVs or mzML if wanted.
     `test_window_edit.py`, `test_gui_window_edit.py` (its rows test now waits for the
     picture before reading a span's transform: the matplotlib view draws the picture at the
     view's dpi in its worker, and the race failed the lowest-versions CI job of 5731ad2).
+
+392. **The window's Analysis page, export, sequence view and review panel (2026-11-15;
+    fix Session 5 of docs/AUDIT_GUI_2026-11-15.md).** HX-Express file names are unique over
+    the whole results (E-2): the free-text field after the charge, which HX-Express does not
+    read, carries a fragment ion's ion type and channel (`c_1_MS3`, `M_MS2`), and where names
+    would still clash the modified form the one-letter sequence drops, the fragment list's
+    label or scan conditions, or the parent's residues (`parent_12_20`), with `id<data_id>`
+    only as a last resort, judged without regard to case (`_make_unique`); a peptide read in
+    MS1 that clashes with nothing keeps its old name, and the dialog refuses two targets of
+    one name (open question 3). A plot-data export deletes nothing (E-5): the Replace question
+    lists exactly the files this export writes (`plot_data_tables`), names a file of the same
+    stem an earlier export left that this one does not write (`plot_data_leftovers`), and
+    `_about.csv` gains a `files` row (open question 4). With `time_scale = "order"` the
+    HX-Express export writes each point's own stored value as that many seconds, never its
+    rank within the series, so sibling series label a point alike (E-6, open question 5). A
+    series numbered below residue 0 is exported all the same, with a warning in the dialog and
+    the log that hxex's HX-Express reader cannot take its peptide from the file name
+    (`hxexpress_warning`; the reader's error points to a peptide table); residues may be
+    negative everywhere (`Region` too); a name too long for the file system, and a path it
+    refuses, are named as problems instead of escaping the dialog (E-7). The dialog counts
+    the files from its targets' own tables (E-12), and a relative folder typed in it counts
+    from the results' folder, shown in full (E-18). Compute refuses a review K the run's
+    screen skipped as `hxex analyse` does, with a Resume button beside it (E-4, open question
+    1), and a Stop beside Compute ends the computation at its next step: `fragment_outputs`
+    and `ladder_rates` take the cancel hook, asked before each parent's fits (open question
+    2). The reference chosen in the bar is written quoted, so a sample named like a number or
+    a date is read as text, and the error shows after the refresh (E-8). An analysis is out
+    of date when what it reads changed (the bundle's stamp, the review layer's content, the
+    `[review]` settings: `results_key`), not when the Results object did, so a `[figures]`
+    reload keeps it up to date (E-9) and old Results are let go (E-22); a Recompute draws the
+    figure shown once (E-15); the kinds opened and the place in the list survive a refresh
+    (E-16); a refresh during the re-read before a Recompute keeps Compute busy (E-19); relative
+    `[analysis]` paths count from the project file's real folder, as the command does (E-25);
+    the test of several references no longer relies on a drawing in flight (E-20). The
+    sequence view shows the copy of a sample's sequence stored in the results when that
+    sample's FASTA file alone is missing or does not read, with a note naming the file (E-14;
+    before, the stored copies stood in only when every file was gone); a file named in
+    `[analysis] fasta` that is not found shows the stored sequence with a note instead of an
+    error (open question 6); a `SAMPLE.fasta` with no sample folder of its name beside it is
+    left out, with a note (open question 7); the coverage under the sequences counts MS1
+    peptides only, and the legend and the line under the view say so (E-21, open question 8;
+    on the private targeted dataset most of the coverage had been fragment ions); the HDX
+    summary table saved with the Markdown filter is Markdown whatever the name, `.md` added
+    (E-17). The review panel: a note being typed joins the status or K chosen next and is
+    written before another selection replaces the rows (on macOS a button click does not take
+    the focus from the box: D-3); the notes rule (owner, 2026-11-15): a review-table row that
+    says something (a status, `unreviewed` included, or a K) replaces the stored note with its
+    own note cell, empty included, a row with a note alone replaces the note, a row that is
+    entirely empty keeps the stored note, and a table without a note column leaves notes
+    alone (`apply_review_table`, `ReviewSheet.has_notes`); the window writes the note shown
+    into a row with a decision that has none of its own, and `unreviewed` (or the status
+    shown) beside a note emptied on a spectrum with no other decision, so a note the run's own
+    review layer holds can now be cleared from the window (D open question 1's addition); the
+    window loads the project's results with a K the screen skipped kept unfitted and shown at
+    the fit's K (`load_results(..., unfitted="keep")`, `apply_review_table` and `apply_view`
+    likewise), while the commands still refuse it (D-9, option a). The Run tab: the Replace
+    question comes only for a run, report or analyse refusing to write over its output, told
+    by the refusal's own words (`REFUSED = "--keep-previous moves"`), not for a resume
+    refusing a settings mismatch or a check printing its outputs block, which got the question
+    and a `--overwrite` the command does not take (A-4), and it is asked once the finished
+    slot has returned, never while the window is closing (A-16); a log folder removed during a
+    command is said in the console (A-9), a log write that fails closes the log and says so
+    once (A-17), and the next command lets the finished process go (A-8). The hxex logger's
+    level, lowered to INFO for the Messages pane, is given back when the window closes (A-7);
+    a review-table watch the system refuses is said (A-15); `_Stop.early` is taken once, so a
+    process running two commands in turn stops only the one the stop was for (A open question
+    5); config.py's refusals for a nested table come in words (`[run.fit.backend] has no
+    setting named foo`, `[run.fit.backend] device must be ...`, `[figures] series` naming a
+    list of series numbers; B-30). Guide gui.md, outputs.md and project-file.md updated. Tests:
+    `tests/test_export.py`, `test_gui_export.py`, `test_gui_sequence.py`, `test_gui_data.py`,
+    `test_gui_review.py` (the notes rule, D-3, D-9 with E-4 on a screened run),
+    `test_gui_analysis.py`, `test_gui_run.py`, `test_gui.py`, `test_cli.py`,
+    `test_fragment_kinetics.py`.

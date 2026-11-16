@@ -314,7 +314,12 @@ class MainWindow(QMainWindow):
         self.handler = MessagesHandler()
         self.handler.signal.line.connect(self._message)
         logging.getLogger("hxex").addHandler(self.handler)
+        # the pane shows INFO lines: the hxex logger's level is lowered for the window's life
+        # and given back when it closes (a Python session that opened a window kept the level
+        # afterwards: audit of 2026-11-15, A-7)
+        self._logger_level: int | None = None
         if logging.getLogger("hxex").getEffectiveLevel() > logging.INFO:
+            self._logger_level = logging.getLogger("hxex").level
             logging.getLogger("hxex").setLevel(logging.INFO)
 
         self._menus()
@@ -713,7 +718,9 @@ class MainWindow(QMainWindow):
 
         def load():
             stamp = table_stamp(project)  # before reading: a change while it reads shows later
-            results = load_results(path)
+            # a review K the screen skipped is kept, the spectrum shown at the fit's K (the
+            # review panel says so; the commands refuse it: audit of 2026-11-15, D-9)
+            results = load_results(path, unfitted="keep")
             analysis = _analysis_settings(project)
             return results, analysis, _left_out_or_none(results, analysis), stamp
 
@@ -834,14 +841,23 @@ class MainWindow(QMainWindow):
         stamp = self.results_review_stamp
         if self.project is not None and self.results_path == self.project and stamp \
                 and stamp[1] is not None:
-            self.review_watcher.addPath(stamp[0])
+            self._watch(stamp[0])
+
+    def _watch(self, path: str) -> None:
+        """Watch the review table at ``path``; a watch the system refuses (its limit of
+        watches reached, say) is said, as a table saved elsewhere would then go unseen
+        (audit of 2026-11-15, A-15)."""
+        if not self.review_watcher.addPath(path):
+            log.warning("the review table %s cannot be watched (the system refused the watch: "
+                        "its limit of file watches may be reached): a change saved to it from "
+                        "elsewhere is not seen until the results are opened again", path)
 
     def _review_table_changed(self) -> None:
         """The review table changed on disk: unless the review panel wrote it (its decisions are
         in the results already), the results are read again with it, at the same place."""
         stamp = table_stamp(self.project)
         if stamp and stamp[1] is not None and stamp[0] not in self.review_watcher.files():
-            self.review_watcher.addPath(stamp[0])  # a file replaced is no longer watched
+            self._watch(stamp[0])  # a file replaced is no longer watched
         if self.project is None or self.results_path != self.project or self.loading \
                 or stamp == self.results_review_stamp:
             return
@@ -995,6 +1011,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent):  # noqa: N802 - Qt's name
         if self._may_replace():
             logging.getLogger("hxex").removeHandler(self.handler)
+            if self._logger_level is not None:  # the level as it was before the window (A-7)
+                logging.getLogger("hxex").setLevel(self._logger_level)
+                self._logger_level = None
             self.table_zoom.stop()
             # work still running is dropped (nothing arrives in the closed window; what has
             # not started never does) and what is running finishes first, with a limit;

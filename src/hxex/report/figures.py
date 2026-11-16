@@ -93,7 +93,8 @@ class PlotConfig:
         if not isinstance(self.series, str):
             object.__setattr__(self, "series", tuple(int(s) for s in self.series))
         elif self.series not in ("flagged", "all"):
-            raise ValueError("series must be 'flagged', 'all' or a tuple of data_id")
+            raise ValueError('series must be "flagged", "all", or a list of series numbers '
+                             "(the data_id column of series.csv)")
         object.__setattr__(self, "kinds", tuple(self.kinds))
         object.__setattr__(self, "show", tuple(self.show))
         if not self.kinds or any(k not in KINDS for k in self.kinds):

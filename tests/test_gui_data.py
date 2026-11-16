@@ -365,3 +365,34 @@ def test_sorting_keeps_the_current_row_on_its_spectrum(qtbot):
     current = panel.table.selectionModel().currentIndex()
     assert current.row() == 2
     assert [i.row() for i in panel.table.selectionModel().selectedRows()] == [2]
+
+
+def test_the_summary_saved_with_the_markdown_filter_is_markdown(qtbot, tmp_path, monkeypatch):
+    """E-17: the save dialog's Markdown filter decides the format, whatever the name's suffix:
+    summary.txt saved as Markdown is written as Markdown, as summary.txt.md (it was written as
+    CSV); the CSV filter and an explicit suffix work as before."""
+    from PySide6.QtWidgets import QFileDialog
+
+    from hxex.gui.summary_panel import SummaryPanel
+
+    panel = SummaryPanel()
+    qtbot.addWidget(panel)
+    panel.show_summary({"item": ["Software", "Time points"], "S": ["hxex", "3"],
+                        "V": ["hxex", "4"]})
+    answers = []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: answers.pop(0)))
+    for name, chosen in (("summary.txt", "Markdown table (*.md)"), ("plain", "CSV (*.csv)"),
+                         ("table", "Markdown table (*.md)"), ("x.csv", "CSV (*.csv)")):
+        answers.append((str(tmp_path / name), chosen))
+        panel.save_dialog()
+    md = (tmp_path / "summary.txt.md").read_text(encoding="utf-8")
+    assert md.startswith("# HDX data summary") and not (tmp_path / "summary.txt").exists()
+    assert (tmp_path / "table.md").read_text(encoding="utf-8").startswith("# HDX data summary")
+    for csv_file in ("plain.csv", "x.csv"):
+        assert (tmp_path / csv_file).read_text(encoding="utf-8").startswith("item,S,V")
+    # save() itself: the format given, else from the suffix
+    assert panel.save(tmp_path / "given.txt", markdown=True).read_text(
+        encoding="utf-8").startswith("# HDX data summary")
+    assert panel.save(tmp_path / "by_suffix.md").read_text(
+        encoding="utf-8").startswith("# HDX data summary")

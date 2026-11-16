@@ -75,6 +75,10 @@ class ReviewSheet:
     note: tuple[str, ...]
     path: str = ""
     unreviewed: tuple[str, ...] = ()
+    # whether the table has a note column: a row that says something (a status, unreviewed
+    # included, or a K) then replaces the stored note with its own note cell, empty included
+    # (the notes rule; audit of 2026-11-15, scope D); without the column notes stay
+    has_notes: bool = True
 
     def __len__(self) -> int:
         return len(self.spectrum_id)
@@ -173,7 +177,7 @@ def read_review_table(path: str | Path) -> ReviewSheet:
     ids = list(entries)
     return ReviewSheet(tuple(ids), tuple(entries[s][0] for s in ids),
                        tuple(entries[s][1] for s in ids), tuple(entries[s][2] for s in ids),
-                       str(path), tuple(unreviewed))
+                       str(path), tuple(unreviewed), has_notes="note" in where)
 
 
 _SCANS = re.compile(r"/scans?\d+(?:-\d+)?$")
@@ -294,18 +298,25 @@ def _source_of(spectrum_id: str, origin: dict[str, str]) -> str:
     return "review table" if old is None else f"review table (moved from {old})"
 
 
-def apply_review_table(results, sheet: ReviewSheet | None):
+def apply_review_table(results, sheet: ReviewSheet | None, *, unfitted: str = "raise"):
     """``results`` (:class:`hxex.report.Results`) with the decisions of ``sheet`` laid over its
     review layer, in memory only (the bundle is not changed): a status replaces the stored
-    one, a chosen K replaces the stored one, and a note replaces the stored one when given;
-    ``review_status = unreviewed`` (written) clears the stored status, and ``review_K = 0`` the
-    stored K.
+    one, a chosen K replaces the stored one, and a row that says something (a status,
+    ``unreviewed`` included, or a K) replaces the stored note with its own note cell, empty
+    included (a table without a note column leaves the stored notes); a row with a note alone
+    replaces the note; ``review_status = unreviewed`` (written) clears the stored status, and
+    ``review_K = 0`` the stored K.
     An entry naming scans the results no longer sum follows its spectrum (:func:`move_entries`;
     logged). Spectra the results do not have are skipped with a warning; a chosen K that was
     not fitted for its spectrum (one the run did not try, or one its screen skipped, which
-    ``hxex resume`` fits) raises ValueError saying which."""
+    ``hxex resume`` fits) raises ValueError saying which; with ``unfitted="keep"`` a K the
+    screen skipped is kept in the review layer and the spectrum shown at the fit's K
+    (:attr:`hxex.report.Results.unfitted_choices`; the window loads results so, the commands
+    refuse: audit of 2026-11-15, D-9)."""
     from .io.bundle import ReviewTable
 
+    if unfitted not in ("raise", "keep"):
+        raise ValueError(f"unfitted must be 'raise' or 'keep', not {unfitted!r}")
     if sheet is None or not (len(sheet) or sheet.unreviewed):
         return results
     fit = results.fit
@@ -336,7 +347,7 @@ def apply_review_table(results, sheet: ReviewSheet | None):
                          "run again, or choose another K")
     skipped = [f"{sid} (K = {k})" for sid, k in zip(sheet.spectrum_id, sheet.k, strict=True)
                if k > 0 and sid in index and not fit.fitted(k)[index[sid]]]
-    if skipped:
+    if skipped and unfitted == "raise":
         raise ValueError(f"the review table {sheet.path} chooses a K the run's screen skipped "
                          f"for {len(skipped)} spectra ({', '.join(skipped[:3])}): 'hxex resume "
                          "hxex.toml' fits it for them (and bootstraps them), then report again")
@@ -352,10 +363,13 @@ def apply_review_table(results, sheet: ReviewSheet | None):
     ids = list(map(str, review.spectrum_id))
     stamp = datetime.now(UTC).isoformat(timespec="seconds")
     unreviewed = set(sheet.unreviewed)
-    for sid in unreviewed:  # a status the bundle holds, cleared (a K or note set below)
+    for sid in unreviewed:  # a status the bundle holds, cleared (a K or note set below); the
+        # row says something, so its note cell (empty, when the row is only that) is the note
         j = stored.get(sid)
-        if j is not None and sid in index and status[j]:
+        if j is not None and sid in index and (status[j] or (sheet.has_notes and note[j])):
             status[j] = ""
+            if sheet.has_notes:
+                note[j] = ""
             stale[j] = False
             source[j] = _source_of(sid, origin)
     for sid, st, k, nt in zip(sheet.spectrum_id, sheet.status, sheet.k, sheet.note,
@@ -378,7 +392,7 @@ def apply_review_table(results, sheet: ReviewSheet | None):
             status[j] = st
         if k:
             k_override[j] = max(k, 0)  # review_K = 0 clears the K chosen before
-        if nt:
+        if nt or sheet.has_notes:  # the row says something: its note cell is the note
             note[j] = nt
         stale[j] = False
         source[j] = _source_of(sid, origin)
@@ -424,16 +438,17 @@ def refuse_unfitted(results) -> None:
                          "fits it (and bootstraps it), then analyse again")
 
 
-def apply_view(results, review: ReviewSettings | None):
+def apply_view(results, review: ReviewSettings | None, *, unfitted: str = "raise"):
     """``results`` as the project's ``[review]`` settings present them: the review table's
     decisions, then the ``[[review.exclude]]`` rules (which reject whatever the table says), in
-    memory."""
+    memory. ``unfitted`` as :func:`apply_review_table`."""
     from .exclusions import exclude_from_results
 
     if not review:
         return results
     if review.table:
-        results = apply_review_table(results, read_review_table(review.table))
+        results = apply_review_table(results, read_review_table(review.table),
+                                     unfitted=unfitted)
     return exclude_from_results(results, review.exclude)
 
 

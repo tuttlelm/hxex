@@ -1402,9 +1402,13 @@ class ResultsWorkspace(QWidget):
         """The export dialog for ``targets`` (returned once closed, for the tests)."""
         from .export_dialog import ExportDialog
 
-        dialog = ExportDialog(self.results, kind, targets, self.default_export_folder(), self)
+        # a relative folder typed in the dialog counts from the results' folder (audit of
+        # 2026-11-15, E-18)
+        path = getattr(self, "results_path", None)
+        dialog = ExportDialog(self.results, kind, targets, self.default_export_folder(), self,
+                              base=Path(path).parent if path is not None else None)
         if dialog.exec() and dialog.written:
-            self.export_folder = Path(dialog.folder.text().strip()).expanduser()
+            self.export_folder = dialog.folder_path()
         return dialog
 
     # --- selection -------------------------------------------------------------------------

@@ -3,12 +3,15 @@
 an HX-Express spreadsheet, or the data behind its figures as CSV (a series, a time point, or
 one spectrum).
 
-The dialog asks for the folder, an optional prefix and suffix for the names, and the export's
-options, shows the names it will write, and asks before replacing anything."""
+The dialog asks for the folder (a relative one counted from the results' folder), an optional
+prefix and suffix for the names, and the export's options, shows the names it will write
+(refusing two targets of one name), and asks before replacing anything; it never deletes a
+file."""
 
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,9 +35,11 @@ from ..report.export import (
     ExportError,
     export_hxexpress,
     hxexpress_name,
+    hxexpress_warning,
     plot_data_files,
+    plot_data_leftovers,
     plot_data_name,
-    plot_tables,
+    plot_data_tables,
     write_plot_data,
 )
 from .tips import tip
@@ -57,14 +62,19 @@ class Target:
 
 class ExportDialog(QDialog):
     """Export ``targets`` of ``results`` as ``kind`` (:data:`HXEXPRESS` or :data:`PLOT_DATA`)
-    into a folder (``folder``: the one suggested)."""
+    into a folder (``folder``: the one suggested). A relative folder typed in the dialog is
+    counted from ``base``, the results' folder (as the suggested one is; the bundle's folder
+    when not given, else the folder ``hxex gui`` was started in)."""
 
-    def __init__(self, results, kind: str, targets: list[Target], folder: Path, parent=None):
+    def __init__(self, results, kind: str, targets: list[Target], folder: Path, parent=None, *,
+                 base: Path | None = None):
         super().__init__(parent)
         if kind not in (HXEXPRESS, PLOT_DATA):
             raise ValueError(f"kind must be {HXEXPRESS!r} or {PLOT_DATA!r}")
         self.results, self.kind, self.targets = results, kind, list(targets)
+        self.base = Path(base) if base is not None else _results_folder(results)
         self.written: list[Path] = []
+        self._tables: dict[int, tuple[str, ...]] = {}  # target position -> its plot-data tables
         self.setWindowTitle("Export for HX-Express" if kind == HXEXPRESS else "Export plot data")
         form = QFormLayout()
         self.folder = QLineEdit(str(folder))
@@ -77,6 +87,9 @@ class ExportDialog(QDialog):
         holder = QWidget()
         holder.setLayout(row)
         form.addRow("Folder", holder)
+        self.where = QLabel()  # the full location of a relative folder
+        self.where.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        form.addRow("", self.where)
         self.prefix, self.suffix = QLineEdit(), QLineEdit()
         where = ("before the sample in the file name (a reader takes it as part of the "
                  "sample's name)" if kind == HXEXPRESS else "at the start of the file names")
@@ -135,39 +148,118 @@ class ExportDialog(QDialog):
                               suffix=suffix)
 
     def folder_path(self) -> Path:
-        return Path(self.folder.text().strip()).expanduser()
+        """The folder written into: as typed when it is a full location, else counted from the
+        results' folder (``~`` the home folder)."""
+        path = Path(self.folder.text().strip()).expanduser()
+        if not path.is_absolute():
+            path = self.base / path
+        return Path(os.path.normpath(path))
+
+    def tables_of(self, n: int) -> tuple[str, ...]:
+        """The plot-data tables the export writes for target ``n`` (worked out once)."""
+        if n not in self._tables:
+            t = self.targets[n]
+            self._tables[n] = plot_data_tables(
+                self.results, **({"data_id": t.data_id} if t.spectrum_ids is None
+                                 else {"spectrum_ids": t.spectrum_ids}))
+        return self._tables[n]
 
     def files(self) -> list[Path]:
-        """Every file the export may write."""
+        """Every file the export writes."""
         if self.kind == HXEXPRESS:
             return [self.folder_path() / self.name_of(t) for t in self.targets]
-        return [f for t in self.targets for f in plot_data_files(self.folder_path(),
-                                                                  self.name_of(t))]
+        return [f for n, t in enumerate(self.targets)
+                for f in plot_data_files(self.folder_path(), self.name_of(t), self.tables_of(n))]
 
     def existing(self) -> list[Path]:
-        """The files that would be replaced."""
-        return [p for p in self.files() if p.exists()]
+        """The files that would be replaced; raises
+        :class:`~hxex.report.export.ExportError` for a name the file system cannot take."""
+        try:
+            return [p for p in self.files() if p.exists()]
+        except OSError as exc:
+            raise ExportError(f"cannot use the folder or a name: {exc.strerror or exc}"
+                              ) from exc
 
-    def _show_names(self) -> None:
+    def left_over(self) -> list[Path]:
+        """Files of these names an earlier plot-data export wrote and this one does not: left
+        as they are (nothing of the user's is deleted)."""
+        if self.kind == HXEXPRESS:
+            return []
+        try:
+            return [p for n, t in enumerate(self.targets)
+                    for p in plot_data_leftovers(self.folder_path(), self.name_of(t),
+                                                 self.tables_of(n))]
+        except (ExportError, ValueError, OSError):
+            return []
+
+    def problems(self) -> list[str]:
+        """Why the export cannot be made as it stands (empty when it can): a prefix, suffix,
+        or name the files cannot take, or two targets of one name."""
         try:
             names = [self.name_of(t) for t in self.targets]
-        except ExportError as exc:
-            self.names.setText(str(exc))
+            if self.kind == PLOT_DATA:
+                for n in range(len(self.targets)):
+                    self.tables_of(n)
+        except (ExportError, ValueError, OSError) as exc:
+            return [str(exc)]
+        seen: dict[str, int] = {}
+        out = []
+        for name in names:
+            key = name.lower()  # Windows and macOS do not tell WT from wt
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] == 2:
+                out.append(f"two of the things to export would be written as {name}: export "
+                           "them one at a time")
+        return out
+
+    def warnings(self) -> list[str]:
+        """What the user should know about the files (written all the same): a series hxex's
+        HX-Express reader cannot name from its file name alone."""
+        if self.kind != HXEXPRESS:
+            return []
+        out = []
+        for t in self.targets:
+            try:
+                warning = hxexpress_warning(self.results, t.data_id)
+            except (ExportError, ValueError):
+                continue
+            if warning and warning not in out:
+                out.append(warning)
+        return out
+
+    def _show_names(self) -> None:
+        typed = self.folder.text().strip()
+        relative = bool(typed) and not Path(typed).expanduser().is_absolute()
+        self.where.setText(f"→ {self.folder_path()}" if relative else "")
+        self.where.setVisible(relative)
+        problems = self.problems()
+        if problems:
+            self.names.setText("\n".join(problems))
             self.export_button.setEnabled(False)
             return
-        self.export_button.setEnabled(bool(self.folder.text().strip()))
+        names = [self.name_of(t) for t in self.targets]
+        self.export_button.setEnabled(bool(typed))
         shown = names[:SHOWN_NAMES]
         more = len(names) - len(shown)
         listed = ", ".join(shown) + (f", and {more} more" if more else "")
         if self.kind == HXEXPRESS:
             text = f"Writes {len(names)} file{'s' * (len(names) != 1)}: {listed}"
         else:
-            tables = plot_tables(self.results)
-            ends = ", ".join(f"_{t}.csv" for t in tables)
-            text = (f"Writes {len(tables)} CSV files named {listed} followed by {ends}"
-                    if len(names) == 1 else
-                    f"Writes {len(tables)} CSV files for each of {len(names)} names: "
-                    f"{listed}, each followed by {ends}")
+            sets = {self.tables_of(n) for n in range(len(self.targets))}
+            if len(sets) == 1:
+                tables = next(iter(sets))
+                ends = ", ".join(f"_{t}.csv" for t in tables)
+                text = (f"Writes {len(tables)} CSV files named {listed} followed by {ends}"
+                        if len(names) == 1 else
+                        f"Writes {len(tables)} CSV files for each of {len(names)} names: "
+                        f"{listed}, each followed by {ends}")
+            else:
+                count = sum(len(self.tables_of(n)) for n in range(len(self.targets)))
+                text = (f"Writes {count} CSV files for {len(names)} names: {listed}, each "
+                        "followed by _bins.csv and the others")
+        warnings = self.warnings()
+        if warnings:
+            text += "\n\nWarning: " + "\nWarning: ".join(warnings)
         self.names.setText(text)
 
     def _browse(self) -> None:
@@ -177,30 +269,52 @@ class ExportDialog(QDialog):
 
     # --- exporting -------------------------------------------------------------------------
 
-    def ask_replace(self, there: list[Path]) -> bool:
-        """Whether to replace what is ``there`` (a question to the user)."""
-        listed = "\n".join(p.name for p in there[:SHOWN_NAMES])
-        if len(there) > SHOWN_NAMES:
-            listed += f"\n… and {len(there) - SHOWN_NAMES} more"
-        answer = QMessageBox.question(
-            self, "Replace?", f"{len(there)} file{'s' * (len(there) != 1)} already "
-            f"exist{'s' * (len(there) == 1)} in {there[0].parent}:\n{listed}\n\n"
-            "Replace them?")
+    def replace_text(self, there: list[Path], left: list[Path] = ()) -> str:
+        """The Replace question: the files of this export that are there, and the files of an
+        earlier export of the same names this one does not write (left as they are)."""
+        def listing(paths):
+            text = "\n".join(p.name for p in paths[:SHOWN_NAMES])
+            if len(paths) > SHOWN_NAMES:
+                text += f"\n… and {len(paths) - SHOWN_NAMES} more"
+            return text
+
+        text = (f"{len(there)} of the files this export writes already "
+                f"exist{'s' * (len(there) == 1)} in {there[0].parent}:\n{listing(there)}\n\n"
+                f"Replace {'it' if len(there) == 1 else 'them'}?")
+        if left:
+            text += (f"\n\nLeft as {'it is' if len(left) == 1 else 'they are'} from an earlier "
+                     f"export (this one does not write {'it' if len(left) == 1 else 'them'}, "
+                     f"and nothing is deleted):\n{listing(list(left))}")
+        return text
+
+    def ask_replace(self, there: list[Path], left: list[Path] = ()) -> bool:
+        """Whether to replace what is ``there`` (a question to the user; ``left``: the files
+        an earlier export left that this one does not write, named in it)."""
+        answer = QMessageBox.question(self, "Replace?", self.replace_text(there, left))
         return answer == QMessageBox.StandardButton.Yes
 
     def export(self) -> list[str]:
         """Write every target (after asking before replacing anything); return the problems,
         one line per target that could not be written (empty when all were)."""
+        problems = self.problems()
+        if problems:
+            return problems
         try:
             there = self.existing()
-        except ExportError as exc:
+        except (ExportError, ValueError, OSError) as exc:
             return [str(exc)]
-        if there and not self.ask_replace(there):
+        left = self.left_over()
+        if there and not self.ask_replace(there, left):
             return ["not exported: nothing was replaced"]
         folder = self.folder_path()
         problems = []
         for target in self.targets:
-            name = self.name_of(target)
+            try:
+                name = self.name_of(target)
+            except (ExportError, ValueError, OSError) as exc:
+                problems.append(str(exc))
+                log.warning("not exported: %s", exc)
+                continue
             try:
                 if self.kind == HXEXPRESS:
                     written = export_hxexpress(
@@ -229,3 +343,11 @@ class ExportDialog(QDialog):
             QMessageBox.warning(self, "Not everything was exported", "\n".join(problems))
         if self.written:
             self.accept()
+
+
+def _results_folder(results) -> Path:
+    """The folder the results' bundle is in (the suggested folder's base), else the folder
+    ``hxex gui`` was started in."""
+    bundle = getattr(getattr(results, "loader", None), "__self__", None)
+    path = getattr(bundle, "path", None)
+    return Path(path).parent if path is not None else Path.cwd()

@@ -5,14 +5,18 @@ one row per distinct sequence (samples with the same one share a row), a residue
 from the first row's highlighted, prolines (no amide to exchange) in grey, the regions of
 ``[[analysis.regions]]`` as bars under the residues and the sites of ``[analysis.sites]``
 marked. A residue clicked says what it is. With results open for the project, each sample's
-coverage runs under its row: a block per residue as high as the number of peptides covering it
-(those with a spectrum not rejected), a dot where none does (owner, 2026-11-05).
+coverage runs under its row: a block per residue as high as the number of MS1 peptides covering
+it (those with a spectrum not rejected; fragment ions are not counted), a dot where none does
+(owner, 2026-11-05 and 2026-11-15).
 
 The sequences are those the analysis reads: ``[analysis] fasta`` (one file, or one per sample),
-else, for SpecExport, the ``SAMPLE.fasta`` files beside the sample folders; a FASTA numbered by
-its header (``>NAME/START-END``) starts at START. The files come first; a SpecExport run also
-keeps each sample's sequence in its bundle (the read record's ``sequences``), shown when the
-files are not found, and a file that no longer matches it is said (owner, 2026-11-04).
+else, for SpecExport, the ``SAMPLE.fasta`` files beside the sample folders (a ``SAMPLE.fasta``
+with no sample folder of its name beside it is not read, so it is left out, with a note); a
+FASTA numbered by its header (``>NAME/START-END``) starts at START. The files come first; a
+SpecExport run also keeps each sample's sequence in its bundle (the read record's
+``sequences``): a sample whose file is not found (or does not read), whether a ``SAMPLE.fasta``
+or a file ``[analysis] fasta`` names, is shown with that stored copy and a note naming the
+file, and a file that no longer matches its copy is said (owner, 2026-11-04 and 2026-11-15).
 
 Pooled data (owner, 2026-11-10) show the records of ``[input] pooled_fasta`` instead, grouped
 by class (``[input] pooled_classes``), each record's differences from the first of its class
@@ -129,33 +133,49 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
 
     def read(name: str) -> bool:
         return wanted is None or name.lower() in wanted
+    # samples whose FASTA is not there (or does not read): (sample, file name, why), each then
+    # shown with the copy the run stored in its bundle where there is one (E-14)
+    lost: list[tuple[str, str, str]] = []
     if config is not None and config.fasta is not None:
         try:
-            made = config.sequences(project.parent)
+            made, gone = _analysis_fasta(config.fasta, project.parent)
         except Exception as exc:  # noqa: BLE001 - said in the view
             return [], annotations, f"[analysis] fasta does not read: {exc}"
-        if isinstance(made, dict):
-            for name, value in made.items():
-                if isinstance(value, dict):  # a run's samples
-                    for sample, seq in value.items():
-                        found[f"{name}:{sample}"] = (residues_of(seq), getattr(seq, "first", 1))
-                elif read(name):
-                    found[name] = (residues_of(value), getattr(value, "first", 1))
-        else:
-            found["every sample"] = (residues_of(made), getattr(made, "first", 1))
+        for name, value in made.items():
+            if ":" in name or name == EVERY or read(name):
+                found[name] = value
+        for name, file in gone:
+            if name == EVERY:  # one file for every sample: each sample's stored copy
+                if stored:
+                    lost += [(s, file, "is not found") for s in stored if read(s)]
+                else:
+                    notes.append(f"{file} ([analysis] fasta) is not found, and the run stored "
+                                 "no copy of the sequence in its bundle.")
+            elif ":" in name or name not in stored:  # a run's sample, or nothing stored
+                if ":" in name or read(name):
+                    notes.append(f"{file} ([analysis] fasta, {name}) is not found, and the run "
+                                 "stored no copy of its sequence in its bundle.")
+            elif read(name):
+                lost.append((name, file, "is not found"))
     else:
         values, _ = live_settings(project.read_text(encoding="utf-8-sig"))
         if str(values.get("input.format", "")).strip('"') == "specexport":
             folder = Path(str(values.get("input.data_dir", "")).strip('"'))
             folder = folder if folder.is_absolute() else project.parent / folder
+            alone: list[str] = []  # SAMPLE.fasta without its sample folder: not read (Q7)
             if folder.is_dir():
+                dirs = {p.name for p in folder.iterdir() if p.is_dir()}
                 for path in sorted(p for p in folder.iterdir()
                                    if p.suffix.lower() == ".fasta" and p.is_file()
                                    and read(p.stem)):
+                    if path.stem not in dirs:  # as the reader pairs them: same name, same case
+                        alone.append(path.name)
+                        continue
                     try:
                         seq, first = read_fasta_numbered(path)
                     except Exception as exc:  # noqa: BLE001 - one file: said, the rest shown
                         log.warning("%s does not read: %s", path.name, exc)
+                        lost.append((path.stem, path.name, f"does not read ({exc})"))
                         continue
                     found[path.stem] = (residues_of(seq), first)
                     kept = stored.get(path.stem)
@@ -164,15 +184,43 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
                         notes.append(f"{path.name} differs from the copy the run stored in its "
                                      "bundle (the file is shown; rerun to read the peptides "
                                      "against it)")
-    if not found and stored:  # the files gone: the run's copies
-        found = {name: (residues_of(seq), first) for name, (seq, first, _) in stored.items()
-                 if read(name)}
-        notes.append("The FASTA files are not found: the sequences the run stored in its bundle "
-                     "are shown.")
+            if alone:
+                one = len(alone) == 1
+                notes.append(f"{', '.join(alone)} {'has' if one else 'have'} no sample folder "
+                             f"of {'its' if one else 'their'} name beside "
+                             f"{'it' if one else 'them'}, so hxex does not read "
+                             f"{'it' if one else 'them'}: left out.")
+            left_out = {Path(a).stem for a in alone}
+            told = {name for name, _, _ in lost}
+            lost += [(name, file or f"{name}.fasta", "is not found")
+                     for name, (_, _, file) in stored.items()
+                     if name not in found and name not in told and name not in left_out
+                     and read(name)]
+    if not found and not lost and stored:  # nothing named, nothing found: the run's copies
+        lost = [(name, file or f"{name}.fasta", "is not found")
+                for name, (_, _, file) in stored.items() if read(name)]
+    shown = [(name, file, why) for name, file, why in lost
+             if name in stored and name not in found]
+    for name, _, _ in shown:
+        seq, first, _ = stored[name]
+        found[name] = (residues_of(seq), first)
+    for name, file, why in lost:
+        if name not in stored:
+            notes.append(f"{file} {why}, and the run stored no copy of its sequence in its "
+                         "bundle.")
+    if shown:
+        files = list(dict.fromkeys(f for _, f, _ in shown))
+        if len(shown) > 1 and len(shown) == len(found):  # every sequence the stored copy
+            notes.append((f"{files[0]} is not found" if len(files) == 1 else
+                          f"The FASTA files are not found ({', '.join(files)})")
+                         + ": the sequences the run stored in its bundle are shown.")
+        else:
+            notes += [f"{file} {why}: the sequence the run stored in its bundle is shown for "
+                      f"{name}." for name, file, why in shown]
     if not found:
-        return [], annotations, ("No sequence: name the FASTA file(s) in [analysis] fasta (or, "
-                                 "for SpecExport data, put SAMPLE.fasta beside each sample's "
-                                 "folder).")
+        return [], annotations, "".join(f"{n} " for n in notes) + (
+            "No sequence: name the FASTA file(s) in [analysis] fasta (or, for SpecExport data, "
+            "put SAMPLE.fasta beside each sample's folder).")
     # the reference first (each other row then shows its own differences), then [analysis]
     # samples' order, the rest alphabetically
     ref = config.reference if config is not None and isinstance(config.reference, str) else ""
@@ -188,6 +236,42 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
             rows.append(SequenceRow([name], residues, first))
     _mark_differences(rows)
     return rows, annotations, " ".join(notes)
+
+
+EVERY = "every sample"  # the row name of one [analysis] fasta file for every sample
+
+
+def _analysis_fasta(fasta, base: Path) -> tuple[dict, list[tuple[str, str]]]:
+    """The sequences of ``[analysis] fasta`` (one file, or one per sample, a run's own under
+    ``run:sample``), relative paths from ``base``: name -> (residues, first residue number),
+    and the (name, file name) of each file that is not found (shown with the run's stored copy
+    instead, open question 6). A file that is there but does not read raises."""
+    from collections.abc import Mapping
+
+    from ..io import read_fasta_numbered
+
+    made: dict[str, tuple[tuple[str, ...], int]] = {}
+    gone: list[tuple[str, str]] = []
+
+    def one(name: str, text) -> None:
+        path = Path(str(text)).expanduser()
+        path = path if path.is_absolute() else base / path
+        if not path.is_file():
+            gone.append((name, path.name))
+            return
+        sequence, first = read_fasta_numbered(path)
+        made[name] = (residues_of(sequence), first)
+
+    if isinstance(fasta, Mapping):
+        for key, value in fasta.items():
+            if isinstance(value, Mapping):  # a run's samples
+                for sample, text in value.items():
+                    one(f"{key}:{sample}", text)
+            else:
+                one(str(key), value)
+    else:
+        one(EVERY, fasta)
+    return made, gone
 
 
 def _pooled_rows(inputs) -> tuple[list[SequenceRow], str]:
@@ -236,11 +320,34 @@ def _mark_differences(rows: list[SequenceRow]) -> None:
                            if base.at(n) and row.at(n) and row.at(n) != base.at(n)}
 
 
+def fragment_rows(results) -> np.ndarray:
+    """For each spectrum of ``results.binned``: whether its series is a fragment ion
+    (:func:`hxex.controls.fragment_ids`: an ion type other than M, or a target of a fragment
+    list, the precursor read in the fragment scans included), so not an MS1 peptide."""
+    b = results.binned
+    n = len(b.spectrum_id)
+    modification = getattr(b, "modification", None)
+    data_id = getattr(b, "data_id", None)
+    if modification is None or data_id is None:
+        return np.zeros(n, dtype=bool)
+    from ..analysis.screening import spectra_source
+    from ..chem import parse_modification
+    from ..io.mzml import fragment_series
+
+    # as fragment_ids, each distinct modification read once (the view redraws on every
+    # review decision)
+    mods, inverse = np.unique(np.asarray(modification).astype(str), return_inverse=True)
+    other = np.array([parse_modification(m).ion_type != "M" for m in mods], dtype=bool)
+    listed = list(fragment_series(spectra_source(results)))
+    return other[inverse.ravel()] | np.isin(np.asarray(data_id), listed)
+
+
 def coverage_of(results) -> dict[str, list[tuple]]:
-    """Each sample's peptides in ``results`` (:class:`hxex.report.Results`) with at least one
-    spectrum the review did not reject: ``(first residue, last residue, peptide_range)``,
-    each peptide once whatever its charges, in residue order. For pooled results with a
-    pooled FASTA: each record's peptides instead (:func:`pooled_coverage_of`)."""
+    """Each sample's MS1 peptides in ``results`` (:class:`hxex.report.Results`) with at least
+    one spectrum the review did not reject: ``(first residue, last residue, peptide_range)``,
+    each peptide once whatever its charges, in residue order; fragment ions are not counted
+    (:func:`fragment_rows`; owner, 2026-11-15). For pooled results with a pooled FASTA: each
+    record's peptides instead (:func:`pooled_coverage_of`)."""
     fit, b = results.fit, results.binned
     if b is None:
         return {}
@@ -252,10 +359,11 @@ def coverage_of(results) -> dict[str, list[tuple]]:
     sample = np.asarray(b.sample).astype(str)
     start, end = np.asarray(b.start_seq), np.asarray(b.end_seq)
     ranges = np.asarray(b.peptide_range).astype(str)
+    fragment = fragment_rows(results)
     out: dict[str, set[tuple[int, int, str]]] = {}
     for i, sid in enumerate(map(str, fit.spectrum_id)):
         j = index.get(sid)
-        if j is None or status[i] == "rejected":
+        if j is None or status[i] == "rejected" or fragment[j]:
             continue
         out.setdefault(sample[j], set()).add((int(start[j]), int(end[j]), ranges[j]))
     return {s: sorted(v) for s, v in sorted(out.items())}
@@ -263,7 +371,7 @@ def coverage_of(results) -> dict[str, list[tuple]]:
 
 def pooled_coverage_of(results) -> dict[str, list[tuple]] | None:
     """Each record of the pooled FASTA with the peptides of ``results`` it may hold (every
-    sample together; a peptide with a spectrum the review did not reject): ``(first residue,
+    sample together; an MS1 peptide with a spectrum the review did not reject): ``(first residue,
     last residue, peptide_range, own)`` in the record's own numbering (the peptide's residues
     moved by the record's offset), ``own`` when no other record holds it. None for results
     without a pooled FASTA."""
@@ -277,10 +385,11 @@ def pooled_coverage_of(results) -> dict[str, list[tuple]] | None:
     status = np.asarray(results.review_status).astype(str)
     start, end = np.asarray(b.start_seq), np.asarray(b.end_seq)
     ranges = np.asarray(b.peptide_range).astype(str)
+    fragment = fragment_rows(results)
     out: dict[str, set[tuple]] = {}
     for i, (sid, d) in enumerate(zip(map(str, fit.spectrum_id), fit.data_id, strict=True)):
         j, found = index.get(sid), known.get(int(d))
-        if j is None or found is None or status[i] == "rejected":
+        if j is None or found is None or status[i] == "rejected" or fragment[j]:
             continue
         own = len(found.candidates) == 1
         for record, offset in zip(found.candidates, found.offsets, strict=True):
@@ -294,7 +403,7 @@ def _coverage_samples(row: SequenceRow, coverage) -> list[str]:
     sample part of ``run:sample``, or every sample for one sequence shared by all."""
     if not coverage:
         return []
-    if row.samples == ["every sample"]:
+    if row.samples == [EVERY]:
         return list(coverage)
     out = []
     for name in row.samples:
@@ -340,7 +449,8 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
             keys.append(f'<span style="color:{SITE};">▲</span> site')
         if top:
             keys.append(f'<span style="color:{COVER};">{BLOCKS[0]}…{BLOCKS[-1]}</span> '
-                        f'peptides covering a residue (1 to {top}), '
+                        f'MS1 peptides covering a residue (1 to {top}; fragment ions '
+                        'not counted), '
                         f'<span style="color:{UNCOVERED};">·</span> none')
             if any(len(p) > 3 and p[3] for v in coverage.values() for p in v):
                 keys.append(f'<span style="color:{OWN};">{BLOCKS[-1]}</span> covered by a '
@@ -569,7 +679,8 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         what = "record(s)" if any(r.group for r in self.rows) else "sample(s)"
         self.about.setText(f"{n} {what}, {len(self.rows)} distinct sequence(s). "
                            + (f"{self._message} " if self._message else "")
-                           + ("Coverage from the open results (rejected spectra left out). "
+                           + ("Coverage from the open results: MS1 peptides only (fragment "
+                              "ions and rejected spectra left out). "
                               if self.coverage else "")
                            + "Click a residue to see what it is.")
 
@@ -583,5 +694,5 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
 
 
 __all__ = ["PER_LINE_CHOICES", "SequenceRow", "SequenceView", "coverage_of", "depth",
-           "describe", "pooled_coverage_of", "project_sequences", "residues_of",
+           "describe", "fragment_rows", "pooled_coverage_of", "project_sequences", "residues_of",
            "sequence_html", "stored_sequences"]

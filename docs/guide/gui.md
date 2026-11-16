@@ -174,13 +174,18 @@ prolines (which have no amide hydrogen to exchange) are in grey. The regions of
 `[analysis.sites]` are underlined, with a key above. Click a residue to see its number, what it
 is, how the other samples differ there, and its regions and site. When the project's results
 are open, each sample's coverage runs under its sequence: a block under each residue, as high as
-the number of peptides covering it, and a red dot where no peptide does. A peptide counts when
+the number of peptides covering it, and a red dot where no peptide does. Only the MS1 peptides
+count, not fragment ions, and the line under the view says so. A peptide counts when
 at least one of its spectra is not rejected, so the coverage follows your review. Clicking a
 residue then also lists the peptides covering it. **Read again** reads the
 FASTA files again after you change one. A run of SpecExport data keeps each sample's sequence in
 its results, so the view still shows them when the FASTA files have moved (it says so), and it
 says when a FASTA no longer matches the copy the run kept (the file is shown; run again to read
-the peptides against it).
+the peptides against it). If one sample's FASTA file is missing (or does not read), the view
+shows the sequence the run stored for that sample, with a note naming the file; this holds for
+a `SAMPLE.fasta` beside the sample folders and for a file named in `[analysis] fasta`. A
+`SAMPLE.fasta` with no sample folder of exactly its name beside it is not read by *hxex*, so
+the view leaves it out and says so.
 
 For pooled data, **Sequence** shows each record of `[input] pooled_fasta` instead, grouped by
 class (`[input] pooled_classes`), with a line between the classes. A residue that differs from
@@ -528,12 +533,16 @@ it; its figures are those of its first charge).
   When no bootstrap was made at the K you choose, **Add the bootstrap (Resume)** runs `hxex
   resume`, which adds it. When the run's quick screen (`[run.fit] screen`) skipped that K for
   the spectrum, the spectrum stays at the fit's K, and the panel says so, until **Resume** fits
-  it (with its bootstrap). `hxex report` and `hxex analyse` wait for that too.
+  it (with its bootstrap); the window keeps opening the project's results meanwhile, while
+  `hxex report` and `hxex analyse` (and **Compute** on the Analysis page) refuse until then.
 - **Not reviewed** takes a decision back: it is written as `unreviewed`, which also clears a
   status the run's own review layer holds (one set from Python, or carried over by a rerun).
 - **Note**: anything you want to keep with the spectrum. It is saved when you press Enter or
-  leave the box. A note the run's own review layer holds cannot be cleared from the table: it
-  stays shown, and the box says so when you rest the pointer on it. With a time point or a charge selected, the box shows the note its spectra
+  leave the box, and a note you are still typing goes with the status or K you choose next,
+  or with the spectrum when you move on to another. A note the run's own review layer holds
+  (one set from Python, or carried over by a rerun) is shown, and the box says so when you
+  rest the pointer on it; emptying the box clears it. With a time point or a charge selected,
+  the box shows the note its spectra
   share, and a note typed there replaces each spectrum's own. When their notes differ, the box
   is empty and says so; leaving it empty keeps each one's note. A note needs no decision: on a
   spectrum you leave not reviewed, it is kept and shown again, and it changes nothing in the
@@ -541,7 +550,11 @@ it; its figures are those of its first charge).
 
 Each decision is written at once to your review table, the same file you could edit in a
 spreadsheet ([Excluding spectra](excluding-spectra.md)): its `review_status`, `review_K`, and
-`note` columns, in the spectrum's row; your other columns stay as they are. When the project
+`note` columns, in the spectrum's row; your other columns stay as they are. A row that says
+something (a status, `unreviewed` included, or a K) carries its `note` cell as the note, an
+empty cell included, while a row that is entirely empty leaves the run's own note alone (so
+the window writes the note shown into the row with your decision, and `unreviewed` beside a
+note you empty on a spectrum with no other decision). When the project
 has no review table yet, the first decision asks where to put one, suggesting
 `user_review_table.csv` beside the project file (with the project file's name in front when it
 is not `hxex.toml`), makes it there (a copy of the results' spectra table) and names it under
@@ -602,8 +615,9 @@ file), so what you see here is what the command writes.
   item to see its note). It fills in when you press **Compute** and says when it is out of
   date. Your own items (the buffer, the quench, the
   protease) go in `[analysis.summary]` in the **Project** settings. Ctrl+C copies the rows
-  you selected, and **Save table…** writes the summary as CSV or, with a name ending in
-  `.md`, as the Markdown table.
+  you selected, and **Save table…** writes the summary in the format you choose in the save
+  dialog, CSV or the Markdown table (with the Markdown filter, a name that does not end in
+  `.md` gets `.md` added).
 - Right-click a peptide in a coverage map or a Woods plot for a menu of its spectra, and
   choose one to see them in **Results** (the peptide is selected in the tree, its charge
   states under it). Where bars overlap, the menu lists every peptide under the pointer, top
@@ -618,12 +632,18 @@ file), so what you see here is what the command writes.
   box beside **Compute** switches them on and off: it writes `fit_rates` to the project file,
   so `hxex analyse` does the same, and the figures shown are then out of date until you
   press **Recompute**. The line at the top says which to expect. Then every
-  figure shows at once. Nothing is written to disk.
+  figure shows at once. Nothing is written to disk. **Stop**, beside **Compute** while it
+  computes, ends the computation at its next step (between the tables, the figures, and
+  each parent's ladder rate fits); the figures of the earlier analysis stay. When your review
+  chose a K the run's quick screen skipped for a spectrum, **Compute** refuses as `hxex
+  analyse` does, and **Fit the chosen K (Resume)…** beside it runs `hxex resume` to fit it.
 - When the results change (a new run, a review decision), the `[analysis]` settings change,
   or your review table changes (in **Tables**, or in a spreadsheet), the line at the top says
   the figures are out of date and why; they stay until you press **Recompute**, which draws the
   figure you are looking at again. When the review table changed, **Recompute** reads the
-  results again with it first. Opening other results starts afresh.
+  results again with it first. A change that only redraws the Results part (a `[figures]`
+  setting) does not count. The kinds you opened in the list stay open through all this.
+  Opening other results starts afresh.
 - When `[analysis] reference` names several samples, or `"all"`, a list at the top chooses
   which reference's analysis is shown. Each is computed when you press **Compute** with it
   chosen, and then kept, so switching back is instant; `hxex analyse` writes a folder for
@@ -657,9 +677,11 @@ would type it. One command runs at a time.
   finished is kept, and a bootstrap stopped part way is finished later with **Resume**. Press
   it again (**Abort now**) to end the command at once; one that still does not end is ended by
   the window a few seconds later.
-- When a command finds results it would replace (a second **Run**, say), it changes nothing
-  and the window asks: replace them, keep them under the next free name (`results.1`, ...),
-  or cancel. These are the command's `--overwrite` and `--keep-previous`.
+- When **Run**, **Report**, or **Analyse** finds results it would replace (a second **Run**,
+  say), it changes nothing and the window asks: replace them, keep them under the next free
+  name (`results.1`, ...), or cancel. These are the command's `--overwrite` and
+  `--keep-previous`. Another command that fails (a **Resume** whose settings no longer match
+  the results, say) is not asked about: its messages say what to do.
 - Run the project again after changing what is read: the peptide table, the elution windows
   saved in the elution tab, or the picking or fit settings, with overwrite enabled:
   `overwrite = true` in the project file's `[output]` part (then **Run** replaces the earlier
@@ -676,7 +698,9 @@ would type it. One command runs at a time.
   also goes to a log file in a folder `hxex_logs` beside the project file, one per command,
   named by the project file, the command, and when it started
   (`hxex_run_2026-11-03_112059.log`), with the command, the folder, the *hxex* version, and how
-  it ended. The folder is the window's: delete old logs whenever you like.
+  it ended. The folder is the window's: delete old logs whenever you like (a log that
+  cannot be written any more during a command, or whose folder was removed meanwhile, is said
+  in the console, which keeps the output).
 - Opening a project shows the output of its last command, under a grey line saying which
   command it was, when it started, and how it ended (a long log shows its last 3,000 lines).
   **Earlier commands**, below the console, lists the project's other commands, newest first:

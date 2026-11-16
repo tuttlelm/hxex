@@ -225,8 +225,10 @@ and you can make them in a spreadsheet.
    the spectra you have a view on:
    - `review_status`: `rejected` to leave the spectrum out, or `accepted`. An empty cell means
      no decision, and so does `unreviewed`, which also clears a status stored in the results
-     themselves (one set from Python, or carried over by a rerun); a note stored there cannot
-     be cleared from the table. An `accepted` spectrum is also kept when `hxex analyse`
+     themselves (one set from Python, or carried over by a rerun). A row that says something
+     (a status, `unreviewed` included, or a `review_K`) carries its `note` cell as the
+     spectrum's note, an empty cell included, so it clears a note stored in the results; a row
+     that is entirely empty leaves the stored note alone. An `accepted` spectrum is also kept when `hxex analyse`
      would leave it out (it lists those in `left_out_spectra.csv`). In a copy of `spectra.csv`,
      a spectrum a `[[review.exclude]]` rule rejected reads `rejected`: empty that cell, or
      removing the rule later leaves the spectrum rejected (the window's own copy leaves such

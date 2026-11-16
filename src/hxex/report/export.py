@@ -11,6 +11,7 @@ can be drawn again in one's own style. docs/PLAN.md Next steps 32.
 from __future__ import annotations
 
 import logging
+import re
 import weakref
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -29,7 +30,7 @@ from ..io.hxexpress import (
 from ..io.times import format_time
 from ..spectra import FULLDEUT, UNDEUT, point_order_key
 from .results import Results
-from .series import _control_row, _fragment_of, _reps, series_rows
+from .series import _control_row, _reps, series_rows
 from .spectrum import _charge_of, _fit_data, _picked, _recorded, peak_measure
 from .tables import (
     _index_columns,
@@ -57,19 +58,6 @@ def _first_row(results: Results, data_id: int) -> int:
         return int(series_rows(results, data_id)[0])
     except KeyError:
         raise ExportError(f"no series {data_id} in the results") from None
-
-
-def _identity(results: Results, data_id: int) -> dict:
-    """The series' sample, residues, sequence, charge, and ion type (empty for a peptide)."""
-    b = results.binned
-    if b is None:
-        raise ExportError("the results have no picked table, which names the series' sample, "
-                          "peptide, and charge")
-    j = b.find(str(results.fit.spectrum_id[_first_row(results, data_id)]))
-    frag = _fragment_of(results, data_id)
-    ion = "" if frag is None else str(frag["fragment"]).rpartition(":")[0]
-    return {"sample": str(b.sample[j]), "start": int(b.start_seq[j]), "end": int(b.end_seq[j]),
-            "peptide": str(b.peptide[j]), "charge": int(b.charge[j]), "ion_type": ion}
 
 
 def plain_sequence(sequence: str, results: Results | None = None) -> str:
@@ -100,42 +88,203 @@ def _affix(value: str, what: str, *, hxexpress: bool = False) -> str:
     return value
 
 
+NAME_LIMIT = 255  # the longest file name (in bytes, UTF-8) most file systems take
+
+# what tells two series of one HX-Express name apart, in the order tried: the modified form the
+# one-letter sequence leaves out, the fragment list's label or scan conditions, the parent
+QUALIFIERS = ("form", "condition", "parent")
+
+
+def _text_part(value: str) -> str:
+    """``value`` as part of an HX-Express name's free-text field: letters, digits, and ``_``
+    only (``+`` written ``p``, as the ion types; anything else ``_``)."""
+    text = "".join(c if c.isalnum() else "_" for c in str(value).replace("+", "p"))
+    return re.sub("_+", "_", text).strip("_")
+
+
+def _residue_text(number: int) -> str:
+    return f"minus{-number}" if number < 0 else str(number)
+
+
+def _parent_text(parent_range: str) -> str:
+    """A parent's residues in the free-text field (``12-20`` -> ``parent_12_20``; a residue
+    below 0 is written ``minus3``, since ``-`` separates the name's fields)."""
+    m = re.fullmatch(r"\s*(-?\d+)\s*-\s*(-?\d+)\s*", str(parent_range))
+    if m is None:
+        return _text_part(f"parent_{parent_range}") if parent_range else ""
+    return f"parent_{_residue_text(int(m[1]))}_{_residue_text(int(m[2]))}"
+
+
+def _check_length(name: str, what: str = "file name") -> None:
+    size = len(name.encode("utf-8"))
+    if size > NAME_LIMIT:
+        raise ExportError(f"the {what} {name[:40]}… is {size} characters long, more than the "
+                          f"{NAME_LIMIT} a file system takes: shorten the prefix or suffix")
+
+
+def _held(cache: dict, results: Results, make):
+    """``make(results)``, kept per results (by identity: Results holds arrays, so it cannot be
+    hashed) while the results live; the dialog asks again at every key pressed."""
+    held = cache.get(id(results))
+    if held is not None and held[0]() is results:
+        return held[1]
+    value = make(results)
+    for key in [k for k, (ref, _) in cache.items() if ref() is None]:
+        del cache[key]
+    cache[id(results)] = (weakref.ref(results), value)
+    return value
+
+
+_NAMES: dict[int, tuple[weakref.ref, dict]] = {}  # id(results) -> (results, name fields)
+
+
+def _hxexpress_fields(results: Results) -> dict[int, dict | str]:
+    """Every series' HX-Express name fields (``sample``, ``written``, ``start``, ``end``,
+    ``sequence``, ``charge``, ``text``: the free-text field's parts), made unique over the whole
+    results (:func:`hxexpress_name`), or the reason a series cannot be named."""
+    return _held(_NAMES, results, _make_hxexpress_fields)
+
+
+def _make_hxexpress_fields(results: Results) -> dict[int, dict | str]:
+    from ..analysis.fragments import _condition
+    from ..io.mzml import SCAN_READERS, mzml_series_targets
+
+    b = results.binned
+    if b is None:
+        raise ExportError("the results have no picked table, which names the series' sample, "
+                          "peptide, and charge")
+    fit = results.fit
+    source = results.settings.spectra_source if results.settings is not None else None
+    targets = (mzml_series_targets(source) if source and source.get("reader") in SCAN_READERS
+               and "series" in source else {})
+    where = {str(s): j for j, s in enumerate(b.spectrum_id)}
+    ids, first = np.unique(np.asarray(fit.data_id), return_index=True)
+    out: dict[int, dict | str] = {}
+    for d, i in zip(ids.tolist(), first.tolist(), strict=True):
+        j = where.get(str(fit.spectrum_id[i]))
+        if j is None:
+            out[d] = f"series {d} is not in the picked table, which names its peptide"
+            continue
+        peptide = str(b.peptide[j])
+        try:
+            plain = plain_sequence(peptide, results)
+        except ExportError as exc:
+            out[d] = str(exc)
+            continue
+        sample = str(b.sample[j])
+        written = sample
+        for char in ("-", "/", "\\"):
+            written = written.replace(char, "_")
+        target = targets.get(d)
+        extra = dict(target.entry.extra) if target is not None else {}
+        fragment = str(extra.get("fragment", "") or "")
+        if fragment:  # the ion type and the channel it was read in (c_1_MS3, M_MS2)
+            ion = fragment.rpartition(":")[0] or fragment
+            text = [_text_part(ion), f"MS{target.ms_level}"]
+        else:
+            text = [HXEXPRESS_TEXT]
+        modification = str(b.modification[j] or "") if b.modification is not None else ""
+        form = "_".join(p for p in (_text_part(peptide) if peptide != plain else "",
+                                    _text_part(modification)) if p)
+        out[d] = {
+            "sample": sample, "written": written, "start": int(b.start_seq[j]),
+            "end": int(b.end_seq[j]), "sequence": plain, "charge": int(b.charge[j]),
+            "text": text, "qualifiers": {
+                "form": form,
+                "condition": _text_part(_condition(target)) if fragment else "",
+                "parent": _parent_text(str(extra.get("parent_range", "") or "")) if fragment
+                else ""}}
+    _make_unique({d: f for d, f in out.items() if isinstance(f, dict)})
+    return out
+
+
+def _make_unique(fields: dict[int, dict]) -> None:
+    """Add to the free-text field of the series that would share a name what tells them apart
+    (:data:`QUALIFIERS`, then ``id<data_id>``), so no two series of the results share a file
+    name, in any case (Windows and macOS do not tell ``WT`` from ``wt``)."""
+
+    def key(f: dict) -> tuple:
+        return (f["written"].lower(), f["start"], f["end"], f["sequence"], f["charge"],
+                "_".join(f["text"]).lower())
+
+    def clashes() -> list[list[int]]:
+        groups: dict[tuple, list[int]] = {}
+        for d, f in fields.items():
+            groups.setdefault(key(f), []).append(d)
+        return [g for g in groups.values() if len(g) > 1]
+
+    for kind in QUALIFIERS:
+        for group in clashes():
+            values = {fields[d]["qualifiers"][kind] for d in group}
+            if len(values) > 1:
+                for d in group:
+                    if fields[d]["qualifiers"][kind]:
+                        fields[d]["text"].append(fields[d]["qualifiers"][kind])
+    for group in clashes():
+        for d in group:
+            fields[d]["text"].append(f"id{d}")
+
+
 def hxexpress_name(results: Results, data_id: int, *, prefix: str = "", suffix: str = ""
                    ) -> str:
     """The HX-Express file name of a series: ``SAMPLE_START-END-SEQUENCE-zCHARGE-TEXT.xlsx``,
     the sequence in one-letter form (:func:`plain_sequence`; HX-Express takes modifications by
-    manual entry), ``TEXT`` ``hxex`` for a peptide or the ion type for a fragment ion (``c_1``
-    for ``c-1``). A ``-`` (or path separator) in the sample name is written ``_``, with a
-    warning naming both. ``suffix`` is added to ``TEXT`` (``hxex_SUFFIX``); ``prefix`` goes
-    before the sample (``PREFIX_SAMPLE``), so a reader of the file takes it as part of the
-    sample's name. Neither may hold ``-``."""
+    manual entry). ``TEXT``, the free-text field HX-Express does not read, is ``hxex`` for a
+    peptide and, for a fragment ion, its ion type and the channel it was read in (``c_1_MS3``;
+    ``M_MS2`` for the precursor read with the fragments). The name is unique over the whole
+    results: where two series would share one, ``TEXT`` also says what tells them apart, in
+    readable form: the modified form the one-letter sequence leaves out (``PEPacKTIDE``), the
+    fragment list's label or scan conditions (``ETD``), the parent's residues
+    (``parent_12_20``), and ``id<data_id>`` only when they still share it. A ``-`` (or path
+    separator) in the sample name is written ``_``, with a warning naming both. ``suffix`` is
+    added to ``TEXT`` (``hxex_SUFFIX``); ``prefix`` goes before the sample
+    (``PREFIX_SAMPLE``), so a reader of the file takes it as part of the sample's name.
+    Neither may hold ``-``. A name longer than a file system takes is refused
+    (:class:`ExportError`); for a series starting below residue 0 see
+    :func:`hxexpress_warning`."""
     prefix = _affix(prefix, "prefix", hxexpress=True)
     suffix = _affix(suffix, "suffix", hxexpress=True)
-    ident = _identity(results, data_id)
-    sample = ident["sample"]
-    written = sample
-    for char in ("-", "/", "\\"):
-        written = written.replace(char, "_")
+    _first_row(results, data_id)
+    fields = _hxexpress_fields(results).get(int(data_id))
+    if fields is None:
+        raise ExportError(f"no series {data_id} in the results")
+    if isinstance(fields, str):
+        raise ExportError(fields)
+    sample, written = fields["sample"], fields["written"]
     if written != sample:
         log.warning("the sample %r is written %r in the HX-Express file name ('-' separates its "
                     "fields)", sample, written)
     if prefix:
         written = f"{prefix}_{written}"
-    ion = ident["ion_type"]
-    text = HXEXPRESS_TEXT if ion in ("", "M") else ion.replace("-", "_").replace("+", "p")
-    if suffix:
-        text = f"{text}_{suffix}"
-    return hxexpress_filename(written, ident["start"], ident["end"],
-                              plain_sequence(ident["peptide"], results), ident["charge"], text)
+    text = "_".join([*fields["text"], suffix] if suffix else fields["text"])
+    try:
+        name = hxexpress_filename(written, fields["start"], fields["end"], fields["sequence"],
+                                  fields["charge"], text)
+    except ValueError as exc:
+        raise ExportError(f"series {data_id}: {exc}") from exc
+    _check_length(name)
+    return name
 
 
-def _dummy_times(results: Results, rows: np.ndarray) -> dict[float, float]:
-    """For ``time_scale = "order"``: each labelled point's rank (1, 2, ...) as its time in
-    seconds (owner, 2026-11-12: HX-Express labels need a time)."""
-    fit = results.fit
-    labelled = [float(fit.time[i]) for i in rows
-                if str(fit.role[i]) == "" and np.isfinite(fit.time[i])]
-    return {t: float(n) for n, t in enumerate(sorted(set(labelled)), start=1)}
+def hxexpress_warning(results: Results, data_id: int) -> str:
+    """Why hxex's HX-Express reader will not take the series' peptide from its file name by
+    itself ('' when it will): a series starting below residue 0 (numbered from a tag) has a
+    ``-`` in its range, the name's field separator. The file is written all the same
+    (HX-Express itself does not mind); give the peptide in a table when reading it back."""
+    fields = _hxexpress_fields(results).get(int(data_id))
+    if not isinstance(fields, dict) or fields["start"] >= 0:
+        return ""
+    return (f"series {data_id} ({fields['sample']} {fields['start']}-{fields['end']}) starts "
+            "below residue 0: hxex's HX-Express reader cannot take its peptide from the file "
+            "name by itself ('-' separates the name's fields); list the file and its peptide "
+            "in a peptide table when reading it back (HX-Express itself does not mind)")
+
+
+def _order_label(value: float) -> str:
+    try:
+        return hxexpress_time_label(value)
+    except ValueError:
+        return "(cannot be written)"
 
 
 def hxexpress_spectra(results: Results, data_id: int, *, spectra: str = "raw",
@@ -146,7 +295,8 @@ def hxexpress_spectra(results: Results, data_id: int, *, spectra: str = "raw",
     review rejected are left out (an ``[[review.exclude]]`` rule rejects; ``[[input.exclude]]``
     spectra were never fitted). ``spectra``: ``raw`` (the spectra as read) or ``picked`` (the
     sticks: each bin's predicted m/z and value). ``controls``: ``all`` replicates or the
-    ``first`` of each control."""
+    ``first`` of each control. With ``time_scale = "order"`` each point's own value (as the
+    results store it) is written as that many seconds, so every series labels a point alike."""
     if spectra not in SPECTRA_CHOICES:
         raise ValueError(f"spectra must be one of {SPECTRA_CHOICES}, got {spectra!r}")
     if controls not in CONTROLS_CHOICES:
@@ -168,12 +318,14 @@ def hxexpress_spectra(results: Results, data_id: int, *, spectra: str = "raw",
     rows = np.array(sorted(rows, key=lambda i: (
         point_order_key(np.nan if fit.role[i] else float(fit.time[i]), str(fit.role[i])),
         int(reps[i]), int(i))), dtype=np.int64)
-    dummy = _dummy_times(results, rows) if results.time_scale == "order" else None
-    if dummy:
-        log.info("series %d: the points have no real times (time_scale = \"order\"); written as "
-                 "dummy times, each point's rank in seconds: %s", data_id,
-                 ", ".join(f"point {format_time(t, 'order')} -> {hxexpress_time_label(s)}"
-                           for t, s in dummy.items()))
+    order = results.time_scale == "order"
+    if order:  # the points' own values, never ranks: the same in every series (owner)
+        points = sorted({float(fit.time[i]) for i in rows
+                         if not fit.role[i] and np.isfinite(fit.time[i])})
+        log.info("series %d: the points have no real times (time_scale = \"order\"); each "
+                 "point's own value is written as that many seconds: %s", data_id,
+                 ", ".join(f"point {format_time(t, 'order')} -> {_order_label(t)}"
+                           for t in points))
     ids = [str(fit.spectrum_id[i]) for i in rows]
     raw = _raw_spectra(results, ids) if spectra == "raw" else {}
     if spectra == "raw" and len(raw) < len(ids):
@@ -193,11 +345,12 @@ def hxexpress_spectra(results: Results, data_id: int, *, spectra: str = "raw",
                 continue
             label = hxexpress_control_label(role, n)
         else:
-            seconds = dummy[t] if dummy else t
             try:
-                label = hxexpress_time_label(seconds, n)
+                label = hxexpress_time_label(t, n)
             except ValueError as exc:
-                raise ExportError(f"series {data_id}, spectrum {sid}: {exc}") from exc
+                why = (" (time_scale = \"order\": each point's own value is written as that "
+                       "many seconds)" if order else "")
+                raise ExportError(f"series {data_id}, spectrum {sid}: {exc}{why}") from exc
         if spectra == "raw":
             mz, y = raw[sid]
         else:
@@ -232,16 +385,29 @@ def export_hxexpress(results: Results, data_id: int, directory: str | Path, *,
     """Write a series as an HX-Express spreadsheet in ``directory``, named by
     :func:`hxexpress_name` (with the user's ``prefix`` and ``suffix``), and return its path.
     What is written: :func:`hxexpress_spectra`. An existing file is refused unless
-    ``overwrite``."""
+    ``overwrite``. A series hxex's reader cannot name from the file name alone
+    (:func:`hxexpress_warning`) is written with a warning."""
     directory = Path(directory)
     path = directory / hxexpress_name(results, data_id, prefix=prefix, suffix=suffix)
-    if path.exists() and not overwrite:
+    if _exists(path) and not overwrite:
         raise FileExistsError(f"{path} exists (overwrite=True replaces it)")
     columns = hxexpress_spectra(results, data_id, spectra=spectra, controls=controls)
+    warning = hxexpress_warning(results, data_id)
+    if warning:
+        log.warning("%s: %s", path.name, warning)
     directory.mkdir(parents=True, exist_ok=True)
     write_hxexpress_file(path, columns)
     log.info("wrote %s (%d spectra, %s)", path, len(columns), spectra)
     return path
+
+
+def _exists(path: Path) -> bool:
+    """Whether ``path`` is there; a path the system cannot take (a name too long) is an
+    :class:`ExportError` naming it."""
+    try:
+        return path.exists()
+    except OSError as exc:
+        raise ExportError(f"cannot use {path}: {exc.strerror or exc}") from exc
 
 
 # --- the data behind the figures -----------------------------------------------------------
@@ -386,15 +552,14 @@ def _components_bootstrap_table(results: Results, rows: np.ndarray
     status = np.asarray(results.review_status)
     for i in rows:
         i, k = int(i), int(results.effective_K[i])
-        boot = results.bootstrap_for(i, k)
-        if boot is None or boot.draws is None or not fit.fitted(k)[i]:
+        if not _resampled(results, i):
             continue
         sid = str(fit.spectrum_id[i])
         plain = population_data(results, sid, k=k, corrected=False)
         if plain["draws"] is None or not len(plain["draws"]):
             continue
         shown = population_data(results, sid, k=k)  # corrected where the series is
-        resample = np.flatnonzero(boot.draws.ok[i]) + 1
+        resample = np.flatnonzero(results.bootstrap_for(i, k).draws.ok[i]) + 1
         n = len(resample)
         for c in range(k):
             for name in names:
@@ -415,6 +580,15 @@ def _components_bootstrap_table(results: Results, rows: np.ndarray
     return out
 
 
+def _resampled(results: Results, i: int) -> bool:
+    """Whether the bootstrap kept resamples of spectrum ``i`` at the K in effect (so
+    ``components_bootstrap`` has rows for it)."""
+    k = int(results.effective_K[i])
+    boot = results.bootstrap_for(i, k)
+    return (boot is not None and boot.draws is not None and bool(results.fit.fitted(k)[i])
+            and bool(np.asarray(boot.draws.ok[i]).any()))
+
+
 def kept_resamples(results: Results) -> bool:
     """Whether the results kept the bootstrap's resamples (``[run.bootstrap] keep_draws``), so
     that :func:`plot_data` can write ``components_bootstrap``."""
@@ -423,19 +597,48 @@ def kept_resamples(results: Results) -> bool:
 
 
 def plot_tables(results: Results) -> tuple[str, ...]:
-    """The tables :func:`write_plot_data` writes for these results: ``raw`` only when they hold
-    the raw spectra, ``components_bootstrap`` only when they kept the resamples."""
+    """The tables :func:`write_plot_data` may write for some series of these results: ``raw``
+    only when they hold the raw spectra, ``components_bootstrap`` only when they kept the
+    resamples. What it writes for given spectra: :func:`plot_data_tables`."""
     raw = results.spectra is not None or results.loader is not None
     return tuple(t for t in PLOT_TABLES
                  if (t != "raw" or raw) and (t != "components_bootstrap"
                                              or kept_resamples(results)))
 
 
+def _holds_raw(results: Results, ids: Sequence[str]) -> bool:
+    """Whether the results hold the raw spectrum of any of ``ids``: those in memory are looked
+    up; a bundle stores the raw spectrum of every spectrum it fitted."""
+    if results.spectra is not None:
+        for sid in ids:
+            try:
+                results.spectra.find(sid)
+            except KeyError:
+                continue
+            return True
+        return False
+    return results.loader is not None
+
+
+def plot_data_tables(results: Results, *, data_id: int | None = None,
+                     spectrum_ids: Sequence[str] | None = None) -> tuple[str, ...]:
+    """The tables :func:`plot_data` makes (and :func:`write_plot_data` writes) for a series
+    (``data_id``) or some of its spectra (``spectrum_ids``), without making them: ``raw`` only
+    when the results hold their raw spectra, ``components_bootstrap`` only when the bootstrap
+    kept resamples of one of them at its K in effect."""
+    rows = _rows_of(results, data_id, spectrum_ids)
+    ids = [str(results.fit.spectrum_id[i]) for i in rows]
+    raw = _holds_raw(results, ids)
+    resamples = any(_resampled(results, int(i)) for i in rows)
+    return tuple(t for t in PLOT_TABLES
+                 if (t != "raw" or raw) and (t != "components_bootstrap" or resamples))
+
+
 def _raw_table(results: Results, rows: np.ndarray) -> dict[str, np.ndarray] | None:
     """One row per raw point of each spectrum (None when the results hold no raw spectra)."""
     fit = results.fit
     ids = [str(fit.spectrum_id[i]) for i in rows]
-    raw = _raw_spectra(results, ids)
+    raw = _raw_spectra(results, ids) if _holds_raw(results, ids) else {}
     if not raw:
         return None
     cols: dict[str, list] = {n: [] for n in ("spectrum_id", "data_id", "mz", "intensity")}
@@ -548,7 +751,9 @@ def plot_data_name(results: Results, data_id: int, *, part: str = "", prefix: st
     prefix, suffix = _affix(prefix, "prefix"), _affix(suffix, "suffix")
     _first_row(results, data_id)
     stem = _series_stems(results)[int(data_id)]
-    return "_".join(p for p in (prefix, stem, name_part(part), suffix) if p)
+    name = "_".join(p for p in (prefix, stem, name_part(part), suffix) if p)
+    _check_length(f"{name}_{max(PLOT_TABLES, key=len)}.csv")
+    return name
 
 
 _STEMS: dict[int, tuple[weakref.ref, dict[int, str]]] = {}  # id(results) -> (results, stems)
@@ -560,20 +765,24 @@ def _series_stems(results: Results) -> dict[int, str]:
     per results (the dialog asks again at every key pressed)."""
     from .figures import figure_stems
 
-    held = _STEMS.get(id(results))  # by identity: Results holds arrays, so it cannot be hashed
-    if held is not None and held[0]() is results:
-        return held[1]
-    stems = figure_stems(results, [int(d) for d in np.unique(results.fit.data_id)])
-    for key in [k for k, (ref, _) in _STEMS.items() if ref() is None]:
-        del _STEMS[key]
-    _STEMS[id(results)] = (weakref.ref(results), stems)
-    return stems
+    return _held(_STEMS, results, lambda r: figure_stems(
+        r, [int(d) for d in np.unique(r.fit.data_id)]))
 
 
-def plot_data_files(directory: str | Path, name: str) -> list[Path]:
-    """The files :func:`write_plot_data` may write into ``directory`` for ``name``
-    (:func:`plot_data_name`), ``raw`` among them even when the results hold no raw spectra."""
-    return [Path(directory) / f"{name}_{table}.csv" for table in PLOT_TABLES]
+def plot_data_files(directory: str | Path, name: str, tables: Sequence[str] = PLOT_TABLES
+                    ) -> list[Path]:
+    """The files of ``tables`` (:func:`plot_data_tables`; by default every table
+    :func:`write_plot_data` may write) in ``directory`` for ``name`` (:func:`plot_data_name`)."""
+    return [Path(directory) / f"{name}_{table}.csv" for table in tables]
+
+
+def plot_data_leftovers(directory: str | Path, name: str, tables: Sequence[str]
+                        ) -> list[Path]:
+    """The files of ``name`` in ``directory`` that an earlier export wrote and this one, of
+    ``tables``, does not (an earlier ``_components_bootstrap.csv`` or ``_raw.csv``): left as
+    they are, never deleted (owner, 2026-11-15: the user may have changed them)."""
+    return [p for p in plot_data_files(directory, name, [t for t in PLOT_TABLES
+                                                          if t not in tables]) if _exists(p)]
 
 
 def write_plot_data(results: Results, directory: str | Path, *, name: str | None = None,
@@ -584,7 +793,9 @@ def write_plot_data(results: Results, directory: str | Path, *, name: str | None
     ``NAME_components_bootstrap.csv``, ``NAME_uptake.csv``, and ``NAME_about.csv``
     (:func:`plot_tables`: raw and bootstrap only when the results hold them); ``name``
     defaults to the series' :func:`plot_data_name`. Refused, before anything is written, when
-    any of them is there, unless ``overwrite``."""
+    any of them is there, unless ``overwrite``. ``NAME_about.csv`` lists the files of this
+    export (``files``); a file of the same name an earlier export wrote and this one does not
+    (:func:`plot_data_leftovers`) is left as it is, and named in the messages."""
     tables = plot_data(results, data_id=data_id, spectrum_ids=spectrum_ids, ks=ks)
     if name is None:
         series = sorted({int(d) for d in tables["spectra"]["data_id"]})
@@ -594,10 +805,20 @@ def write_plot_data(results: Results, directory: str | Path, *, name: str | None
         name = plot_data_name(results, series[0])
     directory = Path(directory)
     paths = {table: directory / f"{name}_{table}.csv" for table in tables}
-    there = [p.name for p in paths.values() if p.exists()]
+    there = [p.name for p in paths.values() if _exists(p)]
     if there and not overwrite:
         raise FileExistsError(f"{directory} already holds {', '.join(there)} "
                               "(overwrite=True replaces them)")
+    about = tables["about"]
+    tables["about"] = {
+        "item": np.append(about["item"], "files").astype(object),
+        "value": np.append(about["value"], "; ".join(p.name for p in paths.values())
+                           ).astype(object)}
+    left = plot_data_leftovers(directory, name, list(tables))
+    if left:
+        log.warning("%s: left as %s from an earlier export, not part of this one (not "
+                    "written now): %s", directory, "it is" if len(left) == 1 else "they are",
+                    ", ".join(p.name for p in left))
     directory.mkdir(parents=True, exist_ok=True)
     written = [write_csv(columns, paths[table]) for table, columns in tables.items()]
     n = len(tables["spectra"]["spectrum_id"])

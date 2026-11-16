@@ -314,3 +314,126 @@ def test_closing_with_a_stubborn_command_keeps_the_window_alive_and_kills_it(
     page.ask_stop_to_close = RunWorkspace.ask_stop_to_close.__get__(page)
     text = page.ask_stop_to_close.__func__.__code__.co_consts
     assert any("is aborted, and killed" in str(c) for c in text)
+
+
+# --- fix Session 5 (audit of 2026-11-15) ---------------------------------------------------------
+
+# a stand-in that prints the message in message.txt beside it and fails
+REFUSER = r'''
+import pathlib, sys
+print(pathlib.Path(__file__).with_name("message.txt").read_text(), flush=True)
+sys.exit(1)
+'''
+
+
+def test_the_replace_question_comes_only_for_the_refusal_of_a_replaceable_command(
+        qtbot, tmp_path):
+    """A-4: a resume refusing a settings mismatch, or a check printing its outputs block,
+    named --keep-previous and got the Replace question (and Replace reran resume with an
+    option it does not take); only run, report and analyse refusing to write over their output
+    ask, and after the finished slot has returned (A-16)."""
+    script = tmp_path / "refuser.py"
+    script.write_text(REFUSER)
+    message = tmp_path / "message.txt"
+    page = RunWorkspace(program=[sys.executable, str(script)])
+    qtbot.addWidget(page)
+    project = tmp_path / "hxex.toml"
+    project.write_text('project = "p"\n')
+    page.show_project(project)
+    asked = []
+    page.ask_output_exists = lambda: asked.append(1) or None
+    cases = [
+        ("resume", "run again with 'hxex run --overwrite' (or --keep-previous)", False),
+        ("check", "to write one again, give its command --overwrite (replace) or "
+                  "--keep-previous (keep the earlier one as NAME.N)", False),
+        ("run", "out exists: --overwrite replaces it (and its tables, carrying its review "
+                "over), --keep-previous moves it to the next generation first (out.N)", True),
+        ("report", "out_tables holds the tables written before. To go on:\n  --overwrite "
+                   "replaces them;\n  --keep-previous moves the folder to out_tables.N first",
+         True),
+    ]
+    for command, text, asks in cases:
+        message.write_text(text)
+        asked.clear()
+        with qtbot.waitSignal(page.runner.finished, timeout=30000):
+            page.run_command(command)
+        assert asked == [], command  # never inside the finished slot (A-16)
+        if asks:
+            qtbot.waitUntil(lambda: asked == [1], timeout=5000)
+        else:
+            qtbot.wait(200)
+            assert asked == [], command
+    # not asked while the window is closing or the project changed under it
+    message.write_text(cases[2][1])
+    page._closing = True
+    page._ask_replace("run")
+    page._closing = False
+    page.show_project(tmp_path / "other.toml")
+    page._ask_replace("run")
+    assert asked == [1]
+
+
+def test_a_finished_command_lets_its_process_go(qtbot, stand_in, tmp_path):
+    """A-8: one QProcess per command accumulated as a child of the runner; now the next
+    command lets the finished one go (outside its own signals: a deferred deletion crashed a
+    runner collected before it ran)."""
+    from PySide6.QtCore import QProcess
+
+    page = RunWorkspace(program=[sys.executable, str(stand_in)])
+    qtbot.addWidget(page)
+    project = tmp_path / "hxex.toml"
+    project.write_text('project = "p"\n')
+    page.show_project(project)
+    for _ in range(3):
+        with qtbot.waitSignal(page.runner.finished, timeout=30000):
+            page.run_command("check")
+            qtbot.waitUntil(lambda: "working" in page.console.toPlainText(), timeout=10000)
+            page.stop()
+    assert len(page.runner.findChildren(QProcess)) == 1  # the last one only
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows keeps an open log's folder")
+def test_a_log_folder_removed_during_a_command_is_said(qtbot, stand_in, tmp_path):
+    """A-9: the lines went to the unlinked file and the console still named the log."""
+    import shutil
+
+    page = RunWorkspace(program=[sys.executable, str(stand_in)])
+    qtbot.addWidget(page)
+    project = tmp_path / "hxex.toml"
+    project.write_text('project = "p"\n')
+    page.show_project(project)
+    with qtbot.waitSignal(page.runner.finished, timeout=30000):
+        page.run_command("check")
+        qtbot.waitUntil(lambda: "working" in page.console.toPlainText(), timeout=10000)
+        shutil.rmtree(tmp_path / "hxex_logs")
+        page.stop()
+    assert "is gone" in page.console.toPlainText() and page.log_path is None
+    assert page.history.itemText(0) == "none yet"
+
+
+def test_a_log_that_cannot_be_written_any_more_is_said_once(qtbot, stand_in, tmp_path):
+    """A-17: a disk that fills during a command raised in the slot on every line."""
+    page = RunWorkspace(program=[sys.executable, str(stand_in)])
+    qtbot.addWidget(page)
+    project = tmp_path / "hxex.toml"
+    project.write_text('project = "p"\n')
+    page.show_project(project)
+
+    class Full:
+        def write(self, text):
+            raise OSError(28, "No space left on device")
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    with qtbot.waitSignal(page.runner.finished, timeout=30000):
+        page.run_command("check")
+        qtbot.waitUntil(lambda: "working" in page.console.toPlainText(), timeout=10000)
+        page.log_file = Full()
+        page.stop()
+    text = page.console.toPlainText()
+    assert text.count("cannot be written any more") == 1 and "stopped" in text
+    assert page.log_file is None and page.log_path is None

@@ -88,8 +88,9 @@ class AnalysisWorkspace(QWidget):
     def __init__(self, window=None):
         super().__init__()
         self.window = window
-        # each reference's analysis: (hxex.report.AnalysisOutputs, (results object, [analysis]
-        # text, results path, review table's stamp) it was computed from)
+        # each reference's analysis: (hxex.report.AnalysisOutputs, (the results' key
+        # (results_key), [analysis] text, results path, review table's stamp) it was computed
+        # from)
         self._analyses: dict[str, tuple] = {}
         self._cancel: threading.Event | None = None
         self._computing = Latest(self)
@@ -104,6 +105,21 @@ class AnalysisWorkspace(QWidget):
         self.compute_button.setToolTip(tip("compute the analysis as hxex analyse does (nothing is "
                                            "written)"))
         self.compute_button.clicked.connect(self.compute)
+        # a Stop for the computation (the ladder rate fits take minutes; audit of 2026-11-15,
+        # E open question 2): shown while one runs
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setToolTip(tip("stop the computation (the figures shown stay as they "
+                                        "are)"))
+        self.stop_button.clicked.connect(self.stop)
+        self.stop_button.hide()
+        # a review K the run's screen skipped: hxex analyse refuses, so does Compute, and
+        # Resume fits it (E-4)
+        self.resume = QPushButton("Fit the chosen K (Resume)…")
+        self.resume.setToolTip(tip("hxex resume: fits (and bootstraps) the K your review chose "
+                                   "where the run's quick screen skipped it; until then the "
+                                   "analysis cannot be made, as hxex analyse refuses it"))
+        self.resume.clicked.connect(lambda: self._resume())
+        self.resume.hide()
         # [analysis.fragments] fit_rates, for results with fragment series: written to the
         # project file, so hxex analyse does the same (owner, 2026-11-05)
         self.fit_rates = QCheckBox("fit ladder rates")
@@ -127,6 +143,8 @@ class AnalysisWorkspace(QWidget):
         top.addWidget(self.reference_label)
         top.addWidget(self.reference)
         top.addWidget(self.compute_button)
+        top.addWidget(self.stop_button)
+        top.addWidget(self.resume)
         top.addWidget(self.fit_rates)
         top.addWidget(self.busy)
         top.addWidget(self.status, 1)
@@ -209,6 +227,7 @@ class AnalysisWorkspace(QWidget):
         self._planned: dict[str, object] = {}
         self._drawn_from = None  # the analysis the figure shown was drawn from
         self._latest: str | None = None  # the reference of the latest analysis computed
+        self._key_cache: tuple = (None, None)  # (results object, its key): E-9
         self.refresh()
 
     # --- what the analysis is made from ---------------------------------------------------
@@ -300,7 +319,32 @@ class AnalysisWorkspace(QWidget):
         values, tables = live_settings(project.read_text(encoding="utf-8-sig"))
         text = ({k: v for k, v in values.items() if k.split(".")[0] == "analysis"},
                 sorted(t for t in tables if t.split(".")[0] == "analysis"))
-        return config, project.parent, repr(text)
+        # relative paths from the project file's real folder, as hxex analyse takes them (a
+        # project file reached through a link: audit of 2026-11-15, E-25)
+        return config, project.resolve().parent, repr(text)
+
+    def results_key(self) -> tuple | None:
+        """What the analysis reads of the results shown, to tell a change of them: the
+        bundle's stamp, the review layer's content, and the project's ``[review]`` settings
+        (the exclusion rules). Reading the same results again (a ``[figures]`` change) gives
+        the same key, so the analysis stays up to date (audit of 2026-11-15, E-9); keeping the
+        key, not the Results object, lets old results go (E-22)."""
+        results = self.results
+        if results is None:
+            return None
+        if self._key_cache[0] is results:
+            return self._key_cache[1]
+        created = results.settings.created if results.settings is not None else ""
+        review = results.review
+        layer = None if review is None else (
+            tuple(map(str, review.spectrum_id)), tuple(map(str, review.status)),
+            tuple(int(k) for k in review.k_override), tuple(map(str, review.note)))
+        rules = getattr(self.window, "_figure_and_review_settings", None)
+        settings = (repr(rules(("review",))) if rules is not None and self._project() is not None
+                    else None)
+        key = (created, layer, settings)
+        self._key_cache = (results, key)
+        return key
 
     def why_out_of_date(self, made_from=None) -> str:
         """Why the analysis shown (or the one ``made_from`` describes) no longer matches the
@@ -308,8 +352,8 @@ class AnalysisWorkspace(QWidget):
         made_from = made_from or self._made_from
         if made_from is None:
             return ""
-        results, text, _, stamp = made_from
-        if self.results is not results:
+        key, text, _, stamp = made_from
+        if self.results_key() != key:
             return "the results changed (a new run or resume, or a review decision)"
         try:
             now = self._settings()[2]
@@ -331,13 +375,16 @@ class AnalysisWorkspace(QWidget):
         self._show_fit_rates()
         self._show_no_reference()
         self._show_summary()
+        self.resume.setVisible(self.results is not None and bool(self.results.unfitted_choices))
         if self.results is None:
             self.status.setText("No results open: open a project file whose results exist, or "
                                 "a results bundle.")
             self.compute_button.setEnabled(False)
             return
-        self.compute_button.setEnabled(not self._computing.running)
-        if self._computing.running:
+        # busy: computing, or reading the results again for a Recompute (a refresh meanwhile
+        # enabled Compute and replaced the line: audit of 2026-11-15, E-19)
+        self.compute_button.setEnabled(not self._busy)
+        if self._busy:
             return
         why = self.why_out_of_date()
         if self.outputs is None:
@@ -373,6 +420,10 @@ class AnalysisWorkspace(QWidget):
             self.compute_button.setText("Recompute")
 
     _error: str | None = None
+
+    @property
+    def _busy(self) -> bool:
+        return self._computing.running or self._compute_when_loaded is not None
 
     def _show_summary(self) -> None:
         """The summary tab: the summary of the analysis shown (filled again only when that
@@ -410,7 +461,7 @@ class AnalysisWorkspace(QWidget):
         self.fit_rates.blockSignals(True)
         self.fit_rates.setChecked(bool(config.fragments.fit_rates))
         self.fit_rates.blockSignals(False)
-        self.fit_rates.setEnabled(self._project() is not None and not self._computing.running)
+        self.fit_rates.setEnabled(self._project() is not None and not self._busy)
 
     def _show_no_reference(self) -> None:
         """The warning that the samples are not compared: results with two samples or more and
@@ -458,19 +509,25 @@ class AnalysisWorkspace(QWidget):
     def _reference_chosen(self, index: int) -> None:
         """Write the reference chosen to the project file; the analysis then compares."""
         from ..project_edit import ProjectError
+        from .project_editor import _quoted
 
         name = self.choose_reference.itemData(index)
         project = self._project()
         if name is None or project is None:
             return
+        problem = None
         try:
-            self._write(project, [("analysis.reference", str(name))],
+            # as TOML text, quoted: a sample named like a number or a date would be read as one,
+            # or refused (audit of 2026-11-15, E-8)
+            self._write(project, [("analysis.reference", _quoted(str(name)))],
                         f"[analysis] reference: {name}")
             log.info("[analysis] reference set to %s", name)
-        except (ProjectError, OSError, ValueError) as exc:
+        except (ProjectError, OSError, ValueError, TypeError) as exc:
+            problem = str(exc)
             log.error("the reference was not set: %s", exc)
-            self.status.setText(f"The reference was not set: {exc}")
         self.refresh()
+        if problem is not None:  # after the refresh, which writes the line too
+            self.status.setText(f"The reference was not set: {problem}")
 
     def _set_fit_rates(self, on: bool) -> None:
         """Write ``[analysis.fragments] fit_rates`` (true or false) to the project file; the
@@ -509,6 +566,12 @@ class AnalysisWorkspace(QWidget):
 
         current = self.list.currentItem()
         keep = (current.data(0, KIND), current.data(0, STEM)) if current is not None else None
+        # the kinds opened, and the place in the list, kept across the rebuild (every refresh
+        # closed them: audit of 2026-11-15, E-16)
+        self._expanded = {self.list.topLevelItem(i).data(0, KIND)
+                          for i in range(self.list.topLevelItemCount())
+                          if self.list.topLevelItem(i).isExpanded()}
+        scrolled = self.list.verticalScrollBar().value()
         self.list.blockSignals(True)
         self.list.clear()
         self._planned = {}
@@ -554,6 +617,7 @@ class AnalysisWorkspace(QWidget):
                 for p in group:
                     self._add_kind(p, by_kind.get(p.kind.name, []), keep)
         self.list.blockSignals(False)
+        self.list.verticalScrollBar().setValue(scrolled)
         self._describe(self.list.currentItem())
 
     def _add_kind(self, p, stems: list[str], keep) -> None:
@@ -573,6 +637,8 @@ class AnalysisWorkspace(QWidget):
             child.setData(0, STEM, stem)
             item.addChild(child)
         self.list.addTopLevelItem(item)
+        if p.kind.name in getattr(self, "_expanded", ()):
+            item.setExpanded(True)
         if keep is not None and keep[0] == p.kind.name:
             target = item
             for i in range(item.childCount()):
@@ -789,22 +855,33 @@ class AnalysisWorkspace(QWidget):
             self.compute_button.setEnabled(False)
             self.window.open_results(self._project())
             return
+        from ..review_table import refuse_unfitted
+
+        try:  # a review K the screen skipped: refused as hxex analyse refuses it (E-4)
+            refuse_unfitted(results)
+        except ValueError as exc:
+            self.status.setText(f"The analysis cannot be made, as hxex analyse refuses it: "
+                                f"{exc} (the Resume button beside Compute runs it).")
+            log.error("the analysis cannot be made: %s", exc)
+            return
         if self._cancel is not None:
             self._cancel.set()  # an older computation still running stops
         cancel = self._cancel = threading.Event()
         n = len(results.fit)
         path = getattr(self.window, "results_path", None)
+        key = self.results_key()
         self.status.setText(f"Computing the analysis of {n:,} spectra"
                             + (f" against {ref}" if ref else "")
                             + f" ({compute_time(results, config)})…")
         self.busy.show()
+        self.stop_button.show()
         self.compute_button.setEnabled(False)
         self.fit_rates.setEnabled(False)  # the settings stay as computed until it is done
         self._computing_path = path
         log.info("computing the analysis (as hxex analyse, nothing written)")
         self._computing.submit(
             lambda: analysis_outputs(results, config, base=base, cancel=cancel.is_set),
-            lambda outputs: self._computed(outputs, results, text, path, ref, stamp),
+            lambda outputs: self._computed(outputs, key, text, path, ref, stamp),
             self._failed)
 
     @property
@@ -821,22 +898,39 @@ class AnalysisWorkspace(QWidget):
         self._computing.drop()
         self._computing_path = None
         self.busy.hide()
+        self.stop_button.hide()
         self.compute_button.setEnabled(self.results is not None)
         self.fit_rates.setEnabled(self._project() is not None)
 
-    def _computed(self, outputs, results, text, path, ref, stamp) -> None:
+    def stop(self) -> None:
+        """The Stop button: the computation ends at its next step (between the tables, the
+        figures, and each parent's ladder rate fits) and nothing of it is shown; the figures
+        of the earlier analysis stay."""
+        if not self._computing.running:
+            return
+        self.cancel()
+        self.refresh()
+        self.status.setText("The computation was stopped. " + self.status.text())
+
+    def _resume(self) -> None:
+        run = getattr(self.window, "run_resume", None)
+        if run is not None:
+            run()
+
+    def _computed(self, outputs, key, text, path, ref, stamp) -> None:
         if self.results is None or path != getattr(self.window, "results_path", None):
             # an analysis of results no longer shown (another project or bundle opened while it
             # was computed): never shown as this one's
             log.info("the analysis of %s is not shown: other results are open now", path)
             return
         self.busy.hide()
-        self._analyses[ref] = (outputs, (results, text, path, stamp))
+        self.stop_button.hide()
+        self._analyses[ref] = (outputs, (key, text, path, stamp))
         self._latest = ref  # the figures the same for every reference come from it now
         log.info("analysis: %d tables and %d figures", len(outputs.tables), len(outputs.figures))
-        self.refresh()
-        if self.list.currentItem() is not None:  # the figure shown, from the new analysis
-            self._selected(self.list.currentItem())
+        self.refresh()  # draws the figure shown again from the new analysis, once (E-15)
+        if self.list.currentItem() is not None:
+            self._redraw_if_another()  # nothing to do when refresh drew it
         else:  # the first figure drawn
             for i in range(self.list.topLevelItemCount()):
                 item = self.list.topLevelItem(i)
@@ -848,6 +942,7 @@ class AnalysisWorkspace(QWidget):
     def _failed(self, message: str) -> None:
         self._compute_when_loaded = None
         self.busy.hide()
+        self.stop_button.hide()
         if self._cancel is not None and self._cancel.is_set():  # stopped as the window asked
             log.info("the analysis was stopped")
             self.refresh()

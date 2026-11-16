@@ -84,9 +84,9 @@ def test_a_table_saved_while_the_results_load_is_applied(qtbot, window_on, monke
     sid = _first_spectrum(page).toolTip(0)
     real = notebook.load_results
 
-    def slowly(path):
+    def slowly(path, **kw):
         time.sleep(1.5)
-        return real(path)
+        return real(path, **kw)
 
     monkeypatch.setattr(notebook, "load_results", slowly)
     window._pending_selection = page.selection()  # as the window's own rereads keep the place

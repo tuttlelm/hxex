@@ -61,9 +61,9 @@ class Region:
     end: int
 
     def __post_init__(self):
-        if self.end < self.start or self.start < 1:
+        if self.end < self.start:  # residues may be numbered below 1 (a tag; owner, 2026-11-15)
             raise ValueError(f"region {self.name!r}: start ({self.start}) and end ({self.end}) "
-                             "are residue numbers, start at least 1 and end not before start")
+                             "are residue numbers, end not before start")
 
 
 @dataclass(frozen=True)

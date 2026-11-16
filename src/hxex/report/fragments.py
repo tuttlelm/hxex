@@ -546,7 +546,7 @@ def _has_fragment_series(results) -> bool:
 
 
 def fragment_outputs(results, config, *, quiet: bool = False,
-                     page_size: tuple[float, float] | None = None):
+                     page_size: tuple[float, float] | None = None, cancel=None):
     """The fragment part of an analysis (:class:`hxex.analysis.FragmentAnalysis` ``config``):
     tables (name -> columns) and figures (file stem -> function drawing it), or empty ones when
     the run has no fragment series. Per parent (``<sample>_<range>_z<charge>``):
@@ -560,7 +560,10 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     :class:`hxex.analysis.RunSet` (:func:`hxex.analysis.fragment_uptake`): the tables' ``run``
     column then names each row's run, and the figures of an unmerged sample found in several
     runs are named ``<run>_<sample>_...``. ``page_size`` (``[analysis] page_size``): a long
-    ladder goes on over pages ``ladder_..._2``, each under its own precursor row."""
+    ladder goes on over pages ``ladder_..._2``, each under its own precursor row. ``cancel``
+    (:data:`hxex.hooks.CancelHook`) is asked before the uptake, between the parents of the
+    rate fits and between the closure tables, so the window's Stop ends the minutes of ladder
+    fits (audit of 2026-11-15, E open question 2)."""
     from ..analysis.fragments import (
         _PARTNERS,
         closure_table,
@@ -584,23 +587,30 @@ def fragment_outputs(results, config, *, quiet: bool = False,
             "no fragment outputs: fragment_uptake needs the K = 1 fits (fit with k_min = 1)%s",
             f"; run(s) {', '.join(without_k1)}" if any(without_k1) else "")
         return {}, []
+    from ..hooks import check_cancel
+
+    check_cancel(cancel)
     uptake = fragment_uptake(results)  # any other error is a real one
     if not len(uptake):
         return {}, []
     ions = list(config.ion_types) or fragment_ion_types(uptake)
     fit_rates = config.fit_rates
+    check_cancel(cancel)
     rates = ladder_rates(uptake, ion_types=ions, charges=config.charges,
                          min_time=config.min_time,
                          conditions=config.exchange if config.kint else None,
-                         max_rate_error=config.max_rate_error) if fit_rates else None
+                         max_rate_error=config.max_rate_error,
+                         cancel=cancel) if fit_rates else None
     pairs = [(a, b) for a in ions for b in ions
              if chem.ion_terminus(a) == "N" and chem.ion_terminus(b) == "C"
              and _PARTNERS[a[0]] == b[0]]
     parents = parent_uptake(results)  # the closure's reference where the run read the parents
-    closures = [closure_table(uptake, a, b, precursor_charge=config.precursor_charge,
-                              min_time=config.min_time, tolerance=config.tolerance,
-                              parents=parents)
-                for a, b in pairs]
+    closures = []
+    for a, b in pairs:
+        check_cancel(cancel)
+        closures.append(closure_table(uptake, a, b, precursor_charge=config.precursor_charge,
+                                      min_time=config.min_time, tolerance=config.tolerance,
+                                      parents=parents))
     tables = {"fragment_uptake": uptake.columns()}
     if rates is not None:
         tables |= {"ladder_rates": rates.columns(),

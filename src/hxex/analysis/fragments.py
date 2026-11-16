@@ -1018,6 +1018,7 @@ def ladder_rates(
     min_time: float | None = None,
     conditions: ExchangeConditions | Mapping[str, ExchangeConditions] | None = None,
     max_rate_error: float = MAX_RATE_ERROR,
+    cancel=None,
 ) -> LadderRates:
     """Fit ``A exp(-k t) + C`` (:func:`fit_decay`, from ``min_time``) to every single-residue
     step (:func:`ladder_steps`) of the ``ion_types`` (default: every fragment ion type of the
@@ -1027,9 +1028,12 @@ def ladder_rates(
     for every sample, or by sample with per-run entries, :func:`hxex.analysis.sample_setting`),
     each step also gets its residue's intrinsic rate and protection factor (NaN for a sample
     without conditions); without them there are no such columns. ``precise`` marks the
-    resolved steps whose ``rate_se / rate`` is at most ``max_rate_error``."""
+    resolved steps whose ``rate_se / rate`` is at most ``max_rate_error``. ``cancel``
+    (:data:`hxex.hooks.CancelHook`) is asked before each parent's fits (the fits take minutes
+    on a large run: the window's Stop)."""
     if not max_rate_error > 0:
         raise ValueError("max_rate_error must be positive")
+    from ..hooks import check_cancel
     from ..kint import intrinsic_rates
     from .runs import sample_setting
 
@@ -1042,6 +1046,7 @@ def ladder_rates(
         state_run, uptake.sample, uptake.parent, uptake.parent_charge, strict=True)},
         key=lambda g: (g[0], g[1], first[g[2]], g[2:]))
     for state, sample, parent, pz in groups:
+        check_cancel(cancel)
         rows = uptake.where(sample=sample, parent=parent, parent_charge=pz) & (state_run == state)
         entry = uptake.parent_entry(int(np.flatnonzero(rows)[0]))
         residues = chem.parse_sequence(parent)

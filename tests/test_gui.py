@@ -829,7 +829,8 @@ def test_results_still_loading_never_show_under_another_project(qtbot, window, b
     from hxex.config import template
 
     real = notebook.load_results
-    monkeypatch.setattr(notebook, "load_results", lambda path: (time.sleep(1.0), real(path))[1])
+    monkeypatch.setattr(notebook, "load_results",
+                        lambda path, **kw: (time.sleep(1.0), real(path, **kw))[1])
     window.open_path(bundle)
     assert window.loading and window.statusBar().currentMessage().startswith("loading")
     project = tmp_path / "fresh" / "hxex.toml"
@@ -952,3 +953,31 @@ def test_a_new_project_file_asks_before_replacing_one(window, tmp_path, monkeypa
     window.ask_replace_file = lambda path: True
     window.new_project_dialog()
     assert not set_threads()
+
+
+def test_the_window_gives_the_logger_level_back_when_it_closes(qtbot, tmp_path):
+    """A-7: the hxex logger was lowered to INFO for the whole process and left so."""
+    import logging
+
+    logger = logging.getLogger("hxex")
+    before = logger.level
+    logger.setLevel(logging.WARNING)
+    try:
+        w = _window(qtbot, tmp_path / "gui.ini")
+        assert logger.level == logging.INFO
+        w.close()
+        assert logger.level == logging.WARNING
+    finally:
+        logger.setLevel(before)
+
+
+def test_a_watch_the_system_refuses_is_said(qtbot, tmp_path, caplog):
+    """A-15: a review table that cannot be watched (the system's limit of watches reached)
+    went unwatched without a word."""
+    import logging
+
+    w = _window(qtbot, tmp_path / "gui.ini")
+    w.review_watcher.addPath = lambda _path: False
+    with caplog.at_level(logging.WARNING, logger="hxex.gui.window"):
+        w._watch(str(tmp_path / "user_review_table.csv"))
+    assert "cannot be watched" in caplog.text

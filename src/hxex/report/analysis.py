@@ -1404,7 +1404,7 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
                              "points (fragments = false leaves it out)")
         check_cancel(cancel)
         frag_tables, frag_jobs = fragment_outputs(results, config.fragments,
-                                                  page_size=config.page_size)
+                                                  page_size=config.page_size, cancel=cancel)
     tables, jobs = {}, []
     if not only_fragments:
         if any_fragments:
