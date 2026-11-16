@@ -29,7 +29,6 @@ from PySide6.QtGui import (
     QCloseEvent,
     QColor,
     QDesktopServices,
-    QFont,
     QKeySequence,
     QPalette,
 )
@@ -54,6 +53,7 @@ from PySide6.QtWidgets import (
 )
 
 from .analysis_workspace import AnalysisWorkspace
+from .fonts import fixed_font
 from .project_state import ProjectState
 from .results_workspace import ResultsWorkspace, left_out_or_none
 from .review import table_stamp
@@ -142,7 +142,7 @@ class ProjectWorkspace(QWidget):
         self.editor.changed.connect(self._file_changed)
         self.text = QPlainTextEdit()
         self.text.setReadOnly(True)
-        self.text.setFont(QFont("monospace"))
+        self.text.setFont(fixed_font())
         self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.tables = TablesView()
         self.tables.write_settings = window.write_settings  # recorded for the editor's Undo

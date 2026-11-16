@@ -10344,3 +10344,20 @@ CSVs or mzML if wanted.
     Linux desktops whose Qt theme reports it). The figures stay as drawn (matplotlib pages on
     white). Tests: `tests/test_gui_appearance.py`. Guide `gui.md` "Opening it"; `commands.md`
     regenerated.
+
+395. **The window's fixed-width font on Windows.** The owner, opening the window on Windows
+    for the first time, found the Sequence tab's letters aligned with neither the numbering
+    nor the coverage bars. Two causes, both confirmed by a font check on that machine: the
+    window asked for the family `monospace`, a fontconfig alias on Linux (DejaVu Sans Mono)
+    but no font on Windows, where Qt gave Tahoma, a proportional font (the console, the
+    command line and the settings names had the same font); and the coverage levels
+    `▁▂▃▄▅▆▇█` and the region bar `━` are not in Windows' fixed fonts (Courier New has the
+    WGL4 set only), so Qt borrowed them from another font at that font's width (8 and 12 px
+    beside the letter's 7). Now `hxex.gui.fonts.fixed_font` takes the first installed of
+    Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono and Liberation Mono, else Qt's system
+    fixed font, with the monospace style hint, and every "monospace" request in the window
+    uses it; the sequence HTML names that family. The view measures the glyphs
+    (`fonts.even_width`) and, where the font does not draw them at a letter's width, draws
+    the coverage with four levels `░▒▓█` and the bar `─`, which every fixed font has, instead
+    of the eight-level ramp. On Linux nothing changes. Test in `tests/test_gui_sequence.py`.
+\n

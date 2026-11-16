@@ -46,7 +46,11 @@ REGION_COLOURS = ("#4e79a7", "#f28e2b", "#59a14f", "#b07aa1", "#76b7b2", "#edc94
 DIFFERS, PROLINE, SITE = "#ffd54f", "#9e9e9e", "#c62828"
 COVER, UNCOVERED = "#546e7a", "#e57373"  # coverage blocks, and the dot of a residue not covered
 OWN = "#000000"  # pooled: a residue covered by a peptide only that record may hold
-BLOCKS = "▁▂▃▄▅▆▇█"
+BLOCKS = "▁▂▃▄▅▆▇█"  # the coverage levels where the font draws them at a letter's width
+BAR = "━"  # a region's bar
+# a font that lacks some of them (Courier New) borrows them from another font at that font's
+# width, so the lines drift: these are in every fixed font (the WGL4 set, hxex.gui.fonts)
+BLOCKS_SAFE, BAR_SAFE = "░▒▓█", "─"
 
 
 @dataclass
@@ -425,11 +429,14 @@ def _own(peptides, number: int) -> bool:
 
 
 def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE,
-                  coverage=None) -> str:
-    """The sequences as HTML for Qt's text view: monospace lines of ``per_line`` residues in
-    blocks of ten, a ruler above each line, each row named on the left, every residue a link
-    (``res:<row>:<number>``) for the view to say what it is. ``coverage``
-    (:func:`coverage_of`) adds each sample's coverage under its row."""
+                  coverage=None, family: str = "monospace", blocks: str = BLOCKS,
+                  bar: str = BAR) -> str:
+    """The sequences as HTML for Qt's text view: lines of ``per_line`` residues in blocks of
+    ten in the fixed-width font ``family``, a ruler above each line, each row named on the
+    left, every residue a link (``res:<row>:<number>``) for the view to say what it is.
+    ``coverage`` (:func:`coverage_of`) adds each sample's coverage under its row, drawn with
+    ``blocks`` (the levels) and ``bar`` (a region's bar): the view passes the safe set when
+    ``family`` draws the others at another width (:func:`hxex.gui.fonts.even_width`)."""
     if not rows:
         return ""
     first = min(r.first for r in rows)
@@ -442,19 +449,20 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
     regions = list(getattr(annotations, "regions", ()))
     sites = {s.residue: s.label for s in getattr(annotations, "sites", ())}
     colour = {id(reg): REGION_COLOURS[i % len(REGION_COLOURS)] for i, reg in enumerate(regions)}
-    out = ['<div style="font-family: monospace; font-size: 11pt; white-space: pre;">']
+    out = [f'<div style="font-family: {html.escape(family)}, monospace; font-size: 11pt; '
+           'white-space: pre;">']
     if regions or sites or top:
-        keys = [f'<span style="color:{colour[id(r)]};">━━</span> {html.escape(r.name)} '
+        keys = [f'<span style="color:{colour[id(r)]};">{bar * 2}</span> {html.escape(r.name)} '
                 f'({r.start}–{r.end})' for r in regions]
         if sites:
             keys.append(f'<span style="color:{SITE};">▲</span> site')
         if top:
-            keys.append(f'<span style="color:{COVER};">{BLOCKS[0]}…{BLOCKS[-1]}</span> '
+            keys.append(f'<span style="color:{COVER};">{blocks[0]}…{blocks[-1]}</span> '
                         f'MS1 peptides covering a residue (1 to {top}; fragment ions '
                         'not counted), '
                         f'<span style="color:{UNCOVERED};">·</span> none')
             if any(len(p) > 3 and p[3] for v in coverage.values() for p in v):
-                keys.append(f'<span style="color:{OWN};">{BLOCKS[-1]}</span> covered by a '
+                keys.append(f'<span style="color:{OWN};">{blocks[-1]}</span> covered by a '
                             "peptide only this record may hold")
         out.append('<span style="font-family: sans-serif; font-size: 9pt;">'
                    + "    ".join(keys) + "</span>\n\n")
@@ -486,10 +494,10 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
                     cells.append(" ")
             out.append(f"{html.escape(name):<{label}}  {''.join(cells)}\n")
             for sample in shown[k]:
-                cover = _coverage_line(numbers, row, coverage[sample], top, start)
+                cover = _coverage_line(numbers, row, coverage[sample], top, start, blocks)
                 out.append(f'<span style="color:{COVER};">{html.escape(sample[:label]):<{label}}'
                            f'</span>  {cover}\n')
-        bars = _region_line(numbers, regions, colour, start)
+        bars = _region_line(numbers, regions, colour, start, bar)
         if bars.strip():
             out.append(f"{'':<{label}}  {bars}\n")
         out.append("\n")
@@ -512,7 +520,8 @@ def _ruler(numbers: range, label: int) -> str:
     return f'<span style="color:#757575;">{"":<{label}}  {html.escape(ruler)}</span>'
 
 
-def _coverage_line(numbers: range, row: SequenceRow, peptides, top: int, start: int) -> str:
+def _coverage_line(numbers: range, row: SequenceRow, peptides, top: int, start: int,
+                   blocks: str = BLOCKS) -> str:
     """A sample's coverage under its row: a block per residue as high as the peptides covering
     it (scaled to ``top``, the most over every sample), a dot where none does."""
     cells = []
@@ -522,7 +531,7 @@ def _coverage_line(numbers: range, row: SequenceRow, peptides, top: int, start: 
         else:
             d = depth(peptides, n)
             if d:
-                level = BLOCKS[min(len(BLOCKS) - 1, max(0, -(-d * len(BLOCKS) // top) - 1))]
+                level = blocks[min(len(blocks) - 1, max(0, -(-d * len(blocks) // top) - 1))]
                 cells.append(f'<span style="color:{OWN if _own(peptides, n) else COVER};">'
                              f'{level}</span>')
             else:
@@ -532,12 +541,12 @@ def _coverage_line(numbers: range, row: SequenceRow, peptides, top: int, start: 
     return "".join(cells)
 
 
-def _region_line(numbers: range, regions, colour: dict, start: int) -> str:
+def _region_line(numbers: range, regions, colour: dict, start: int, bar: str = BAR) -> str:
     """Bars under the residues of each region (the first region's colour where they overlap)."""
     cells = []
     for n in numbers:
         hit = next((r for r in regions if r.start <= n <= r.end), None)
-        cells.append(f'<span style="color:{colour[id(hit)]};">━</span>' if hit else " ")
+        cells.append(f'<span style="color:{colour[id(hit)]};">{bar}</span>' if hit else " ")
         if (n - start + 1) % 10 == 0:
             cells.append(" ")
     return "".join(cells)
@@ -678,9 +687,15 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
             self._draw()
 
     def _draw(self) -> None:
+        from .fonts import even_width, fixed_family, fixed_font
+
         bar = self.text.verticalScrollBar().value()
+        font = fixed_font()
+        even = even_width(font, BLOCKS + BAR + "·▲")
         self.text.setHtml(sequence_html(self.rows, self.annotations, per_line=self.per_line,
-                                        coverage=self.coverage))
+                                        coverage=self.coverage, family=fixed_family(),
+                                        blocks=BLOCKS if even else BLOCKS_SAFE,
+                                        bar=BAR if even else BAR_SAFE))
         self.text.verticalScrollBar().setValue(bar)
         n = sum(len(r.samples) for r in self.rows)
         what = "record(s)" if any(r.group for r in self.rows) else "sample(s)"

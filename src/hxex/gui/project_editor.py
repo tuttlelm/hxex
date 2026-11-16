@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QKeySequence, QShortcut
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .fonts import fixed_font
 from .table_copy import block_text, install_copy, selection_text, set_clipboard
 from .tips import ERROR_COLOUR, tip
 from .watched_file import WatchedFile
@@ -141,7 +142,7 @@ class SettingRow(QWidget):
         choices = _choices().get(self.name)
 
         self.label = QLabel(setting.key)
-        self.label.setFont(QFont("monospace"))
+        self.label.setFont(fixed_font())
         self.label.setToolTip(tip(self.name))
         if self.name in ORDERED:  # a list whose order matters: its items, with up and down
             self.editor = OrderedList(names)
@@ -1008,7 +1009,7 @@ class ListEditor(QWidget):
             text = QLabel(plain(s.text or ""))
             text.setWordWrap(True)
             name = QLabel(s.key)
-            name.setFont(QFont("monospace"))
+            name.setFont(fixed_font())
             about.addRow(name, text)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

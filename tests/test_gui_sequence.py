@@ -371,3 +371,25 @@ def test_the_coverage_counts_ms1_peptides_only(tmp_path):
     text = sequence_html(rows, annotations, coverage=coverage_of(results))
     assert "MS1 peptides covering a residue (1 to 1; fragment ions not counted)" in text
 
+
+
+def test_the_sequence_is_drawn_in_a_real_fixed_width_font(qapp, tmp_path):
+    """``monospace`` is a font alias on Linux only: on Windows Qt gave Tahoma and nothing
+    aligned (2026-11-16). The view names an installed fixed-width family instead, and draws
+    the coverage with glyphs that family draws at a letter's width."""
+    from PySide6.QtGui import QFontInfo
+
+    from hxex.gui import fonts
+    from hxex.gui.sequence_view import BAR, BAR_SAFE, BLOCKS, BLOCKS_SAFE
+
+    font = fonts.fixed_font()
+    assert font.family() == fonts.fixed_family() and font.fixedPitch()
+    assert QFontInfo(font).fixedPitch() or fonts.fixed_family() not in fonts.FAMILIES
+    marks = '[[analysis.regions]]\nname = "loop"\nstart = 5\nend = 7\n'
+    rows, annotations, _ = project_sequences(_project(tmp_path, "/3-12", marks))
+    text = sequence_html(rows, annotations, family=fonts.fixed_family(),
+                         blocks=BLOCKS_SAFE, bar=BAR_SAFE)
+    assert f"font-family: {fonts.fixed_family()}, monospace" in text
+    assert BAR_SAFE in text and BAR not in text  # the region's bar: the safe glyph
+    assert BAR in sequence_html(rows, annotations)  # the default: the full set
+    assert fonts.even_width(font, "AB") and len(BLOCKS_SAFE) == 4 and len(BLOCKS) == 8

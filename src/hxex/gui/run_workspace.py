@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, QTimer, Signal
-from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..hooks import format_duration, format_percent
+from .fonts import fixed_font
 from .logs import LOG_FOLDER, CommandLog, log_name, log_text, project_logs
 from .runner import CommandRun, shown_command
 from .tips import tip
@@ -132,7 +133,7 @@ class RunWorkspace(QWidget):
         self.command = QLineEdit()
         self.command.setReadOnly(True)
         self.command.setPlaceholderText("the command, as you would type it in a terminal")
-        self.command.setFont(QFont("monospace"))
+        self.command.setFont(fixed_font())
         self.stop_button = QPushButton("Stop")
         self.stop_button.setToolTip(tip("stop after the current step (press again to abort now)"))
         self.stop_button.clicked.connect(self.stop)
@@ -154,7 +155,7 @@ class RunWorkspace(QWidget):
         self._clock.timeout.connect(self._tick)
         self.console = QPlainTextEdit()
         self.console.setReadOnly(True)
-        self.console.setFont(QFont("monospace"))
+        self.console.setFont(fixed_font())
         self.console.setMaximumBlockCount(20000)
         self.wrap = QCheckBox("Wrap lines")
         self.wrap.setToolTip(tip("long lines broken to the width of the console (off: one line "
