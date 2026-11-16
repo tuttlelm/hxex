@@ -64,12 +64,16 @@ def test_the_remembered_style_is_applied_at_the_next_start(tmp_path):
 
 
 def test_a_style_this_qt_lacks_keeps_the_default_and_says_so(tmp_path, caplog):
+    # a style remembered on another platform: one this Qt lacks (Qt on Windows has windows11)
+    here = {s.lower() for s in appearance.styles()}
+    missing = next(s for s in ("windows11", "macos", "windowsvista", "no-such-style")
+                   if s not in here)
     settings = _settings(tmp_path)
-    settings.setValue("style", "windows11")  # remembered on another platform
+    settings.setValue("style", missing)
     with caplog.at_level(logging.WARNING, logger="hxex.gui.appearance"):
         appearance.apply_saved(settings)
     assert appearance.current_style() == appearance.SYSTEM
-    assert "windows11" in caplog.text and "Fusion" in caplog.text
+    assert missing in caplog.text and "Fusion" in caplog.text
 
 
 def test_the_style_is_known_under_the_tooltip_style_sheet(qtbot, tmp_path):

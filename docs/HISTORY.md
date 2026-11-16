@@ -10343,7 +10343,9 @@ CSVs or mzML if wanted.
     the desktop's palette is, as before (dark on Windows 11 and macOS dark desktops, and on
     Linux desktops whose Qt theme reports it). The figures stay as drawn (matplotlib pages on
     white). Tests: `tests/test_gui_appearance.py`. Guide `gui.md` "Opening it"; `commands.md`
-    regenerated.
+    regenerated. CI for 4144fee failed on Windows (py3.12) in the test of a remembered style this
+    Qt lacks: it used `windows11`, which Qt on Windows has; the test now takes the first of
+    several names this Qt does not have.
 
 395. **The window's fixed-width font on Windows.** The owner, opening the window on Windows
     for the first time, found the Sequence tab's letters aligned with neither the numbering
