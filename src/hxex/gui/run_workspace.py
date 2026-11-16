@@ -50,16 +50,12 @@ log = logging.getLogger(__name__)
 # (button, command, what it does): the commands a project runs, in the order of a project's life
 COMMANDS = (("Check", "check", "check the project file and show what would be read"),
             ("Run", "run",
-             "read, pick, fit and bootstrap: the results bundle. Run again after changing what "
-             "is read (the peptide table, elution windows saved in the elution tab, picking or "
-             "fit settings) with overwrite enabled ([output] overwrite = true, or Replace when "
-             "it asks; --overwrite): only the series whose spectra changed are fitted again, "
-             "and your review decisions are kept"),
+             "read, pick, fit, and bootstrap: the results bundle; run again (Replace when it "
+             "asks) after changing what is read: only the series whose spectra changed are "
+             "fitted again, and your review decisions are kept"),
             ("Resume", "resume",
-             "add to the results without fitting again: finish a stopped bootstrap, add or "
-             "redo one (its settings changed), bootstrap the K your review chose; add or redo "
-             "the population test; work the controls out again when [run.controls] changed; "
-             "assess the quality flags again when an earlier hxex made them"),
+             "add to the results without fitting again: a stopped or changed bootstrap, the K "
+             "your review chose, the population test, changed controls, or the quality flags"),
             ("Report", "report", "write the tables again (with the review applied)"),
             ("Analyse", "analyse", "compare the samples: the analysis tables and figures"),
             ("Info", "info", "what the results hold"))
@@ -92,6 +88,9 @@ class RunWorkspace(QWidget):
     def __init__(self, parent=None, program: list[str] | None = None):
         super().__init__(parent)
         self.project: Path | None = None
+        # the window's parsed project settings (key -> value as written; Q-2); None: read
+        # the file here (the workspace on its own)
+        self.project_values = None
         self.args: list[str] = []
         self.runner = CommandRun(self, program)
         self.log_file = None  # the open log of the command running
@@ -116,9 +115,8 @@ class RunWorkspace(QWidget):
         row.addStretch()
         self.device = QComboBox()
         self.device.addItems([DEVICE_SETTING, "cpu", "cuda"])
-        self.device.setToolTip(tip("for Run and Resume: where the fits run. The first entry is the "
-                                   "project file's setting ([run.fit.backend] device); cpu or cuda "
-                                   "use that device for this command only (--device)"))
+        self.device.setToolTip(tip("where the fits run (Run and Resume): the project file's "
+                                   "setting first; cpu or cuda for this command only (--device)"))
         change = QPushButton("Change…")
         change.setToolTip(tip("the project file's device setting, in the Project workspace"))
         change.clicked.connect(lambda checked=False: self.show_setting.emit("run.fit.backend"))
@@ -244,13 +242,16 @@ class RunWorkspace(QWidget):
         (its default, auto, when the file does not set it)."""
         value = "auto"
         if self.project is not None:
-            try:
-                from ..project_edit import live_settings
+            if self.project_values is not None:  # the window's one parsed state (Q-2)
+                value = str(self.project_values().get("run.fit.backend.device", "auto"))
+            else:
+                try:
+                    from ..project_edit import live_settings
 
-                text = self.project.read_text(encoding="utf-8-sig")
-                value = str(live_settings(text)[0].get("run.fit.backend.device", "auto"))
-            except Exception:  # noqa: BLE001 - a file that does not read: its default
-                pass
+                    text = self.project.read_text(encoding="utf-8-sig")
+                    value = str(live_settings(text)[0].get("run.fit.backend.device", "auto"))
+                except Exception:  # noqa: BLE001 - a file that does not read: its default
+                    pass
         self.device.setItemText(0, f"{DEVICE_SETTING}: {value}")
 
     # --- earlier commands --------------------------------------------------------------------

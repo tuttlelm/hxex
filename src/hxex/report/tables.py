@@ -28,7 +28,7 @@ from ..quality import FLAG_NAMES
 from ..spectra import point_order_key, time_point
 from . import hover
 from .results import Results
-from .series import _control_row, _reps, _time_text
+from .series import _control_row, _reps, time_text
 
 IDENTITY_COLUMNS = ("identity", "identity_level", "candidates", "classes", "position_offset")
 
@@ -144,7 +144,7 @@ def _index_columns(results: Results, picked=None) -> dict[str, np.ndarray]:
         del cols[name]
     cols = _with_identities(cols, results, cols["data_id"], after="charge")
     cols.update({name: np.asarray(values)[at]
-                 for name, values in _target_columns(results).items()})
+                 for name, values in target_columns(results).items()})
     cols["review_status"] = np.asarray(results.review_status).astype(str)[at]
     cols["review_K"] = _review_k(results)[at]
     cols["note"] = _review_note(results)[at]
@@ -240,7 +240,7 @@ TARGET_COLUMNS = ("fragment", "ion_type", "condition", "parent_range", "ms_level
                   "activation", "precursor_mz", "precursor_charge")
 
 
-def _target_columns(results: Results) -> dict[str, np.ndarray]:
+def target_columns(results: Results) -> dict[str, np.ndarray]:
     """For spectra read from mzML or Thermo raw files, how each measurement's scans were
     chosen: the fragment (for example ``c-1:4``, empty for a peptide), its ion type (``c-1``;
     ``M`` for the precursor), the condition (the fragment list's label, else its scan
@@ -535,7 +535,7 @@ def uptake_table(results: Results, data_ids=None) -> dict[str, np.ndarray]:
             "start": np.nan if span is None else float(span[0]),
             "end": np.nan if span is None else float(span[1]),
             "charge": comp["charge"][first], "time": float(comp["time"][first]),
-            "time_label": _time_text(float(comp["time"][first]), str(role[first]), scale),
+            "time_label": time_text(float(comp["time"][first]), str(role[first]), scale),
             "role": str(role[first]), "description": _description(k, r),
             "K": np.nan if k == 0 else float(k), "rank": np.nan if k == 0 else float(r),
             "n_amides": amide, "n_replicates": n, "mean": value,
@@ -717,11 +717,11 @@ def write_csv(columns: dict[str, np.ndarray], path: str | Path) -> Path:
         writer = csv.writer(fh)
         writer.writerow(names)
         for i in range(n):
-            writer.writerow([_cell(columns[name][i]) for name in names])
+            writer.writerow([csv_cell(columns[name][i]) for name in names])
     return path
 
 
-def _cell(value) -> str:
+def csv_cell(value) -> str:
     if isinstance(value, (float, np.floating)):
         return "" if np.isnan(value) else _number(float(value))
     return str(value)

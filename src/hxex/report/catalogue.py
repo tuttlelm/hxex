@@ -57,12 +57,12 @@ class Situation:
             return cls(figures, analysis, tuple(analysis.ks), analysis.populations)
         from ..analysis import RunSet
         from ..analysis.settings import population_rule
-        from .analysis import _check_names, _fitted_ks, _fragment_series
+        from .analysis import _check_names, _fitted_ks, fragment_series_ids
 
         _check_names(results, analysis)  # a reference that names no sample: refused
         runs = results.runs if isinstance(results, RunSet) else {"": results}
         fitted = _fitted_ks(analysis, runs)
-        split = [_fragment_series(r) for r in runs.values()]
+        split = [fragment_series_ids(r) for r in runs.values()]
         pools = [_pooled_run(r) for r, (_, only) in zip(runs.values(), split, strict=True)
                  if not only]
         return cls(figures, analysis, tuple(fitted.ks),

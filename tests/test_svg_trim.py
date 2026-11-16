@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The window's SVG with its data cut to the panels (Qt's renderer ignores clip paths)."""
 
-import os
 
 import numpy as np
 import pytest
@@ -89,7 +88,6 @@ def test_the_figure_is_cut_inside_and_put_back_after():
 
 
 def test_nothing_is_drawn_past_the_frame_in_qt():
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QByteArray
     from PySide6.QtGui import QImage, QPainter

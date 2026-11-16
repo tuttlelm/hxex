@@ -10239,3 +10239,70 @@ CSVs or mzML if wanted.
     tests with the fixture, the failed test among them; 0 with the wait as a hook wrapper
     around the whole teardown, which processes events and waits again until nothing new starts
     (`tests/conftest.py`).
+
+393. **The window's quality items, tests, guide and PLAN (2026-11-15; fix Session 6 of
+    docs/AUDIT_GUI_2026-11-15.md, its Part 2).** The project file is parsed once: the window
+    keeps one `hxex.gui.project_state.ProjectState` (the settings as written, the project as
+    hxex loads it, the file's problem and signature; immutable, so a loading thread can hold
+    one), renewed by the Project workspace whenever the file changes and read again on demand
+    when the file changed on disk before the watcher fired (`fresh_project_state`); the
+    Analysis page, the review panel, the sequence view, the elution tab and its editor, and
+    the Run tab's device line read it instead of the file (Q-2; fourteen readers before, each
+    handling a file that does not read in its own way), and `MainWindow.project_results` says
+    whether the results shown are the project's own (Q-3). The decision and file-format logic
+    the window held moved into the library, where the commands and Python share it (Q-4, PLAN
+    "GUI" rule 1): the tree's "left out" column is `hxex.analysis.left_out_reasons`; the
+    elution-window table's writer (`save_window`, `saved_window`, `undo_window`,
+    `own_windows`, `sibling_windows`, `table_path`, its cache) is in `hxex.io.elution_windows`;
+    the user tables read and written whole are `hxex.io.user_tables`; and the review decisions
+    (`Decision`, `write_decisions`, `make_review_table`, `review_table_path`) and the table's
+    checks against the results (`review_match`, `results_ids`) are in `hxex.review_table`.
+    The window's modules keep the names they used (`hxex.gui.review`, `hxex.gui.user_tables`,
+    `hxex.gui.window_edit` import them from the library), and the Qt-free ones are tested
+    with PySide6 blocked in a subprocess (Q-6: `make_review_table` had needed Qt through the
+    project editor; `quoted` and `relative_path` are `hxex.project_edit`'s now). The private
+    library names the window imported are public (Q-5): `report.tables.csv_cell` and
+    `target_columns`, `report.series.time_text`, `report.analysis.fragment_series_ids`,
+    `io.mzml.target_label`, `config.toml_value`, `review_table.delimiter`, and inside the
+    window `left_out_or_none`, `file_signature`. A closed window lets its results and figures
+    go (M-5: `MainWindow._release`, the workspaces' `release`; each closed window had kept
+    its whole results, 60 to 300 MB, in a process that makes several, such as a test
+    session; the Results object and the figure shown are collected after the close, tested).
+    The session file's `analysis` and `figures` fields are marked reserved (Q-21; never
+    filled until "Changing a figure" is built). Names: the agreed levels (peptide, series,
+    time point, spectrum) in the tree's header, the review panel's steps, the export menu
+    and the guide (Q-33); opening results has one wording (a results folder from the button
+    and File > Open results, a `.zip` bundle through File > Open; Q-34); PLAN "GUI" says
+    what is built (the matplotlib view as the default, the File tab, reloading at once, one
+    figure saved at a time, changing a figure not built; Q-35); the guide names every control
+    it left out (Q-38) and Undo's reach and the Preset button (Q-37); the Oxford comma in the
+    window's strings (Q-39); the longest tooltips shortened to phrases, lower-case throughout
+    (Q-40); dead names removed and attributes made in `__init__` (Q-20, Q-23); one error
+    colour `tips.ERROR_COLOUR` and `tips.set_choice_tips` for every box whose choices differ
+    (Q-18, Q-19); the package docstring says where each kind of problem is shown (Q-19). Tests:
+    offscreen is set once in `conftest.py` (Q-25; two files had set it too late and opened
+    windows on the screen when run alone); `test_gui_review.py` no longer depends on its
+    tests' order (each test gets its own copy of the run's folder; checked in reverse order
+    with a plugin; Q-26); every user-reachable action the audit's coverage map marked untested
+    has a test through its widget with the dialogs patched (`tests/test_gui_actions.py`, 24
+    tests: the File and Help menus and their shortcuts, every Browse…, the Run tab's figures
+    box and Clear, the data tab's double-click and Save table…, the column filter dialog's
+    All, None and Clear, Save figure…, the review panel's K list and "(differs between the
+    spectra)" and Add the bootstrap, the elution editor's Fits at each K, the sequence view's
+    Read again; Q-27); fixed pixel limits replaced by comparisons within the window (Q-28);
+    waits used as evidence that nothing happened replaced by waits for the triggering
+    condition (the held job's ticket sent back, an event set by the patched load, the
+    analysis's settle; Q-29; one test of the review watcher had been vacuous, deciding on a
+    spectrum that did not exist); `conftest.py` fails the test that left a pool busy for two
+    minutes, naming the pool (Q-30). One copy helper (`hxex.gui.table_copy`: a block of cells,
+    rows with their names, an event filter for Ctrl+C replacing four `keyPressEvent`
+    overrides; nothing selected copies the current row with the column names everywhere; Q-12)
+    and one save helper (`save_rows`, `ask_csv_path`, `saved_or_said`: the List's Save table…
+    now says a failure on its count line instead of raising in a Qt slot; Q-13); one watched
+    file (`hxex.gui.watched_file.WatchedFile`: watched again when replaced, paused while the
+    window writes; the Settings form and the Tables grid use it; Q-17); the List's tables box
+    switched with signals blocked had kept the old choice's tooltip (fixed with Q-18); the
+    List's count says rows for tables other than spectra.csv (Q-41). Not done, as
+    decided: the module splits (Q-7 to Q-11), the tree-row record (Q-24), the window fixtures
+    in one place (Q-31; left in their files). Q-32 was fixed with A-7. D-2's K case was found
+    done (a K the bundle chose is cleared with `review_K = 0`).

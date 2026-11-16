@@ -479,7 +479,7 @@ def plot_series_spectra(
             ax.text(0.02, 0.98, unread, ha="left", va="top", fontsize=6, wrap=True,
                     color="darkred", transform=ax.transAxes, gid="raw_unread")
         pos = list(info["rows"]).index(i)
-        when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
+        when = time_text(info["times"][pos], info["roles"][pos], results.time_scale)
         # the panel keeps what plot_spectrum says of the spectrum: its K, status and flags
         title = f"{when}, rep {info['reps'][pos]} ({spectrum_notes(results, i, k)})"
         ax.set_title(wrap_title(title, room, 8), fontsize=8)
@@ -509,7 +509,7 @@ def _control_role(role: str) -> str | None:
     return ROLE_SHORT.get(str(role))
 
 
-def _time_text(t: float, role: str = "", scale: str = "seconds") -> str:
+def time_text(t: float, role: str = "", scale: str = "seconds") -> str:
     """A point for a title: ``FD`` or ``UN`` for a control (with its time when it has one),
     else the time in a readable unit (:func:`hxex.io.format_time`); ``point 3`` when the times
     only order the points (``scale='order'``, :attr:`Results.time_scale`)."""
@@ -701,7 +701,7 @@ def plot_populations(
         ax = axes[positions[pos]]
         ax.set_visible(True)
         rejected = results.review_status[i] == "rejected"
-        when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
+        when = time_text(info["times"][pos], info["roles"][pos], results.time_scale)
         label = (f"{when}, rep {info['reps'][pos]} "  # the map's axis is D: not repeated
                  f"({spectrum_notes(results, i, k, with_d=False)})")
         _draw_population_map(ax, d, "\n".join(textwrap.wrap(label, 58)))
@@ -726,7 +726,7 @@ def plot_populations(
                             lw=1, gid=f"overlay:{info['reps'][pos]}"
                             + (":rejected" if rejected else ""), **style)
             ov.set_ylim(-0.05, 1.1)
-            when = _time_text(info["times"][pos], info["roles"][pos], results.time_scale)
+            when = time_text(info["times"][pos], info["roles"][pos], results.time_scale)
             ov.set_title(f"{when}, replicates", fontsize=8)
             _limits(ov, d["n_amides"], _top(d))
             if reference is not None and d["n_amides"] is not None:

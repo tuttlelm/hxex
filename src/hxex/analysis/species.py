@@ -1688,3 +1688,38 @@ def _is_trend(pairs: list) -> bool:
     up, down = int(np.sum(diffs > TREND_Z)), int(np.sum(diffs < -TREND_Z))
     hits = max(up, down)
     return hits >= 2 and hits > TREND_SHARE * len(diffs)
+
+
+def left_out_reasons(results, config=None) -> list[str]:
+    """Why the analysis settings ``config`` (:class:`AnalysisConfig`; its defaults when None)
+    leave each spectrum of ``results`` out, '' for the ones kept: the reasons of
+    ``left_out_spectra.csv`` (``[analysis.filters]``, :func:`left_out_spectra`),
+    ``exclude_flagged`` and ``exclude_times``, and the spectra kept at one population
+    (``spectrum_quality_filtering``, :data:`hxex.analysis.screening.KEPT_AT_ONE_REASON`).
+    Rejected spectra are not listed (the review left them out). This is the window's "left
+    out" column (moved here from ``hxex.gui``, audit of 2026-11-15, Q-4, so that Python gives
+    the same column)."""
+    from . import AnalysisConfig
+    from .screening import screening
+
+    config = config or AnalysisConfig()
+    n = len(results.fit)
+    why = np.full(n, "", dtype=object)
+    status = np.asarray(results.review_status).astype(str)
+    if config.filters is not None:
+        screen = screening(results, config.filters.spectrum_quality_filtering,
+                           config.filters.off_mz)
+        one = np.asarray(screen.one_population, dtype=bool) & (status == "unreviewed")
+        why[one] = KEPT_AT_ONE_REASON
+        table = left_out_spectra(results, config.filters, exclude_flagged=config.exclude_flagged,
+                                 controls=config.controls)
+        at = {str(sid): i for i, sid in enumerate(results.fit.spectrum_id)}
+        for sid, reason in zip(table["spectrum_id"], table["reason"], strict=True):
+            why[at[str(sid)]] = str(reason)
+    if config.exclude_flagged and results.quality is not None:
+        why[np.asarray(results.quality.flagged, dtype=bool)] = "quality flag (exclude_flagged)"
+    time = np.asarray(results.fit.time, dtype=float)
+    for t in config.exclude_times:
+        why[np.isclose(time, t, rtol=1e-9, atol=1e-6)] = "time left out (exclude_times)"
+    why[status == "rejected"] = ""
+    return [str(w) for w in why]

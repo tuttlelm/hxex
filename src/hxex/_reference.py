@@ -533,7 +533,7 @@ def _value(value) -> str:
         return "(tables)"
     if isinstance(value, (list, tuple)) and value and all(isinstance(v, Mapping) for v in value):
         return "(tables)"
-    return f"`{config._toml_value(list(value) if isinstance(value, tuple) else value)}`"
+    return f"`{config.toml_value(list(value) if isinstance(value, tuple) else value)}`"
 
 
 def _field_default(f):

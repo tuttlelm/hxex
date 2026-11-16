@@ -215,7 +215,7 @@ def _check_types(data: Mapping, cls, where: str) -> None:
                                    f"leave it out for the default")
             continue
         if form is not None and not form[1](value):
-            shown = _toml_value(value) if not isinstance(value, Mapping) else "a table"
+            shown = toml_value(value) if not isinstance(value, Mapping) else "a table"
             hint_text = (" (false stands for unset only where a setting can be unset)"
                          if value is False else "")
             raise ProjectError(f"[{where}] {key} = {shown}: expected {form[0]}{hint_text}")
@@ -320,8 +320,8 @@ def run_config_from(data: Mapping) -> RunConfig:
     for key, value in given.items():
         if key == "controls" and isinstance(value, str):
             if value != AUTO_CONTROLS:
-                raise ProjectError(f"[run] controls = {_toml_value(value)}: expected "
-                                   f"{_toml_value(AUTO_CONTROLS)} (the default: on when the "
+                raise ProjectError(f"[run] controls = {toml_value(value)}: expected "
+                                   f"{toml_value(AUTO_CONTROLS)} (the default: on when the "
                                    "data hold undeuterated and fully deuterated controls), "
                                    "true, false, or a [run.controls] table")
             merged[key] = AUTO_CONTROLS
@@ -333,7 +333,7 @@ def run_config_from(data: Mapping) -> RunConfig:
             elif isinstance(value, Mapping):
                 merged[key] = _merge(_section_defaults(key), value, f"run.{key}")
             else:
-                raise ProjectError(f"[run] {key} = {_toml_value(value)}: expected a table, "
+                raise ProjectError(f"[run] {key} = {toml_value(value)}: expected a table, "
                                    "true or false")
         elif key in merged and isinstance(value, Mapping) and isinstance(merged[key], Mapping):
             merged[key] = _merge(merged[key], value, f"run.{key}")
@@ -792,7 +792,7 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
     stored spectra and are not used to read) the paths the read needs may be left out."""
     fmt = data.get("format")
     if fmt not in FORMATS:
-        shown = f" = {_toml_value(fmt)}" if fmt is not None else ""
+        shown = f" = {toml_value(fmt)}" if fmt is not None else ""
         raise ProjectError(f"input.format{shown}: must be one of {', '.join(FORMATS)} (lower "
                            "case; specexport is HDExaminer's export, hxexpress the HX-Express "
                            "spreadsheets, pooled a folder of spectra, mzml and thermo scan "
@@ -846,7 +846,7 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
         r = dict(r)
         time = r.get("time")
         if isinstance(time, str) and time.strip().lower() in CONTROL_WORDS:
-            raise ProjectError(f"{where}: time = {_toml_value(time)} names a control; write "
+            raise ProjectError(f"{where}: time = {toml_value(time)} names a control; write "
                                f"role = \"{CONTROL_WORDS[time.strip().lower()]}\" (and leave "
                                "time out, or give the file's labelling time as well)")
         if time is not None:
@@ -889,12 +889,12 @@ def _read_settings(data: Mapping, base: Path, stored: bool = False) -> InputSett
     fragments = tuple(_fragment_settings(b) for b in _items(data.get("fragments")))
     parents = data.get("parents", True)
     if not isinstance(parents, bool):
-        raise ProjectError(f"[input] parents = {_toml_value(parents)}: expected true or false")
+        raise ProjectError(f"[input] parents = {toml_value(parents)}: expected true or false")
     if not parents and not fragments:
         raise ProjectError("parents = false needs [input.fragments]: there would be no target")
     scans = data.get("scans", {})
     if not isinstance(scans, Mapping):
-        raise ProjectError(f"[input] scans = {_toml_value(scans)}: expected a table")
+        raise ProjectError(f"[input] scans = {toml_value(scans)}: expected a table")
     scans = _false_to_none(scans, MzmlConfig)
     scans = _times_in(scans, ("min_time", "peak_search", "peak_smoothing", "rt_search_tolerance"),
                       "input.scans")
@@ -951,7 +951,7 @@ def _output_from(data: Mapping, base: Path) -> OutputSettings:
     )
     if (isinstance(out.tables, Path) and out.bundle is not None
             and _same_path(out.tables, out.bundle)):
-        raise ProjectError(f"[output] tables = {_toml_value(data['tables'])} names the results "
+        raise ProjectError(f"[output] tables = {toml_value(data['tables'])} names the results "
                            "bundle itself: the tables go in a folder of their own (leave tables "
                            "out for one beside the bundle, NAME_tables)")
     return out
@@ -1019,7 +1019,7 @@ def project_from(data: Mapping, base: str | Path = ".", path: Path | None = None
     analysis = _analysis_from(data["analysis"], base) if "analysis" in data else None
     if analysis is not None and analysis.out and output.bundle is not None and _same_path(
             analysis.out, output.bundle):
-        raise ProjectError(f"[analysis] out = {_toml_value(str(data['analysis']['out']))} "
+        raise ProjectError(f"[analysis] out = {toml_value(str(data['analysis']['out']))} "
                            "names the results bundle itself ([output] bundle): the analysis "
                            "goes in a folder of its own (leave out unset for one beside "
                            "the bundle)")
@@ -1197,7 +1197,7 @@ def _check_conditions(data, where: str) -> None:
         return
     for key, value in data.items():
         if not isinstance(value, Mapping) and key not in _CONDITION_KEYS:
-            raise ProjectError(f"{where} {key} = {_toml_value(value)}: unknown key {key}"
+            raise ProjectError(f"{where} {key} = {toml_value(value)}: unknown key {key}"
                                f"{_did_you_mean(key, _CONDITION_KEYS)}; the conditions are "
                                "ph_read, temperature and d2o_fraction (one table, or one per "
                                "sample)")
@@ -1423,11 +1423,11 @@ def elution_window_problems(project: Project) -> list[str]:
     """What is wrong with the project's ``[input] rt_elution_windows`` table (none without
     one): a missing file, a row the reader refuses, or a row that names no run of the project, a
     run without a time, or a peptide or an ion not read from that file (the ion as the spectrum
-    ids name it, :func:`hxex.io.mzml._target_label`; the peptide as
+    ids name it, :func:`hxex.io.mzml.target_label`; the peptide as
     :func:`hxex.io.elution_windows.peptide_label` names it). No data file is opened."""
     from .io import ReadError
     from .io.elution_windows import peptide_label, read_elution_windows
-    from .io.mzml import _target_label, run_name, target_applies
+    from .io.mzml import run_name, target_applies, target_label
 
     inp = project.input
     path = None if inp is None else inp.rt_elution_windows
@@ -1452,7 +1452,7 @@ def elution_window_problems(project: Project) -> list[str]:
             continue
         for t in targets:
             if target_applies(t, r):
-                ion, pep = _target_label(t), peptide_label(t.entry)
+                ion, pep = target_label(t), peptide_label(t.entry)
                 read.update({(r.sample, run_name(r), pep, ion), (r.sample, run_name(r), "", ion),
                              (r.sample, run_name(r), pep, "")})
     problems = []
@@ -1754,7 +1754,7 @@ def _read_input(project: Project, *, progress=None, cancel=None) -> SpectrumSet:
 
 # --- the template -------------------------------------------------------------------------------
 
-def _toml_value(value) -> str:
+def toml_value(value) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
@@ -1764,9 +1764,9 @@ def _toml_value(value) -> str:
     if isinstance(value, str):
         return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
     if isinstance(value, (list, tuple)):
-        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+        return "[" + ", ".join(toml_value(v) for v in value) + "]"
     if isinstance(value, Mapping):
-        return "{ " + ", ".join(f"{k} = {_toml_value(v)}" for k, v in value.items()) + " }"
+        return "{ " + ", ".join(f"{k} = {toml_value(v)}" for k, v in value.items()) + " }"
     raise TypeError(f"cannot write {value!r} as TOML")
 
 
@@ -2204,16 +2204,16 @@ def _toml_table(name: str, data: Mapping, comment: bool = False, cls: type | Non
             later += [""] + _toml_table(f"{name}.{key}", value, comment,
                                         _config_class(hints.get(key)), quiet=quiet)
         elif f"{name}.{key}" in quiet and not comment and value is not None:
-            lines += _commented(f"# {key} = {_toml_value(value)}",
+            lines += _commented(f"# {key} = {toml_value(value)}",
                                 _COMMENTS.get(f"{name}.{key}"), "# ")
         elif isinstance(value, list) and value and all(isinstance(v, Mapping) for v in value):
             for item in value:
                 later += ["", f"{c}[[{name}.{key}]]"]
-                later += [f"{c}{k} = {_toml_value(v)}" for k, v in item.items()]
+                later += [f"{c}{k} = {toml_value(v)}" for k, v in item.items()]
         elif value is None:
             lines += _unset_line(key, hints.get(key), notes.get(key), name, c)
         else:
-            lines += _commented(f"{c}{key} = {_toml_value(value)}",
+            lines += _commented(f"{c}{key} = {toml_value(value)}",
                                 _COMMENTS.get(f"{name}.{key}"), c)
     return lines + later
 
@@ -2368,7 +2368,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# for \"not set\" where a setting can be unset (a switch set to false is off). Relative",
         "# paths are relative to this file.",
         "",
-        f'project = {_toml_value(project)}'.ljust(34) + "# prefixes every spectrum id",
+        f'project = {toml_value(project)}'.ljust(34) + "# prefixes every spectrum id",
         "# threads = 4                     # CPU threads (unset: every core, right for most",
         "#                                 # computers; fewer leave cores free for other work)",
         *_preset_template_lines(),
@@ -2738,7 +2738,7 @@ def run_settings_text(manifest: Mapping) -> str:
         "says (\"name\": file names only).",
     ])
     if name:
-        lines.append(f"project = {_toml_value(name)}")
+        lines.append(f"project = {toml_value(name)}")
     if record.get("threads") is not None:
         lines.append(f"threads = {record['threads']}")
     if record.get("preset"):

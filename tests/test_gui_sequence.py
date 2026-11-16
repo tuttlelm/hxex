@@ -2,7 +2,6 @@
 """The Project workspace's sequence view (hxex.gui.sequence_view; owner, 2026-11-04): each
 sample's sequence as the analysis numbers it, rows shared by samples with the same sequence,
 differences from the reference highlighted, regions and sites marked, a residue described."""
-import os
 
 import pytest
 
@@ -48,7 +47,6 @@ def test_no_sequence_says_where_to_put_one(tmp_path):
 
 
 def test_the_view_shows_the_project_and_describes_a_click(qtbot, tmp_path):
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QUrl
 
@@ -223,7 +221,6 @@ def test_pooled_coverage_is_each_records_in_its_own_numbering(tmp_path):
 def test_the_residues_a_line_are_chosen_in_the_view(qtbot, tmp_path):
     """Owner, 2026-11-10: how many residues a line holds is a choice of the view (blocks of
     ten), kept by the window's session only when it is not the default."""
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from hxex.gui.sequence_view import PER_LINE, SequenceView
 
@@ -247,7 +244,6 @@ def test_the_residues_a_line_are_chosen_in_the_view(qtbot, tmp_path):
 def test_a_project_without_sequences_leaves_nothing_of_the_one_before(qtbot, tmp_path):
     """E-13: a project without sequences (or none open) after one with: the line under the
     text no longer gives the previous project's counts, nor its message."""
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from hxex.gui.sequence_view import ABOUT, SequenceView
 

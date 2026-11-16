@@ -35,6 +35,7 @@ A table without a ``peptide`` column (written before peptide rows existed) holds
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -233,3 +234,351 @@ def window_for(entry_ion: str, entry_peptide: str, sample: str, file: str,
         if ion not in used:
             used.append(ion)
     return window, drift, used
+
+
+# --- the table written by the window's review (moved here from hxex.gui.window_edit, audit
+# of 2026-11-15, Q-4: the rules of the table belong to the library)
+
+DEFAULT_NAME = "rt_elution_windows.csv"  # beside the project file, when it names no table
+
+# what was read from the project file and the table, kept until the file changes on disk or
+# this module writes it (audit of 2026-11-15, F-12: every spectrum shown with Edit window on
+# loaded the project file three times and read the whole table, 0.2 s on a 12,000-row table)
+_CACHE: dict[tuple[str, Path], tuple[tuple, object]] = {}
+
+
+def file_signature(path: Path) -> tuple | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+def _cached(kind: str, path: Path, make):
+    """``make()`` for ``path``, kept under ``kind`` while the file's size and modification
+    time stay (None: the file is not there; made every time)."""
+    sig = file_signature(path)
+    key = (kind, path)
+    if sig is None:
+        _CACHE.pop(key, None)
+        return make()
+    kept = _CACHE.get(key)
+    if kept is not None and kept[0] == sig:
+        return kept[1]
+    value = make()
+    _CACHE[key] = (sig, value)
+    return value
+
+
+def forget_cached(path: str | Path | None = None) -> None:
+    """Drop what was read from ``path`` (None: everything): this module writes a file, or a
+    test replaces one in place."""
+    if path is None:
+        _CACHE.clear()
+        return
+    path = Path(path)
+    for key in [k for k in _CACHE if k[1] == path]:
+        del _CACHE[key]
+
+
+@dataclass(frozen=True)
+class SavedWindow:
+    """A window written to the project's ``[input] rt_elution_windows`` table: each file
+    written with its bytes ``before`` (None: it did not exist) and ``after`` (Undo writes
+    ``before`` back), the row as written (``row``, by column; the peptide's row for a window
+    saved for the whole peptide), whether it was ``added`` (else that row was changed), and,
+    for a peptide's window, ``own``: the other ions of the peptide whose rows in that file keep
+    a window of their own. The table is the first file; the project file follows when the first
+    save named the table in it."""
+
+    files: tuple[tuple[Path, bytes | None, bytes], ...]
+    row: dict[str, str]
+    added: bool
+    own: tuple[str, ...] = ()
+    samples: tuple[str, ...] = ()  # every sample a row was written for (the key's first)
+    project: Path | None = None  # the project file the window was saved for
+
+    @property
+    def path(self) -> Path:
+        return self.files[0][0]
+
+
+def _text(value: float, places: int, up: bool) -> str:
+    """``value`` to ``places`` decimals, rounded outwards (``up``: towards larger), so that a
+    window written to the table still holds the scans it summed."""
+    scale = 10 ** places
+    v = (math.ceil if up else math.floor)(value * scale - (1e-6 if up else -1e-6)) / scale
+    return f"{v:.{places}f}"
+
+
+def table_path(project_path: str | Path) -> tuple[Path, bool]:
+    """The project's elution-window table and whether the project file names it already (else
+    the default name beside the project file, named there by the first save)."""
+    from ..config import load_project
+
+    project_path = Path(project_path)
+    named = _cached("table_path", project_path,
+                    lambda: load_project(project_path).input.rt_elution_windows)
+    return (Path(named), True) if named is not None else (project_path.parent / DEFAULT_NAME,
+                                                          False)
+
+
+def own_windows(project_path, peptide: str, ions: Sequence[str],
+                places: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Which ``places`` (sample, file) already hold a window of the peptide's own in the
+    project's elution-window table: a row naming the peptide, or one of its ``ions``, with a
+    window or a drift range (set by hand or by an earlier save); a spread asks before replacing
+    them (owner, 2026-11-11)."""
+    from .user_tables import read_table
+
+    path, _named = table_path(project_path)
+    if not path.is_file():
+        return []
+    table = read_table(path)
+    names = [c.strip().lower() for c in table.columns]
+    if not {"sample", "file"} <= set(names):
+        return []
+
+    def cell(r, column):
+        return r[names.index(column)].strip() if column in names else ""
+
+    wanted, out = set(places), []
+    mine = set(ions)
+    for r in table.rows:
+        place = (cell(r, "sample"), cell(r, "file"))
+        if place not in wanted or place in out:
+            continue
+        pep, ion = cell(r, "peptide"), cell(r, "ion")
+        if not (pep == peptide or (ion in mine and pep in ("", peptide))):
+            continue
+        if any(cell(r, c) for c in ("rt_start", "rt_end", "drift_start", "drift_end")):
+            out.append(place)
+    return out
+
+
+def sibling_windows(project_path, peptide: str, ion: str, siblings: Sequence[str],
+                    places: Sequence[tuple[str, str]], shared: bool = False) -> list[str]:
+    """The ions of ``siblings`` other than ``ion`` (the one edited) with a retention window of
+    their own in ``places`` (sample, file: the edited file, for each sample reading it) of the
+    project's elution-window table: a save for the whole peptide replaces them, so the window
+    asks first (audit of 2026-11-15, D-8). A row naming the ion without a peptide counts unless
+    another peptide has an ion of that name (``shared``)."""
+    from .user_tables import read_table
+
+    path, _named = table_path(project_path)
+    if not path.is_file():
+        return []
+    table = read_table(path)
+    names = [c.strip().lower() for c in table.columns]
+    if not {"sample", "file", "ion", "rt_start"} <= set(names):
+        return []
+
+    def cell(r, column):
+        return r[names.index(column)].strip() if column in names else ""
+
+    wanted, others = set(places), {s for s in siblings if s != ion}
+    out: dict[str, None] = {}
+    for r in table.rows:
+        if (cell(r, "sample"), cell(r, "file")) not in wanted or cell(r, "ion") not in others:
+            continue
+        if cell(r, "peptide") == peptide or (not shared and not cell(r, "peptide")):
+            if cell(r, "rt_start") or cell(r, "rt_end"):
+                out.setdefault(cell(r, "ion"))
+    return list(out)
+
+
+def save_window(project_path: str | Path, key: tuple[str, str, str],
+                window: tuple[float, float], drift: tuple[float, float] | None = None, *,
+                peptide: str | None = None, whole: bool = False, siblings=(),
+                shared: bool = False, table: str | Path | None = None,
+                samples: Sequence[str] = (),
+                more: Sequence[tuple[str, str, tuple[float, float]]] = (),
+                keep_own: bool = False) -> SavedWindow:
+    """Write ``window`` (minutes: the first and last scan of the spectrum summed again over it)
+    to the project's ``[input] rt_elution_windows`` table for ``key`` (sample, file name, ion
+    as the spectrum ids name it) of ``peptide`` (as :func:`peptide_label` names the ion's peptide).
+
+    ``whole``: the window is the peptide's row in that file: every ion of it takes it (its
+    charge states and fragments; the same molecules elute together), and the ion's own row
+    gives up its window (it is removed, or keeps only its drift range; a row naming the ion
+    without a peptide only when no other peptide has an ion of that name, ``shared`` False).
+    ``siblings`` (the ions of the peptide, as spectrum ids name them) give up their windows in
+    that file too, as in the files the window is spread to (the window asks first,
+    :func:`sibling_windows`), unless ``keep_own``: then those keeping one are named in
+    :attr:`SavedWindow.own`. ``drift`` (ms) is then written to the ion's own row only (drift
+    times differ between charge states): give it only when it was changed. Otherwise the row is
+    the ion's own, naming its peptide too (two parents can give fragment ions of the same
+    name), with ``drift``: an exception, such as interference at its own m/z. A row naming the
+    ion without a peptide is that row (unless ``shared``), and names the peptide from then on.
+
+    ``samples``: the other samples that read the same file (:func:`samples_reading`; one
+    injection, so one window, owner 2026-11-11): the same rows are written for each of them, as
+    the table keys its rows by sample. ``more``: (sample, file, window) of other files the window
+    is spread to (:func:`plan_spread`, shifted by each file's elution), written as ``whole``
+    rows are (the peptide's row; ``drift`` on the ion's own row), and there every ion of the
+    peptide gives up a window of its own (the window asks first, :func:`own_windows`).
+    ``drift`` None leaves the drift range an ion's own row holds as it is (a save that moved
+    only the retention window does not pin the reader's drift choice; audit of 2026-11-15, D
+    open question 3).
+
+    The row is changed, or one is added. When the project file names no table, the first save
+    writes ``table`` (the window asks where: :func:`hxex.gui.table_choice.ask_table`; else
+    :data:`DEFAULT_NAME` beside the project file), making it or adding to it, and names it in
+    the project file. The
+    times are written rounded outwards (4 decimals of a minute, 3 of a millisecond), so the run
+    reads the same scans. The table is checked as the project reads it before anything is
+    written (ValueError with the reader's words; nothing written). The peptide table is never
+    changed."""
+    from ..config import toml_value
+    from ..project_edit import relative_path, set_settings
+    from .user_tables import Table, read_table, table_problem, write_table
+
+    if whole and not peptide:
+        raise ValueError("a window for the whole peptide needs the peptide")
+    project_path = Path(project_path)
+    path, named = table_path(project_path)
+    if not named and table is not None:
+        path = Path(table)
+    before = path.read_bytes() if path.is_file() else None
+    table = read_table(path) if before is not None else Table(list(COLUMNS))
+    table = table.copy()
+    names = [c.strip().lower() for c in table.columns]
+    for column in COLUMNS:
+        if column not in names:
+            table.columns.append(column)
+            names.append(column)
+            for r in table.rows:
+                r.append("")
+    at = {c: names.index(c) for c in COLUMNS}
+    first, file, ion = key
+    pep = peptide or ""
+    written = tuple(dict.fromkeys([first, *samples]))
+
+    def cell(r, column):
+        return r[at[column]].strip()
+
+    def span(row, values, places, start, end):
+        row[at[start]] = "" if values is None else _text(values[0], places, up=False)
+        row[at[end]] = "" if values is None else _text(values[1], places, up=True)
+
+    def write_for(sample, file=file, window=window, everyone=False):
+        def find(pep_value, ion_value):
+            return [r for r in table.rows if (cell(r, "sample"), cell(r, "file"),
+                                              cell(r, "peptide"), cell(r, "ion"))
+                    == (sample, file, pep_value, ion_value)]
+
+        def put(pep_value, ion_value):
+            own = find(pep_value, ion_value)
+            if not own and pep_value and ion_value and not shared:
+                # the ion's row naming no peptide (written before peptide rows existed, or
+                # from an HDExaminer export) is its row, as the reader takes it: it names its
+                # peptide from now on (audit of 2026-11-15, D-4)
+                own = find("", ion_value)
+                if own:
+                    own[0][at["peptide"]] = pep_value
+            if own:
+                return own[0], False
+            row = [""] * len(table.columns)
+            row[at["sample"]], row[at["file"]] = sample, file
+            row[at["peptide"]], row[at["ion"]] = pep_value, ion_value
+            table.rows.append(row)
+            return row, True
+
+        own_rows: set[str] = set()
+        if whole:
+            row, added = put(pep, "")
+            span(row, window, 4, "rt_start", "rt_end")
+            mine = find(pep, ion) + ([] if shared else find("", ion))
+            followers = mine + ([r for s_ in siblings if s_ != ion
+                                 for r in find(pep, s_) + ([] if shared else find("", s_))]
+                                if everyone else [])
+            for r in followers:  # the ion (unless its siblings keep theirs, every ion)
+                # follows its peptide
+                span(r, None, 4, "rt_start", "rt_end")
+            if drift is not None:
+                target, _ = (mine[0], False) if mine else put(pep, ion)
+                span(target, drift, 3, "drift_start", "drift_end")
+            table.rows[:] = [r for r in table.rows if not cell(r, "ion") or any(
+                cell(r, c) for c in ("rt_start", "rt_end", "drift_start", "drift_end"))]
+            own_rows = {cell(r, "ion") for s_ in siblings for r in find(pep, s_) + find("", s_)
+                        if cell(r, "rt_start") and (s_ != ion or r not in mine)}
+        else:
+            row, added = put(pep, ion)
+            span(row, window, 4, "rt_start", "rt_end")
+            if drift is not None:  # else the row's own drift range stays (D open question 3)
+                span(row, drift, 3, "drift_start", "drift_end")
+        return row, added, own_rows
+
+    # the edited file's other ions follow the peptide's row too, as in the files it is spread
+    # to (audit of 2026-11-15, D-8), unless the user chose to keep theirs (``keep_own``)
+    row, added, own_set = write_for(first, everyone=whole and not keep_own)
+    for sample in written[1:]:
+        own_set |= write_for(sample, everyone=whole and not keep_own)[2]
+    if more and not (whole and peptide):
+        raise ValueError("a window spread to other files is the whole peptide's")
+    for sample, other_file, other_window in more:
+        write_for(sample, other_file, other_window, everyone=True)
+    own_rows = tuple(sorted(own_set))
+    problem = table_problem("input.rt_elution_windows", table, project_path)
+    if problem:
+        raise ValueError(problem)
+    project_before = project_path.read_bytes()
+    write_table(table, path)
+    forget_cached(path)
+    files = [(path, before, path.read_bytes())]
+    if not named:
+        try:
+            shown = relative_path(path, project_path.parent)  # forward slashes when inside
+            set_settings(project_path, [("input.rt_elution_windows", toml_value(shown))],
+                         unfinished=True)
+        except Exception:
+            _restore(path, before)
+            raise
+        forget_cached(project_path)
+        files.append((project_path, project_before, project_path.read_bytes()))
+    return SavedWindow(tuple(files), {c: v for c, v in zip(table.columns, row, strict=True)},
+                       added, own_rows, written, project=project_path.absolute())
+
+
+def _restore(path: Path, before: bytes | None) -> None:
+    from ..project_edit import replace_file
+
+    forget_cached(path)
+    if before is None:
+        path.unlink(missing_ok=True)
+        return
+    tmp = path.with_name(path.name + ".hxex-tmp")
+    tmp.write_bytes(before)
+    replace_file(tmp, path)
+
+
+def undo_window(saved: SavedWindow) -> None:
+    """Write the files ``saved`` changed back as they were (the table removed when the save
+    made it; ValueError when one was changed since, by hand or by another program: nothing is
+    written)."""
+    for path, _before, after in saved.files:
+        if not path.is_file() or path.read_bytes() != after:
+            raise ValueError(f"{path} was changed since the window was saved: not undone")
+    for path, before, _after in saved.files:
+        _restore(path, before)
+
+
+def saved_window(project_path: str | Path, key: tuple[str, str, str],
+                 peptide: str | None = None
+                 ) -> tuple[tuple[float, float], tuple[float, float] | None, str] | None:
+    """The window (minutes), drift range (ms, or None) and where the window comes from
+    (``"ion"``: the ion's own row; ``"peptide"``: its peptide's row) that the project's
+    elution-window table gives ``key`` (sample, file, ion) of ``peptide`` (as
+    :func:`peptide_label` names it); None without a table or a row with
+    a window for it."""
+    path, _named = table_path(project_path)
+    if not path.is_file():
+        return None
+    rows = _cached("rows", path, lambda: read_elution_windows(path))
+    sample, file, ion = key
+    window, drift, used = window_for(ion, peptide or "", sample, file, by_key(rows),
+                                     by_peptide(rows))
+    if window is None:
+        return None
+    return window, drift, ("peptide" if used[0].is_peptide else "ion")

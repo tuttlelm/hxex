@@ -1,18 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Exporting from the Results view (hxex.gui.export_dialog; docs/PLAN.md Next steps 32): what
 each level exports, the names the dialog shows, and replacing only after asking. Offscreen."""
-import os
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from hxex.gui.export_dialog import HXEXPRESS, PLOT_DATA, ExportDialog, Target  # noqa: E402
-from hxex.gui.results_workspace import ResultsWorkspace  # noqa: E402
-from hxex.io.hxexpress import parse_hxexpress_filename, read_hxexpress_file  # noqa: E402
-from hxex.report import Results  # noqa: E402
-from test_run import PEPTIDE, boot_config, config, raw_spectra, run  # noqa: E402
+from hxex.gui.export_dialog import HXEXPRESS, PLOT_DATA, ExportDialog, Target
+from hxex.gui.results_workspace import ResultsWorkspace
+from hxex.io.hxexpress import parse_hxexpress_filename, read_hxexpress_file
+from hxex.report import Results
+from test_run import PEPTIDE, boot_config, config, raw_spectra, run
 
 
 @pytest.fixture(scope="module")

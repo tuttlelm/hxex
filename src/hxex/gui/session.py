@@ -2,8 +2,10 @@
 """The GUI session file: what the window showed, so a session can be reopened (docs/PLAN.md,
 "GUI", "The GUI session file").
 
-A session holds only the view: the project file, the results and analysis folders open, the
-selections, the figures open with their changes, the workspace shown, and the window layout. It
+A session holds only the view: the project file, the results folder open, the selections, the
+workspace shown, and the window layout. The ``analysis`` folder and the ``figures`` with their
+changes are RESERVED: read and written (round-tripped) but never filled by the window, until
+"Changing a figure" (docs/PLAN.md, "GUI") is built (audit of 2026-11-15, Q-21). It
 never holds settings or review decisions, which stay in the project file and the user's tables,
 so the command line sees the same project whether or not the GUI was used.
 
@@ -55,10 +57,10 @@ class GuiSession:
 
     project: Path | None = None
     results: Path | None = None
-    analysis: Path | None = None
+    analysis: Path | None = None  # reserved: never set by the window yet (Q-21)
     workspace: str = "project"
     selection: dict[str, Any] = field(default_factory=dict)
-    figures: list[FigureState] = field(default_factory=list)
+    figures: list[FigureState] = field(default_factory=list)  # reserved (Q-21)
     layout: dict[str, str] = field(default_factory=dict)  # Qt's window geometry and state
 
     def __post_init__(self):

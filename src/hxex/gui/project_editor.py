@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -46,7 +46,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .tips import tip
+from .table_copy import block_text, install_copy, selection_text, set_clipboard
+from .tips import ERROR_COLOUR, tip
+from .watched_file import WatchedFile
 
 log = logging.getLogger(__name__)
 
@@ -72,12 +74,12 @@ NO_PRESET = "(none: the defaults or user specified values)"  # the preset list's
 def _shown(value) -> str:
     """A value as the form shows it: text without quotes, anything else as TOML (a value the
     writer has no form for, a date say, as Python prints it; audit of 2026-11-15, B-22)."""
-    from ..config import _toml_value
+    from ..config import toml_value
 
     if isinstance(value, str):
         return value
     try:
-        return _toml_value(value)
+        return toml_value(value)
     except TypeError:
         return str(value)
 
@@ -254,9 +256,9 @@ class SettingRow(QWidget):
         self.where.setHidden(where is None)
 
     def _ordered(self, items: list) -> None:
-        from ..config import _toml_value
+        from ..config import toml_value
 
-        self.edited.emit(self.name, _toml_value(list(items)) if items else None)
+        self.edited.emit(self.name, toml_value(list(items)) if items else None)
 
     def _state_changed(self, state: int) -> None:
         state = Qt.CheckState(state)
@@ -413,9 +415,9 @@ class OrderedList(QWidget):
 
 
 def _quoted(text: str) -> str:
-    from ..config import _toml_value
+    from ..config import toml_value
 
-    return _toml_value(text)
+    return toml_value(text)
 
 
 def full_location(text: str, folder: Path | None) -> Path | None:
@@ -467,8 +469,7 @@ class ProjectEditor(QWidget):
         self.controls_state: QLabel | None = None
         self.list_editor: ListEditor | NamesEditor | None = None
         self._shown_format: str | None = None
-        self.watcher = QFileSystemWatcher(self)
-        self.watcher.fileChanged.connect(self._file_changed)
+        self.watched = WatchedFile(self, self._file_changed)
         # every change the window makes, to undo and redo (owner: settings are easily changed
         # by accident, especially when starting out); for this file, this session
         self.undo_steps: list[Step] = []
@@ -488,7 +489,7 @@ class ProjectEditor(QWidget):
 
         self.problem = QLabel()
         self.problem.setWordWrap(True)
-        self.problem.setStyleSheet("color: #b00020;")
+        self.problem.setStyleSheet(f"color: {ERROR_COLOUR};")
         self.problem.hide()
         self.search = QLineEdit()
         self.search.setPlaceholderText("Find a setting (name or description)")
@@ -543,15 +544,12 @@ class ProjectEditor(QWidget):
     # --- the file ----------------------------------------------------------------------------
 
     def open(self, path: Path | None) -> None:
-        if self.watcher.files():
-            self.watcher.removePaths(self.watcher.files())
         if path != self.path:  # another file: its own changes only
             self.undo_steps, self.redo_steps = [], []
         self.path = path
         self._show_steps()
         self.setEnabled(path is not None)
-        if path is not None:
-            self.watcher.addPath(str(path))
+        self.watched.watch(path)
         self.reload()
         if self.list.currentRow() < 0:
             self.show_table("input")
@@ -599,15 +597,9 @@ class ProjectEditor(QWidget):
         watched file could not be replaced), watched again after. With ``record``, a change is
         kept for Undo (the file's bytes before and after); the block may name it, setting
         ``.what`` of the step it is given."""
-        watched = [f for f in self.watcher.files()]
-        if watched:
-            self.watcher.removePaths(watched)
         step = Step("a change to the project file", self._bytes(), b"")
-        try:
+        with self.watched.paused():
             yield step
-        finally:
-            if self.path is not None and self.path.exists():
-                self.watcher.addPath(str(self.path))
         step.after = self._bytes()
         if record and step.after != step.before:
             self.undo_steps.append(step)
@@ -665,9 +657,7 @@ class ProjectEditor(QWidget):
             tip(f"Redo: {nxt} (Ctrl+Shift+Z)" if nxt else "nothing to redo"))
 
     def _file_changed(self, path: str) -> None:
-        # a file replaced (as hxex writes it, and many editors) is no longer watched: watch again
-        if Path(path).exists() and path not in self.watcher.files():
-            self.watcher.addPath(path)
+        # changed by another program (the watcher watches a replaced file again itself)
         self.reload()
         self.changed.emit()
 
@@ -758,7 +748,7 @@ class ProjectEditor(QWidget):
         """The tables the file nests under ``name`` that are not pages of their own (a sample's
         or run's own settings: ``[analysis.labelling.D109H]``), listed so that they are not
         invisible from the form (audit of 2026-11-15, B-10); None without any."""
-        from ..config import _toml_value
+        from ..config import toml_value
 
         known = {t.name for t in self.tables}
         prefix = name + "."
@@ -770,7 +760,7 @@ class ProjectEditor(QWidget):
             if f"{name}.{first}" in known:
                 continue
             try:
-                shown = _toml_value(value)
+                shown = toml_value(value)
             except TypeError:
                 shown = str(value)
             found.setdefault(first, []).append(f"{key[len(prefix) + len(first) + 1:]} = {shown}")
@@ -970,22 +960,6 @@ def _written(kind: str, raw: str) -> str:
     return _quoted(raw) if kind in ("text", "path") else raw
 
 
-class _CopyGrid(QTableWidget):
-    """A list editor's grid, whose Ctrl+C copies every selected cell (Qt's own copied only the
-    current one; owner, 2026-11-09), as the Tables view's does."""
-
-    def __init__(self, editor: ListEditor, columns: int):
-        super().__init__(0, columns)
-        self.editor = editor
-
-    def keyPressEvent(self, event):  # noqa: N802 - Qt's name
-        if event.matches(QKeySequence.StandardKey.Copy):
-            self.editor.copy_selection()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-
 class ListEditor(QWidget):
     """A list of tables (``[[input.runs]]``, ...): one row per entry, one column per setting.
     A changed cell is written at once to that entry's lines; an emptied cell switches the
@@ -996,7 +970,10 @@ class ListEditor(QWidget):
         self.owner, self.table = owner, table
         self.keys = [s.key for s in table.settings]
         self.kinds = {s.key: s.kind for s in table.settings}
-        self.grid = _CopyGrid(self, len(self.keys))
+        self.grid = QTableWidget(0, len(self.keys))
+        # Ctrl+C copies every selected cell (Qt's own copied only the current one; owner,
+        # 2026-11-09), as the Tables view's does
+        install_copy(self.grid, self.copy_selection)
         self.grid.setHorizontalHeaderLabels(self.keys)
         for c, s in enumerate(table.settings):
             self.grid.horizontalHeaderItem(c).setToolTip(tip(plain(s.text or "")))
@@ -1073,39 +1050,21 @@ class ListEditor(QWidget):
         return "" if item is None else item.text()
 
     def copied_text(self) -> str:
-        """The selected cells as a spreadsheet takes them: the block from the first selected row
-        and column to the last, tab-separated, a cell not selected inside it left empty; with
-        every cell selected (Ctrl+A), the column names first (owner, 2026-11-09)."""
-        chosen = {(i.row(), i.column()) for i in self.grid.selectedIndexes()}
-        if not chosen and self.grid.currentRow() >= 0 and self.grid.currentColumn() >= 0:
-            chosen = {(self.grid.currentRow(), self.grid.currentColumn())}
-        if not chosen:
-            return ""
-        rows = range(min(r for r, _ in chosen), max(r for r, _ in chosen) + 1)
-        columns = range(min(c for _, c in chosen), max(c for _, c in chosen) + 1)
-        lines = ["\t".join(self._cell(r, c) if (r, c) in chosen else "" for c in columns)
-                 for r in rows]
-        if len(chosen) == self.grid.rowCount() * len(self.keys):  # Ctrl+A: with the names
-            lines.insert(0, "\t".join(self.keys[c] for c in columns))
-        return "\n".join(lines) + "\n"
+        """The selected cells as a spreadsheet takes them (the block from the first selected
+        row and column to the last; every cell selected: the column names first; nothing
+        selected: the current row with the names), by :func:`hxex.gui.table_copy.selection_text`."""
+        return selection_text(self.grid, self._cell, self.keys)
 
     def table_text(self) -> str:
         """Every entry with the column names, tab-separated."""
-        lines = ["\t".join(self.keys)]
-        lines += ["\t".join(self._cell(r, c) for c in range(len(self.keys)))
-                  for r in range(self.grid.rowCount())]
-        return "\n".join(lines) + "\n"
+        return block_text([self.keys] + [[self._cell(r, c) for c in range(len(self.keys))]
+                                         for r in range(self.grid.rowCount())])
 
     def copy_selection(self) -> None:
-        from PySide6.QtWidgets import QApplication
-
-        if text := self.copied_text():
-            QApplication.clipboard().setText(text)
+        set_clipboard(self.copied_text())
 
     def copy_table(self) -> None:
-        from PySide6.QtWidgets import QApplication
-
-        QApplication.clipboard().setText(self.table_text())
+        set_clipboard(self.table_text())
 
     def _menu(self, pos) -> None:
         menu = QMenu(self)

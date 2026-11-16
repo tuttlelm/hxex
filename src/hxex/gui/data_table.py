@@ -18,8 +18,6 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -31,22 +29,19 @@ from PySide6.QtWidgets import (
 
 from .. import flags
 from .order import natural_key
+from .table_copy import (
+    ask_csv_path,
+    chosen_rows,
+    copy_text,
+    install_copy,
+    rows_text,
+    save_rows,
+    saved_or_said,
+    set_clipboard,
+)
 from .tips import rich_tip, tip
 
 log = logging.getLogger(__name__)
-
-
-def copy_text(value) -> str:
-    """A value as it is copied or saved: as the CSV files write it (six significant digits, an
-    m/z with its 0.0001, booleans as True or False, NaN empty); the cells shown round more
-    (audit of 2026-11-15, C-3: an m/z 652.3412 pasted as 652.3)."""
-    from ..report.tables import _cell
-
-    if value is None:
-        return ""
-    if isinstance(value, (bool, np.bool_)):
-        return str(bool(value))
-    return _cell(value)
 
 
 def size_columns(table: QTableView, sample: int = 300, widest: int = 60) -> None:
@@ -232,6 +227,7 @@ class DataPanel(QWidget):
         self.table.doubleClicked.connect(self._double_clicked)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._menu)
+        install_copy(self.table, self.copy)
         self.count = QLabel()
         self.save_button = QPushButton("Save table…")
         self.save_button.setToolTip(tip("save these rows, in the order shown, as a CSV file (as "
@@ -315,48 +311,28 @@ class DataPanel(QWidget):
 
     # --- copying and saving ------------------------------------------------------------------
 
-    def keyPressEvent(self, event):  # noqa: N802 - Qt's name
-        if event.matches(QKeySequence.StandardKey.Copy):
-            self.copy()
-            event.accept()
-            return
-        super().keyPressEvent(event)
+    def copied_text(self) -> str:
+        """The selected rows (none selected: the current row), with the header, as
+        tab-separated text a spreadsheet pastes into columns (:mod:`hxex.gui.table_copy`)."""
+        rows = [self.model.rows[i] for i in chosen_rows(self.table) if i < len(self.model.rows)]
+        return rows_text(self.model.columns, rows)
 
     def copy(self) -> None:
-        """The selected rows (all when none is selected), with the header, as tab-separated
-        text a spreadsheet pastes into columns."""
-        picked = sorted({i.row() for i in self.table.selectionModel().selectedRows()})
-        rows = [self.model.rows[i] for i in picked] or self.model.rows
-        lines = ["\t".join(self.model.columns)]
-        lines += ["\t".join(copy_text(r.get(c)) for c in self.model.columns) for r in rows]
-        QApplication.clipboard().setText("\n".join(lines) + "\n")
+        set_clipboard(self.copied_text())
 
     def save_dialog(self) -> None:
         if not self.model.rows:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Save table",
-                                              f"{self.save_name or 'figure'}.csv",
-                                              "CSV (*.csv)")
-        if not path:
-            return
-        if not path.lower().endswith(".csv"):
-            path += ".csv"
-        try:
-            self.save(path)
-        except OSError as exc:
-            self.count.setText(f"Not saved: {exc}")
-            log.error("the table was not saved: %s", exc)
+        path = ask_csv_path(self, f"{self.save_name or 'figure'}.csv")
+        if path is not None:
+            saved_or_said(lambda: self.save(path), self.count.setText)
 
     def save(self, path: str | Path) -> Path:
         """Write the rows, in the order shown, as CSV (:func:`hxex.report.tables.write_csv`:
         NaN empty, numbers to six significant digits)."""
-        from ..report.tables import write_csv
-
-        columns = {name: np.array([r.get(name, "") for r in self.model.rows], dtype=object)
-                   for name in self.model.columns}
-        path = write_csv(columns, path)
+        path = save_rows(self.model.columns, self.model.rows, path)
         log.info("saved the table %s", path)
-        self.count.setText(f"{len(self.model.rows)} row(s); saved as {Path(path).name}")
+        self.count.setText(f"{len(self.model.rows)} row(s); saved as {path.name}")
         return path
 
 

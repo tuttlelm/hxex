@@ -5,7 +5,18 @@ Python, PySide6-Essentials).
 
 Started with ``hxex gui [PATH]`` or ``hxex-gui [PATH]``, where PATH is a GUI session file
 (``.hxexgui``), a project file, or a results bundle. The modules without Qt
-(:mod:`hxex.gui.session`, :mod:`hxex.gui.figures`) import without the extra.
+(:mod:`hxex.gui.session`, :mod:`hxex.gui.figures`, :mod:`hxex.gui.project_state`,
+:mod:`hxex.gui.results_tree`, :mod:`hxex.gui.review`, :mod:`hxex.gui.user_tables`,
+:mod:`hxex.gui.window_edit`) import without the extra; decision and file-format logic is the
+library's (docs/PLAN.md "GUI", rule 1).
+
+Where a problem is shown (audit of 2026-11-15, Q-19): a refused setting or table edit on the
+red problem line of its editor (the Settings form, the Tables grid, the List's column filters);
+a figure that cannot be drawn on its panel's status line, with the reason in the Messages pane;
+a review decision that cannot be written on the review panel's message line, with Try again; an
+analysis that cannot be computed in the Analysis page's status text; the elution editor's saves
+in the status bar; and what needs an answer (replacing a file, an unsaved session, an export)
+in a dialog. Every red is :data:`hxex.gui.tips.ERROR_COLOUR`.
 """
 
 from __future__ import annotations

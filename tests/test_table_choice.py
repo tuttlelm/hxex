@@ -3,15 +3,12 @@
 2026-11-11): the name suggested carries the project file's name, a file another project file
 names is said to be its, and nothing is added to an existing file without a yes."""
 
-import os
 
 import pytest
 
 from hxex.gui import table_choice
 from hxex.gui.table_choice import ask_table as REAL_ASK  # before the shared fixture patches it
 from hxex.gui.table_choice import named_by_others, suggested_name
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 def test_the_suggested_name_carries_the_project_file(tmp_path):

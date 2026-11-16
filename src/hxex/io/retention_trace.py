@@ -44,11 +44,11 @@ from .mzml import (
     _ladder_trace,
     _run_file_name,
     _scan_record,
-    _target_label,
     sum_centroid,
     sum_mobility_bins,
     sum_profile,
     target_applies,
+    target_label,
     target_scans,
 )
 
@@ -259,7 +259,7 @@ class TraceReader:
             return None
         first, last = int(m.group(1)), int(m.group(2) or m.group(1))
         head = local[:m.start()]
-        label = "/" + _target_label(target)
+        label = "/" + target_label(target)
         if not head.endswith(label):
             return None
         head = head[:-len(label)]
@@ -406,7 +406,7 @@ class TraceReader:
             target = self.targets[self.of_series[int(d)]]
             extra = dict(target.entry.extra)
             key = (("fragment", _channel(target)) if "fragment" in extra and target.ms_level >= 2
-                   else ("ion", _target_label(target)))
+                   else ("ion", target_label(target)))
             groups.setdefault(key, []).append((sid, target))
         if not groups:
             return []
@@ -633,7 +633,7 @@ def _group_label(kind: str, targets: Sequence[MzmlTarget]) -> str:
     if kind == "ion":
         if t.ms_level == 1:
             return f"{t.entry.charge}+ (MS1)"
-        return _target_label(t)
+        return target_label(t)
     types = []
     for target in targets:
         mod = str(target.entry.modification or "")

@@ -8,7 +8,10 @@ outside brackets (a semicolon inside parentheses or square brackets belongs to t
 stays on its line) and by line breaks already in the text. The result is still plain text, so
 the tooltip is not reflowed by Qt and no characters need escaping. :func:`style_tooltips` gives
 the boxes more room and a neutral cream background (owner, 2026-11-11: Qt's pale yellow looked
-dated), a warm dark grey on a dark desktop; it alone imports Qt, when called.
+dated), a warm dark grey on a dark desktop. :func:`set_choice_tips` gives each choice of a
+dropdown its own tooltip, the box showing the selected choice's (the owner's style for boxes whose
+choices mean different things). Those two import Qt when called; the rest is plain text.
+:data:`ERROR_COLOUR` is the one red of a problem said in the window (audit of 2026-11-15, Q-19).
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from __future__ import annotations
 import textwrap
 
 TIP_WIDTH = 60  # characters: the widest a tooltip line runs before wrapping
+ERROR_COLOUR = "#b00020"  # a problem said in the window (a problem line, a failed figure)
 
 _OPEN, _CLOSE = "([{", ")]}"
 
@@ -69,6 +73,22 @@ def rich_tip(text: str | None, width: int = TIP_WIDTH) -> str:
         words = [re.escape(html.escape(w, quote=False)) for w in phrase.split()]
         laid = re.sub(r"\s+".join(words), lambda m: f"<b>{m.group(0)}</b>", laid, count=1)
     return "<qt><p style='white-space:pre'>" + laid.replace("\n", "<br>") + "</p></qt>"
+
+
+def set_choice_tips(combo, tips: dict[str, str]) -> None:
+    """Give each choice of ``combo`` (a QComboBox) its tooltip (``tips`` by the choice's data,
+    bold between ``**``), shown on the open list's items and, for the selected choice, on the
+    box (owner, 2026-11-12: one long tooltip for every choice was hard to read)."""
+    from PySide6.QtCore import Qt
+
+    for i in range(combo.count()):
+        combo.setItemData(i, rich_tip(tips.get(combo.itemData(i), "")),
+                          Qt.ItemDataRole.ToolTipRole)
+    combo.setToolTip(combo.itemData(combo.currentIndex(), Qt.ItemDataRole.ToolTipRole) or "")
+    if not combo.property("tips_follow"):  # connected once: the box follows the selection
+        combo.setProperty("tips_follow", True)
+        combo.currentIndexChanged.connect(lambda i: combo.setToolTip(
+            combo.itemData(i, Qt.ItemDataRole.ToolTipRole) or ""))
 
 
 # the tooltip box: (background, text, border) for a light and a dark desktop

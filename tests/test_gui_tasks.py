@@ -2,17 +2,16 @@
 """The window's background work (hxex.gui.tasks): a request replaced or dropped before it
 started never runs (audit of 2026-11-15, C-12: a held arrow key queued a hundred drawings
 nobody would see, done 44 s after the last key). Runs offscreen."""
-import os
 import threading
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QThreadPool  # noqa: E402
+from PySide6.QtCore import QThreadPool
+from PySide6.QtWidgets import QApplication
 
-from hxex.gui.tasks import Latest  # noqa: E402
+from hxex.gui.tasks import Latest
 
 
 def test_a_request_replaced_or_dropped_before_it_started_never_runs(qtbot):
@@ -44,5 +43,5 @@ def test_a_request_replaced_or_dropped_before_it_started_never_runs(qtbot):
     latest.drop()  # nothing of either is wanted
     gate.set()
     assert pool.waitForDone(10000)
-    qtbot.wait(50)
+    QApplication.processEvents()  # what the jobs sent back delivered (not a fixed wait: Q-29)
     assert ran == [1, 3, 1] and done == [3] and not latest.running

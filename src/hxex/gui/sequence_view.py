@@ -99,21 +99,22 @@ def stored_sequences(bundle: Path | None) -> dict[str, tuple[str, int, str]]:
             for name, v in (source.get("sequences") or {}).items()}
 
 
-def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
+def project_sequences(project) -> tuple[list[SequenceRow], object, str]:
     """The rows of the project's sequences, its annotations, and a message: why there is no
     sequence when there are no rows, else what to say of where they came from ('' when the
-    files were read as they are)."""
+    files were read as they are). ``project``: the project file's path, or the window's
+    :class:`hxex.gui.project_state.ProjectState` of it (read once for every panel, Q-2)."""
     from ..analysis.compare import Annotations
-    from ..config import load_project
     from ..io import read_fasta_numbered
-    from ..project_edit import live_settings
+    from .project_state import ProjectState
 
+    state = project if isinstance(project, ProjectState) else ProjectState.read(project)
+    project = state.path
     notes: list[str] = []
-    try:
-        loaded = load_project(project, analysis_only=True)
-        config = loaded.analysis
-    except Exception as exc:  # noqa: BLE001 - said in the view
-        return [], Annotations(), f"The project file does not read: {exc}"
+    if state.loaded is None:
+        return [], Annotations(), f"The project file does not read: {state.problem}"
+    loaded = state.loaded
+    config = loaded.analysis
     stored = stored_sequences(loaded.output.bundle)
     annotations = config.annotations if config is not None else Annotations()
     inputs = loaded.input
@@ -158,7 +159,7 @@ def project_sequences(project: Path) -> tuple[list[SequenceRow], object, str]:
             elif read(name):
                 lost.append((name, file, "is not found"))
     else:
-        values, _ = live_settings(project.read_text(encoding="utf-8-sig"))
+        values = state.values
         if str(values.get("input.format", "")).strip('"') == "specexport":
             folder = Path(str(values.get("input.data_dir", "")).strip('"'))
             folder = folder if folder.is_absolute() else project.parent / folder
@@ -643,8 +644,14 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         default)."""
         return {} if self.per_line == PER_LINE else {"residues_per_line": self.per_line}
 
-    def show_project(self, project: Path | None) -> None:
-        self.project = project
+    def show_project(self, project) -> None:
+        """Show the sequences of ``project``: its path, or the window's parsed state of it
+        (None: no project); Read again reads the files again."""
+        from .project_state import ProjectState
+
+        if isinstance(project, ProjectState):
+            project = project if project.path is not None else None
+        self.project = project.path if isinstance(project, ProjectState) else project
         if project is None:
             self.rows, self.annotations = [], None
             self._clear("No project file open.")

@@ -1222,13 +1222,13 @@ def test_the_reference_overlay_follows_the_units_of_the_plot(results):
 
 
 def test_csv_cells_are_utf8_with_nan_empty_and_inf_kept(tmp_path):
-    from hxex.report.tables import _cell, format_table, write_csv
+    from hxex.report.tables import csv_cell, format_table, write_csv
 
     cols = {"name": np.array(["µ-peptide"]), "x": np.array([np.inf]), "y": np.array([np.nan]),
             "z": np.array([-np.inf])}
     path = write_csv(cols, tmp_path / "c.csv")
     assert path.read_bytes().decode("utf-8").splitlines()[1] == "µ-peptide,inf,,-inf"
-    assert _cell(np.float64("nan")) == "" and _cell(float("inf")) == "inf"
+    assert csv_cell(np.float64("nan")) == "" and csv_cell(float("inf")) == "inf"
     assert format_table(cols).splitlines()[1].split() == ["µ-peptide", "inf", "-inf"]
     ref = tmp_path / "r.tsv"
     ref.write_bytes("temps (µs)\tfd1\tp1\n60\t25\t1\n".encode())

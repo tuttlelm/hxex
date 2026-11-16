@@ -78,9 +78,9 @@ def _name_parts(name: str) -> list[str]:
 
 def key_text(key: str) -> str:
     """``key`` as it is written in the file: bare when it can be, else in quotes."""
-    from .config import _toml_value
+    from .config import toml_value
 
-    return key if _KEY.fullmatch(key) else _toml_value(key)
+    return key if _KEY.fullmatch(key) else toml_value(key)
 
 
 def _heading(line: str) -> tuple[str, bool, bool] | None:
@@ -132,7 +132,7 @@ def value_text(raw: str) -> str:
     """The TOML text of a value typed on the command line: as typed when it is a TOML value
     (``0.85``, ``true``, ``[1, 2]``, ``"WT"``), otherwise the text in quotes (``controls``,
     ``20 min``), so text needs no quotes in the shell."""
-    from .config import _toml_value
+    from .config import toml_value
 
     raw = raw.strip()
     if not raw:
@@ -144,7 +144,7 @@ def value_text(raw: str) -> str:
     except tomllib.TOMLDecodeError:
         if len(raw) > 1 and raw[0] == raw[-1] and raw[0] in "\"'":
             raw = raw[1:-1]  # text quoted in the shell's way, a Windows path say
-        return _toml_value(raw)
+        return toml_value(raw)
     return raw
 
 
@@ -841,3 +841,22 @@ def set_settings(path: str | Path, changes, unfinished: bool = False) -> list[Ch
     keys = tuple(c.setting.rsplit(".", 1)[-1] for c in done) if unfinished else None
     _write_checked(path, text, new_text, bom, what, keys)
     return done
+
+
+def quoted(text: str) -> str:
+    """``text`` as a TOML string value (quoted and escaped), for a setting written from a
+    path or a name the user typed."""
+    from .config import toml_value
+
+    return toml_value(text)
+
+
+def relative_path(path: Path, folder: Path | None) -> str:
+    """``path`` as a project file writes it: relative to the project's folder when inside it
+    (forward slashes, so the file works on every system), else as it is."""
+    if folder is not None:
+        try:
+            return path.resolve().relative_to(folder.resolve()).as_posix() or "."
+        except ValueError:
+            pass
+    return str(path)

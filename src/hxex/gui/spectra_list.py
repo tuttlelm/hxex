@@ -36,18 +36,27 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .data_table import RowsModel, cell_text, copy_text, size_columns
+from .data_table import RowsModel, cell_text, size_columns
 from .flow_layout import FlowLayout
 from .order import natural_key
 from .results_tree import search_matches
-from .tips import tip
+from .table_copy import (
+    ask_csv_path,
+    chosen_rows,
+    install_copy,
+    rows_text,
+    save_rows,
+    saved_or_said,
+    set_clipboard,
+)
+from .tips import ERROR_COLOUR, set_choice_tips, tip
 
 FEW_VALUES = 30  # a column with at most this many values is filtered by ticking them
 # the report's tables the list shows (owner, 2026-11-04: the Results tables, read only)
-TABLES = {"spectra": "spectra.csv: one row per spectrum",
-          "series": "series.csv: one row per series (a peptide at one charge in one sample)",
-          "components": "components.csv: one row per spectrum and population",
-          "uptake": "uptake.csv: replicate averages per series and time"}
+TABLES = {"spectra": "**spectra.csv**: one row per spectrum",
+          "series": "**series.csv**: one row per series (a peptide at one charge in one sample)",
+          "components": "**components.csv**: one row per spectrum and population",
+          "uptake": "**uptake.csv**: replicate averages per series and time"}
 
 # the list's filters: (words, what they keep)
 FILTERS = {"all": ("all spectra", "every spectrum"),
@@ -62,7 +71,7 @@ def list_rows(results, left: list[str] | None = None, rows=None) -> tuple[list[s
     """The list's columns and rows: ``spectra.csv``'s (:func:`hxex.report.tables.spectra_table`;
     ``rows``: only those spectra, by position), and ``left_out`` (``left``, the tree's reasons)
     after the review columns. Each row also carries its position (``_index``, not shown)."""
-    from ..report.series import _time_text
+    from ..report.series import time_text
     from ..report.tables import spectra_table
 
     table = spectra_table(results, rows=rows)
@@ -75,16 +84,16 @@ def list_rows(results, left: list[str] | None = None, rows=None) -> tuple[list[s
     scale = getattr(results, "time_scale", "seconds")
     out = []
     for n, index in enumerate(picked):
-        row = {name: _plain(values[n]) for name, values in table.items()}
+        row = {name: plain_value(values[n]) for name, values in table.items()}
         row["left_out"] = left[index] if left is not None else ""
-        row["time_label"] = _time_text(float(row.get("time", math.nan)),
+        row["time_label"] = time_text(float(row.get("time", math.nan)),
                                        str(row.get("role", "")), scale)
         row["_index"] = int(index)
         out.append(row)
     return columns, out
 
 
-def _plain(value):
+def plain_value(value):
     """A table value as Python's own (numbers, text, booleans), NaN kept for numbers."""
     if isinstance(value, (np.bool_, bool)):
         return bool(value)
@@ -95,18 +104,15 @@ def _plain(value):
     return value if isinstance(value, (int, float, str)) else str(value)
 
 
+_plain = plain_value  # the name other modules import
+
+
 class _Grid(QTableView):
-    """The list's table, whose keys A, R and U are review decisions (as the tree's) and whose
-    Ctrl+C copies the row chosen."""
+    """The list's table, whose keys A, R and U are review decisions (as the tree's)."""
 
     review_key = Signal(str)
-    copy_asked = Signal()
 
     def keyPressEvent(self, event):  # noqa: N802 - Qt's name
-        if event.matches(QKeySequence.StandardKey.Copy):
-            self.copy_asked.emit()
-            event.accept()
-            return
         if event.modifiers() in (Qt.KeyboardModifier.NoModifier,
                                  Qt.KeyboardModifier.ShiftModifier) \
                 and event.text().lower() in ("a", "r", "u"):
@@ -127,10 +133,9 @@ class SpectraList(QWidget):
         super().__init__(parent)
         self.table_name = "spectra"
         self.tables = QComboBox()
-        for i, (name, meaning) in enumerate(TABLES.items()):
+        for name in TABLES:
             self.tables.addItem(f"{name}.csv", name)
-            self.tables.setItemData(i, tip(meaning), Qt.ItemDataRole.ToolTipRole)
-        self.tables.setToolTip(tip("which of hxex report's tables the list shows (read only)"))
+        set_choice_tips(self.tables, TABLES)  # each table's own tooltip, the chosen one's shown
         self.tables.currentIndexChanged.connect(
             lambda _i: self.table_asked.emit(self.tables.currentData()))
         self.save_button = QPushButton("Save table…")
@@ -147,17 +152,17 @@ class SpectraList(QWidget):
         # quietly, when the rows come back (audit of 2026-11-15, C open question 5)
         self._kept_key: tuple | None = None
         self.filter = QComboBox()
-        for i, (key, (text, meaning)) in enumerate(FILTERS.items()):
+        for key, (text, _meaning) in FILTERS.items():
             self.filter.addItem(text, key)
-            self.filter.setItemData(i, tip(meaning), Qt.ItemDataRole.ToolTipRole)
-        self.filter.setToolTip(tip("which spectra the list shows"))
+        set_choice_tips(self.filter, {key: f"**{text}**: {meaning}"
+                                      for key, (text, meaning) in FILTERS.items()})
         self.sample = QComboBox()
         self.sample.setToolTip(tip("one sample's spectra, or every sample's"))
         self.search = QLineEdit()
         self.search.setPlaceholderText("Find: residue 20, peptide 12-23, or text")
-        self.search.setToolTip(tip("every word must match: a number is a residue the peptide "
-                                   "covers (20), two numbers its residues (12-23), anything else "
-                                   "text in the sample, peptide or spectrum id (WT, SPFY)"))
+        self.search.setToolTip(tip("every word must match; 20: a residue the peptide covers; "
+                                   "12-23: its residues; other words: sample, peptide, or "
+                                   "spectrum id"))
         self.search.setClearButtonEnabled(True)
         self.count = QLabel("Building the list…")
         self.column_filters: dict[str, tuple] = {}  # column -> ('values', set), ('range', lo,
@@ -199,7 +204,7 @@ class SpectraList(QWidget):
         self.grid.setAlternatingRowColors(True)
         self.grid.verticalHeader().setVisible(False)
         self.grid.selectionModel().currentRowChanged.connect(self._current)
-        self.grid.copy_asked.connect(lambda: self.copy(every=False))
+        install_copy(self.grid, lambda: self.copy(every=False))
         self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.grid.customContextMenuRequested.connect(self._menu)
         header = self.grid.horizontalHeader()
@@ -227,6 +232,9 @@ class SpectraList(QWidget):
             self.tables.blockSignals(True)
             self.tables.setCurrentIndex(max(self.tables.findData(table), 0))
             self.tables.blockSignals(False)
+            # the box's tooltip follows the choice through its signal, blocked here
+            self.tables.setToolTip(self.tables.itemData(self.tables.currentIndex(),
+                                                        Qt.ItemDataRole.ToolTipRole) or "")
         self.columns, self.rows = columns, rows
         keep = self.sample.currentData()
         samples = sorted({str(r.get("sample", "")) for r in rows})
@@ -340,8 +348,9 @@ class SpectraList(QWidget):
         header = self.grid.horizontalHeader()
         if header.sortIndicatorSection() >= 0:
             self.model.sort(header.sortIndicatorSection(), header.sortIndicatorOrder())
-        self.count.setText(f"{len(shown):,} of {len(self.rows):,} spectra" if self.rows else
-                           self.count.text())
+        if self.rows:  # spectra.csv has one row per spectrum; the others count rows (Q-41)
+            what = "spectra" if self.table_name == "spectra" else "rows"
+            self.count.setText(f"{len(shown):,} of {len(self.rows):,} {what}")
         if current is not None:
             for i, row in enumerate(self.model.rows):
                 if row is current:
@@ -350,20 +359,13 @@ class SpectraList(QWidget):
 
     def copied_text(self, every: bool) -> str:
         """The row chosen (``every``: every row shown, in the order shown), with the header,
-        tab-separated: a spreadsheet takes it as rows and columns."""
-        rows = self.model.rows if every else [r for r in [self.current_row()] if r]
-        if not rows:
-            return ""
-        lines = ["\t".join(self.model.columns)]
-        lines += ["\t".join(copy_text(r.get(c)) for c in self.model.columns) for r in rows]
-        return "\n".join(lines) + "\n"
+        tab-separated: a spreadsheet takes it as rows and columns (:mod:`hxex.gui.table_copy`)."""
+        rows = self.model.rows if every else [self.model.rows[i] for i in chosen_rows(self.grid)
+                                              if i < len(self.model.rows)]
+        return rows_text(self.model.columns, rows)
 
     def copy(self, every: bool = False) -> None:
-        from PySide6.QtWidgets import QApplication
-
-        text = self.copied_text(every)
-        if text:
-            QApplication.clipboard().setText(text)
+        set_clipboard(self.copied_text(every))
 
     def row_menu(self):
         """The right-click menu: Copy row, Copy rows shown."""
@@ -396,22 +398,18 @@ class SpectraList(QWidget):
         self.stale_bar.show()
 
     def save_dialog(self) -> None:
-        from PySide6.QtWidgets import QFileDialog
-
+        """Save the rows shown as a CSV file chosen in the save dialog; a file that cannot be
+        written is said on the count line (audit of 2026-11-15, Q-13: it raised inside the
+        slot)."""
         if not self.model.rows:
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Save table", f"{self.table_name}.csv",
-                                              "CSV (*.csv)")
-        if path:
-            self.save(path if path.lower().endswith(".csv") else path + ".csv")
+        path = ask_csv_path(self, f"{self.table_name}.csv")
+        if path is not None:
+            saved_or_said(lambda: self.save(path), self.count.setText)
 
     def save(self, path):
         """Write the rows shown, in the order shown (``hxex report``'s CSV writing)."""
-        from ..report.tables import write_csv
-
-        columns = {name: np.array([r.get(name, "") for r in self.model.rows], dtype=object)
-                   for name in self.model.columns}
-        return write_csv(columns, path)
+        return save_rows(self.model.columns, self.model.rows, path)
 
     def update_rows(self, rows: list[dict]) -> None:
         """Rows made again (after review decisions): their values replaced in place, the
@@ -524,7 +522,7 @@ class ColumnFilterDialog(QDialog):
             layout.addWidget(QLabel("Show the rows whose value contains:"))
             layout.addWidget(self.text)
         self.problem = QLabel()
-        self.problem.setStyleSheet("color: #b00020;")
+        self.problem.setStyleSheet(f"color: {ERROR_COLOUR};")
         self.problem.hide()
         layout.addWidget(self.problem)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok

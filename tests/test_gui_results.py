@@ -2,19 +2,17 @@
 """The Results workspace's tree (hxex.gui.results_tree, hxex.gui.results_workspace): peptide,
 charge, time point, replicate; the figures of each level; filters and search; a selection
 restored by what outlasts a rerun. Runs offscreen."""
-import os
 
 import numpy as np
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from hxex.gui.results_tree import peptides, points, shown  # noqa: E402
-from hxex.gui.results_workspace import COLUMN, ResultsWorkspace  # noqa: E402
-from hxex.report import Results  # noqa: E402
-from hxex.report.series import plot_series_spectra  # noqa: E402
-from test_run import config, raw_spectra, run  # noqa: E402
+from hxex.gui.results_tree import peptides, points, shown
+from hxex.gui.results_workspace import COLUMN, ResultsWorkspace
+from hxex.report import Results
+from hxex.report.series import plot_series_spectra
+from test_run import config, raw_spectra, run
 
 
 @pytest.fixture(scope="module")

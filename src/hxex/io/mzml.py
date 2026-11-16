@@ -1288,11 +1288,11 @@ def stored_window_excess(source: Mapping, picker: PickerConfig,
         target = MzmlTarget.from_dict(t)
         need_lo, need_hi = _target_window(target, picker, registry, margin)
         if need_lo < lo - 1e-9 or need_hi > hi + 1e-9:
-            out.append(_target_label(target))
+            out.append(target_label(target))
     return out
 
 
-def _target_label(t: MzmlTarget) -> str:
+def target_label(t: MzmlTarget) -> str:
     """The target in spectrum ids: the entry, then (for fragments) how the scans were chosen,
     for example ``1-5-RDKVQ-z1-ion_type:c@ETD-pz3``, or ``...-ms3-pre:HCD@ETD-pz3`` for MS3 scans
     with HCD before ETD (the parent's m/z range is not part of it: the entry names the parent)."""
@@ -1565,7 +1565,7 @@ def _read_runs(
             for i, t in enumerate(out):
                 if not target_applies(t, run, tie):
                     continue
-                window, drift, rows = window_for(_target_label(t), peptide_label(t.entry),
+                window, drift, rows = window_for(target_label(t), peptide_label(t.entry),
                                                  run.sample, name, edited, edited_peptides)
                 if rows:
                     out[i] = _with_elution_window(t, window, drift)
@@ -1966,12 +1966,12 @@ def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
                                   preactivation=target.preactivation,
                                   **{**conditions, "precursor_charge": None})
         if len(any_charge) and (table.precursor_charge[any_charge] == 0).all():
-            unstated.append(_target_label(target))
+            unstated.append(target_label(target))
     if target.ms_level > 2 and (target.parent_mz is not None or target.preactivation is not None):
         unknown = (table.ms_level == target.ms_level) & (table.preactivation == "?")
         if unknown.any():
             log.warning("%d MS%d scans do not state their earlier stages and are left out of %s",
-                        int(unknown.sum()), target.ms_level, _target_label(target))
+                        int(unknown.sum()), target.ms_level, target_label(target))
     return rows
 
 
@@ -1991,7 +1991,7 @@ def _plans(table: ScanTable, run: MzmlRun, targets, config: MzmlConfig, tie: boo
                     "any charge", run.path, len(unstated),
                     ", ".join(unstated[:3]) + (", ..." if len(unstated) > 3 else ""))
     if run.fixed and run.usable_from is not None:
-        cut = [_target_label(t) for t, a in zip(targets, applies, strict=True)
+        cut = [target_label(t) for t, a in zip(targets, applies, strict=True)
                if a and t.rt_window is not None and t.rt_window[0] < run.usable_from]
         if cut:
             log.warning("%s: usable_from = %s cuts the retention window of %d target(s) (%s): "
@@ -2042,7 +2042,7 @@ def scan_index_rows(table: ScanTable, file_name: str, run: MzmlRun, targets, *,
             text = _scan_text(table, order, g)
             time = (run.spectrum_time if run.fixed
                     else float(np.mean(table.time[order[g]])) + run.time_offset)
-            local = f"{run.sample}/{file_name}/{_target_label(target)}/{text}"
+            local = f"{run.sample}/{file_name}/{target_label(target)}/{text}"
             rows.append({"spectrum_id": qualify_spectrum_id(project, local),
                          "sample": run.sample, "start_seq": entry.start_seq,
                          "end_seq": entry.end_seq, "charge": entry.charge,
@@ -2090,7 +2090,7 @@ def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
         if only is None and not quiet:
             log.warning("%s: no scan matches any target", f.path.name)
         return None
-    missing = [_target_label(t) for t, p, a in zip(targets, plans, applies, strict=True)
+    missing = [target_label(t) for t, p, a in zip(targets, plans, applies, strict=True)
                if a and p is None]
     if missing and not quiet:
         # one line per file: in a targeted method each target has scans in some files only
@@ -2179,7 +2179,7 @@ def _run_spectra(f, run: MzmlRun, targets, windows, *, project, config,
             scan_text = _scan_text(table, order, g)
             time = (run.spectrum_time if run.fixed
                     else float(np.mean([s.time for s in scans])) + run.time_offset)
-            local = f"{run.sample}/{f.path.name}/{_target_label(target)}/{scan_text}"
+            local = f"{run.sample}/{f.path.name}/{target_label(target)}/{scan_text}"
             # retention time (minutes): the scans' acquisition times weighted by their signal in
             # the window, for a run with a fixed exchange time (in a kinetics run the scan time
             # is the exchange time and no spectrum has one); a peptide table's rt column, when
@@ -2524,7 +2524,7 @@ def _search_target(target: MzmlTarget, config: MzmlConfig) -> MzmlTarget:
     inside the project's ``rt_window`` when one is set."""
     rt = entry_rt(target.entry)
     if not np.isfinite(rt):
-        raise MzmlError(f"find_peak: {_target_label(target)} has no rt (the peptide table's rt "
+        raise MzmlError(f"find_peak: {target_label(target)} has no rt (the peptide table's rt "
                         "column, minutes), and no rt_start, rt_end")
     lo, hi = 60.0 * rt - config.peak_search, 60.0 * rt + config.peak_search
     if target.rt_window is not None:
@@ -2714,7 +2714,7 @@ def _fragment_search_target(target: MzmlTarget, config: MzmlConfig,
     ``rt_start``, ``rt_end``) widened to ``peak_search`` either side of its ``rt``."""
     given = _fragment_rt(target, parent_rts)
     if not np.isfinite(given):
-        raise MzmlError(f"find_fragment_peak: {_target_label(target)} has no rt to look near "
+        raise MzmlError(f"find_fragment_peak: {target_label(target)} has no rt to look near "
                         "(its parent's rt, or rt_start, rt_end, in the peptide table)")
     lo, hi = given - config.peak_search, given + config.peak_search
     if target.rt_window is not None:

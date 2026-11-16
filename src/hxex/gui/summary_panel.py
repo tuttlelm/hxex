@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog, QHeaderView, QLabel
 
 from .data_table import DataPanel, RowsModel
+from .table_copy import save_rows, saved_or_said
 from .tips import tip
 
 log = logging.getLogger(__name__)
@@ -129,18 +130,14 @@ class SummaryPanel(DataPanel):
         markdown = suffix == ".md" or ("Markdown" in chosen and suffix != ".csv")
         if (markdown and suffix != ".md") or not suffix:
             path += ".md" if markdown else ".csv"
-        try:
-            self.save(path, markdown=markdown)
-        except OSError as exc:
-            self.count.setText(f"Not saved: {exc}")
-            log.error("the summary was not saved: %s", exc)
+        saved_or_said(lambda: self.save(path, markdown=markdown), self.count.setText,
+                      "the summary")
 
     def save(self, path: str | Path, markdown: bool | None = None) -> Path:
         """Write the summary as ``summary.csv`` holds it (the notes after a blank row), or as
         the Markdown table with ``markdown`` true (None: for a path ending in ``.md``). The
         path is written as given."""
         from ..report.summary import summary_markdown
-        from ..report.tables import write_csv
 
         path = Path(path)
         columns = {n: np.asarray(v, dtype=object) for n, v in (self._columns or {}).items()}
@@ -149,7 +146,10 @@ class SummaryPanel(DataPanel):
         if markdown:
             path.write_text(summary_markdown(columns), encoding="utf-8")
         else:
-            path = Path(write_csv(columns, path))
+            names = list(columns)
+            rows = [{n: columns[n][i] for n in names}
+                    for i in range(len(columns[names[0]]) if names else 0)]
+            path = save_rows(names, rows, path)
         log.info("saved the summary %s", path)
         self.count.setText(f"{len(self.model.rows)} items; saved as {path.name}")
         return path

@@ -133,12 +133,12 @@ def peptides(results, left: list[str] | None = None) -> list[Peptide]:
 
 def series_targets(results) -> dict[int, dict]:
     """Each series' (by ``data_id``) fragment, ion type, condition and MS level, as
-    ``spectra.csv`` gives them (:func:`hxex.report.tables._target_columns`); empty for results
+    ``spectra.csv`` gives them (:func:`hxex.report.tables.target_columns`); empty for results
     not read from mzML or Thermo files."""
     from ..io.mzml import mzml_series_targets
-    from ..report.tables import _target_columns
+    from ..report.tables import target_columns
 
-    cols = _target_columns(results)
+    cols = target_columns(results)
     if not cols:
         return {}
     targets = mzml_series_targets(results.settings.spectra_source)
@@ -171,9 +171,13 @@ def left_out(results, config=None) -> list[str]:
     defaults when None) leave each spectrum of ``results`` out, '' for the ones kept: the
     reasons of ``left_out_spectra.csv`` (``[analysis.filters]``), ``exclude_flagged`` and
     ``exclude_times``, and the spectra kept at one population (``spectrum_quality_filtering``).
-    Rejected spectra are not listed (the review left them out)."""
+    Rejected spectra are not listed (the review left them out). The reasons are the library's
+    (:func:`hxex.analysis.left_out_reasons`; moved there, audit of 2026-11-15, Q-4); this
+    wrapper only keeps the log quiet."""
+    from ..analysis import left_out_reasons
+
     with _quiet_here():  # the controls' messages, said when the results were read (owner)
-        return _left_out(results, config)
+        return left_out_reasons(results, config)
 
 
 @contextmanager
@@ -196,33 +200,6 @@ def _quiet_here():
             handler.removeFilter(elsewhere)
 
 
-def _left_out(results, config) -> list[str]:
-    from ..analysis import AnalysisConfig, left_out_spectra
-    from ..analysis.screening import KEPT_AT_ONE_REASON, screening
-
-    config = config or AnalysisConfig()
-    n = len(results.fit)
-    why = np.full(n, "", dtype=object)
-    status = np.asarray(results.review_status).astype(str)
-    if config.filters is not None:
-        screen = screening(results, config.filters.spectrum_quality_filtering,
-                           config.filters.off_mz)
-        one = np.asarray(screen.one_population, dtype=bool) & (status == "unreviewed")
-        why[one] = KEPT_AT_ONE_REASON
-        table = left_out_spectra(results, config.filters, exclude_flagged=config.exclude_flagged,
-                                 controls=config.controls)
-        at = {str(sid): i for i, sid in enumerate(results.fit.spectrum_id)}
-        for sid, reason in zip(table["spectrum_id"], table["reason"], strict=True):
-            why[at[str(sid)]] = str(reason)
-    if config.exclude_flagged and results.quality is not None:
-        why[np.asarray(results.quality.flagged, dtype=bool)] = "quality flag (exclude_flagged)"
-    time = np.asarray(results.fit.time, dtype=float)
-    for t in config.exclude_times:
-        why[np.isclose(time, t, rtol=1e-9, atol=1e-6)] = "time left out (exclude_times)"
-    why[status == "rejected"] = ""
-    return [str(w) for w in why]
-
-
 def left_out_counts(results, left: list[str] | None) -> dict[int, int]:
     """How many spectra of each series (by ``data_id``) ``left`` leaves out (those kept at one
     population are not counted)."""
@@ -238,7 +215,7 @@ def left_out_counts(results, left: list[str] | None) -> dict[int, int]:
 def points(results, data_id: int, left: list[str] | None = None) -> list[Point]:
     """The time points of a series, in its order, each with its spectra by replicate
     (``left``: :func:`left_out` of the results)."""
-    from ..report.series import _time_text, series_info
+    from ..report.series import series_info, time_text
 
     info = series_info(results, data_id)
     status = np.asarray(results.review_status).astype(str)
@@ -249,7 +226,7 @@ def points(results, data_id: int, left: list[str] | None = None) -> list[Point]:
         order = int(info["time_index"][pos])
         point = by_point.get(order)
         if point is None:
-            label = _time_text(float(info["times"][pos]), str(info["roles"][pos]),
+            label = time_text(float(info["times"][pos]), str(info["roles"][pos]),
                                results.time_scale)
             point = by_point[order] = Point(label, order)
         point.spectra.append(Spectrum(

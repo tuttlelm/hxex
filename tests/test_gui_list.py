@@ -2,16 +2,14 @@
 """The Results workspace's List (hxex.gui.spectra_list) on its own: the row chosen kept
 through filters and sorts whichever table it shows, stepping by row, the row found again after
 the list is cleared and filled, and the columns sized from a sample of rows. Runs offscreen."""
-import os
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import Qt
 
-from hxex.gui.spectra_list import SpectraList  # noqa: E402
+from hxex.gui.spectra_list import SpectraList
 
 SERIES = [{"data_id": d, "sample": "S", "peptide_range": "0001-0010", "charge": 2,
            "n_spectra": 8} for d in range(3)]

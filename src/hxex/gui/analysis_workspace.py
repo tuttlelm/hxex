@@ -47,12 +47,11 @@ from .order import natural_key
 from .review import table_stamp
 from .summary_panel import SummaryPanel
 from .tasks import Latest, drawing_pool
-from .tips import tip
+from .tips import ERROR_COLOUR, tip
 
 log = logging.getLogger(__name__)
 
 KIND, STEM = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
-WARNING_COLOUR = "#b00020"  # as the Project editor's problem line
 STATE_WORDS = {"drawn": "drawn", "depends": "if the results have it", "off": "off"}
 
 
@@ -61,12 +60,12 @@ def compute_time(results, config) -> str:
     a minute for 25,000 spectra); the fragment ladder rate fits (``[analysis.fragments]
     fit_rates`` on a run with fragment series) take minutes (115 s for 17,000 fragment
     spectra, measured 2026-11-05 on 48 cores; drawing a ladder figure then refits its steps)."""
-    from ..report.analysis import _fragment_series
+    from ..report.analysis import fragment_series_ids
 
     quick = "about half a minute for 25,000 spectra"
     try:
         fits = config.fragments is not None and config.fragments.fit_rates
-        series = _fragment_series(results)[0] if fits else set()
+        series = fragment_series_ids(results)[0] if fits else set()
     except Exception:  # noqa: BLE001 - a hint only
         series = set()
     if not series:
@@ -88,6 +87,8 @@ class AnalysisWorkspace(QWidget):
     def __init__(self, window=None):
         super().__init__()
         self.window = window
+        self._error: str | None = None  # why the last computation failed (None: it did not)
+        self._expanded: set = set()  # the kinds of the list's rows open, kept across a refill
         # each reference's analysis: (hxex.report.AnalysisOutputs, (the results' key
         # (results_key), [analysis] text, results path, review table's stamp) it was computed
         # from)
@@ -124,9 +125,8 @@ class AnalysisWorkspace(QWidget):
         # project file, so hxex analyse does the same (owner, 2026-11-05)
         self.fit_rates = QCheckBox("fit ladder rates")
         self.fit_rates.setToolTip(
-            tip("[analysis.fragments] fit_rates in the project file: fit each ladder step's decay "
-                "rate (ladder_rates.csv, ladder_residues.csv, the residue_rates figures, the "
-                "fitted curves on the ladder figures); minutes on a large run"))
+            tip("[analysis.fragments] fit_rates: fit each ladder step's decay rate (ladder and "
+                "residue rates, the fitted curves); minutes on a large run"))
         self.fit_rates.hide()
         self.fit_rates.toggled.connect(self._set_fit_rates)
         self.busy = QProgressBar()
@@ -156,7 +156,7 @@ class AnalysisWorkspace(QWidget):
         bar.setContentsMargins(0, 0, 0, 0)
         self.no_reference_text = QLabel()
         self.no_reference_text.setWordWrap(True)
-        self.no_reference_text.setStyleSheet(f"color: {WARNING_COLOUR};")
+        self.no_reference_text.setStyleSheet(f"color: {ERROR_COLOUR};")
         self.choose_reference = QComboBox()
         self.choose_reference.setToolTip(tip(
             "writes [analysis] reference to the project file: the sample the others are "
@@ -204,7 +204,7 @@ class AnalysisWorkspace(QWidget):
         self.views.addTab(self.panel, "figure")
         self.views.addTab(self.data, "data")
         self.views.setTabToolTip(1, tip("the values of what the figure draws, one row per bar: "
-                                        "sort, copy or save them as CSV"))
+                                        "sort, copy, or save them as CSV"))
         # the HDX data summary of the analysis shown (owner, 2026-11-13: a tab beside these)
         self.summary = SummaryPanel()
         self._summary_shown = None  # the summary columns shown (redrawn only when they change)
@@ -300,7 +300,7 @@ class AnalysisWorkspace(QWidget):
     def _project(self) -> Path | None:
         """The project file whose [analysis] applies: only results opened through it."""
         window = self.window
-        if window is None or window.project is None or window.results_path != window.project:
+        if window is None or not window.project_results:
             return None
         return window.project
 
@@ -308,17 +308,15 @@ class AnalysisWorkspace(QWidget):
         """(the [analysis] settings, the folder relative paths are taken from, their text as
         the project file has them, for telling a change)."""
         from ..analysis import AnalysisConfig
-        from ..config import load_project
-        from ..project_edit import live_settings
 
         project = self._project()
         if project is None:
             path = getattr(self.window, "results_path", None)
             return AnalysisConfig(), Path(path).parent if path else Path("."), None
-        config = load_project(project, analysis_only=True).analysis or AnalysisConfig()
-        values, tables = live_settings(project.read_text(encoding="utf-8-sig"))
-        text = ({k: v for k, v in values.items() if k.split(".")[0] == "analysis"},
-                sorted(t for t in tables if t.split(".")[0] == "analysis"))
+        state = self.window.fresh_project_state()  # the window's one parsed state (Q-2)
+        config = state.analysis
+        of = state.of_tables("analysis")
+        text = (of["values"], of["tables"])
         # relative paths from the project file's real folder, as hxex analyse takes them (a
         # project file reached through a link: audit of 2026-11-15, E-25)
         return config, project.resolve().parent, repr(text)
@@ -419,8 +417,6 @@ class AnalysisWorkspace(QWidget):
             self._redraw_if_another()
             self.compute_button.setText("Recompute")
 
-    _error: str | None = None
-
     @property
     def _busy(self) -> bool:
         return self._computing.running or self._compute_when_loaded is not None
@@ -442,7 +438,7 @@ class AnalysisWorkspace(QWidget):
         """The 'fit ladder rates' box: shown for results with fragment series whose fragment
         analysis is on, ticked as the project file says, and changeable only with the project
         file open (a bundle opened alone has no file to write it to) and nothing computing."""
-        from ..report.analysis import _fragment_series
+        from ..report.analysis import fragment_series_ids
 
         config = None
         if self.results is not None:
@@ -452,7 +448,7 @@ class AnalysisWorkspace(QWidget):
                 config = None
         try:
             fragments = bool(config is not None and config.fragments is not None
-                             and _fragment_series(self.results)[0])
+                             and fragment_series_ids(self.results)[0])
         except Exception:  # noqa: BLE001 - results without scan records
             fragments = False
         self.fit_rates.setVisible(fragments)
@@ -637,7 +633,7 @@ class AnalysisWorkspace(QWidget):
             child.setData(0, STEM, stem)
             item.addChild(child)
         self.list.addTopLevelItem(item)
-        if p.kind.name in getattr(self, "_expanded", ()):
+        if p.kind.name in self._expanded:
             item.setExpanded(True)
         if keep is not None and keep[0] == p.kind.name:
             target = item
@@ -887,6 +883,14 @@ class AnalysisWorkspace(QWidget):
     @property
     def computing(self) -> bool:
         return self._computing.running
+
+    def release(self) -> None:
+        """Let go of every analysis computed and the figure shown (the window closes; audit
+        of 2026-11-15, M-5)."""
+        self.cancel()
+        self._analyses = {}  # `outputs` reads from it
+        self._key_cache = (None, None)
+        self.panel.clear()
 
     def cancel(self) -> None:
         """Stop the computation running, if any (other results are shown, or the window

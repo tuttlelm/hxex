@@ -39,8 +39,8 @@ from .user_tables import TableLocked
 log = logging.getLogger(__name__)
 
 # what ◀ ▶ step through: (words, the tree's kind of row)
-# (owner: up to the charge, which is a series; a peptide's charges have no view together yet)
-STEP_LEVELS = (("spectrum", "spectrum"), ("time point", "point"), ("charge", "series"))
+# (owner: up to the series; a peptide's series have no view together yet)
+STEP_LEVELS = (("spectrum", "spectrum"), ("time point", "point"), ("series", "series"))
 # (status, words, key in the tree)
 STATUS_WORDS = (("", "not reviewed", "U"), ("accepted", "accepted", "A"),
                 ("rejected", "rejected", "R"))
@@ -57,11 +57,12 @@ class ReviewPanel(QGroupBox):
     def __init__(self, workspace):
         super().__init__("Review")
         self.workspace = workspace
+        self._tree_level = 0  # the step level chosen in the tree (restored for the next tree row)
         self.rows: list[int] = []  # the spectra's positions in the results
         self.pending: dict[str, Decision] = {}  # decisions not written yet (the table held)
         # the notes of the bundle's own review layer, read when first needed: (key, notes)
         self._bundle_cache: tuple[tuple | None, dict[str, str]] = (None, {})
-        self.heading = QLabel("Select a spectrum, a time point or a series.")
+        self.heading = QLabel("Select a spectrum, a time point, or a series.")
         self.heading.setWordWrap(True)
         self.status = QButtonGroup(self)
         # the choices wrap onto a second line when the panel is narrow (in one line they set the
@@ -163,11 +164,11 @@ class ReviewPanel(QGroupBox):
             self.level.blockSignals(False)
             self.level.setEnabled(False)
             self.level.setToolTip(tip("the list steps one row at a time, in its order (the tree "
-                                      "steps by spectrum, time point or charge)"))
+                                      "steps by spectrum, time point, or series)"))
         else:
             self.level.setEnabled(True)
             self.level.blockSignals(True)
-            self.level.setCurrentIndex(getattr(self, "_tree_level", 0))
+            self.level.setCurrentIndex(self._tree_level)
             self.level.blockSignals(False)
             self.level.setToolTip(tip("what ◀ and ▶ step through"))
         self._level_tips()
@@ -178,7 +179,7 @@ class ReviewPanel(QGroupBox):
     def project(self) -> Path | None:
         """The project whose review table takes the decisions: only results opened through it."""
         window = self.workspace.window
-        if window is None or window.project is None or window.results_path != window.project:
+        if window is None or not window.project_results:
             return None
         return window.project
 
@@ -282,10 +283,9 @@ class ReviewPanel(QGroupBox):
         if self._bundle_cache[0] != key:
             notes: dict[str, str] = {}
             try:
-                from ..config import load_project
                 from ..io import open_bundle
 
-                bundle = load_project(project, analysis_only=True).output.bundle
+                bundle = self.workspace.window.fresh_project_state().bundle
                 if bundle is not None and Path(bundle).exists():
                     with open_bundle(bundle) as b:
                         review = b.review()
@@ -485,7 +485,8 @@ class ReviewPanel(QGroupBox):
 # box clears it, as the row then says something: the notes rule)
 BUNDLE_NOTE = "from the run's review layer (one set from Python, or carried over by a rerun)"
 # the message line when results are open without their project file
-RESULTS_ONLY = "Session is results only: open the project toml file to record decisions."
+RESULTS_ONLY = ("these results were opened on their own: open their project file to record "
+                "decisions")
 
 
 def flag_items(results, rows: list[int]) -> list[tuple[str, int, str]]:
@@ -533,12 +534,3 @@ class FlagsButton(QToolButton):
         self.setEnabled(True)
         self.setToolTip(rich_tip("\n".join(f"**{name}**{of(n)}: {meaning}"
                                            for name, n, meaning in items)))
-
-
-def counts(results, data_id: int) -> tuple[int, int]:
-    """A series' rejected spectra and those with more than one population (not rejected)."""
-    rows = np.flatnonzero(results.fit.data_id == data_id)
-    status = np.asarray(results.review_status).astype(str)[rows]
-    rejected = int((status == "rejected").sum())
-    multi = int(((results.effective_K[rows] > 1) & (status != "rejected")).sum())
-    return rejected, multi

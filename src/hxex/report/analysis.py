@@ -353,7 +353,7 @@ def _labelled(up, wanted: list, reference) -> list:
     return [s for s in wanted if s in timed]
 
 
-def _fragment_series(results) -> tuple[set[int], bool]:
+def fragment_series_ids(results) -> tuple[set[int], bool]:
     """The series (``data_id``) read from fragment lists (the precursor M read with them
     included), and whether every series is one."""
     from ..io.mzml import SCAN_READERS, mzml_series_targets
@@ -1394,7 +1394,7 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
     # fragment series (and precursor ions read with them) are not peptides: the peptide
     # branch leaves them out by series (a peptide read from MS1 too has the same sequence)
     runs = results.runs if isinstance(results, RunSet) else {"": results}
-    split = {name: _fragment_series(r) for name, r in runs.items()}
+    split = {name: fragment_series_ids(r) for name, r in runs.items()}
     any_fragments = any(series for series, _ in split.values())
     only_fragments = all(only for _, only in split.values())
     if config.fragments is not None and any_fragments:

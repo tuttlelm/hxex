@@ -4,12 +4,9 @@ table made from the results and named in the project, decisions in the spectrum'
 user's own columns kept, and every command reading them as typed. The window's tests run
 offscreen (set before pytest-qt makes the application, so a run of this file alone opens no
 window on the screen)."""
-import os
 import tomllib
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from hxex.cli import main
 from hxex.gui.review import Decision, make_review_table, table_path, write_decisions
@@ -20,12 +17,26 @@ from test_cli import mzml_project
 
 
 @pytest.fixture(scope="module")
-def project_run(tmp_path_factory):
+def _ran(tmp_path_factory):
+    """One project run once for the module (a whole ``hxex run`` costs seconds)."""
     folder = tmp_path_factory.mktemp("review")
     project = mzml_project(folder)
     assert main(["-q", "run", str(project)]) == 0
+    return project
+
+
+@pytest.fixture
+def project_run(_ran, tmp_path):
+    """The module's project and its results, copied for each test, so that no test sees a
+    review table another one made (the tests passed only in file order; audit of 2026-11-15,
+    Q-26). The project file names its files relative to its folder, so the copy reads its own."""
+    import shutil
+
     from hxex.report.notebook import load_results
 
+    folder = tmp_path / "project"
+    shutil.copytree(_ran.parent, folder)
+    project = folder / _ran.name
     return project, load_results(project)
 
 
@@ -380,22 +391,22 @@ def test_the_windows_decisions_give_the_same_report_tables_as_a_spreadsheet(
 
 def test_a_held_table_keeps_the_decision_until_it_can_be_written(qtbot, window_on,
                                                                  monkeypatch):
-    import hxex.gui.review as review_module
+    import hxex.io.user_tables as tables_module  # the review table is written through it
     from hxex.gui.user_tables import TableLocked
 
     window, project, open_ = window_on
     page = open_(project)
     _, leaf = _first_spectrum(page)
     page.tree.setCurrentItem(leaf)
-    real = review_module.write_table
+    real = tables_module.write_table
 
     def held(table, path):
         raise TableLocked(f"{path} could not be written: another program holds it")
 
-    monkeypatch.setattr(review_module, "write_table", held)
+    monkeypatch.setattr(tables_module, "write_table", held)
     assert not page.review.decide(status="rejected")
     assert page.review.retry.isVisibleTo(page.review) and page.review.pending
-    monkeypatch.setattr(review_module, "write_table", real)
+    monkeypatch.setattr(tables_module, "write_table", real)
     page.review.retry.click()
     assert not page.review.pending and leaf.text(_col("review")) == "rejected"
 
@@ -490,11 +501,22 @@ def test_a_review_table_saved_elsewhere_is_read_again(qtbot, window_on):
     real = window.open_results
     window.open_results = lambda path: loads.append(path) or real(path)
     # a decision in the panel: written, but not read again
-    series, leaf = _first_spectrum(window.results_page)
-    window.results_page.tree.setCurrentItem(leaf.parent().child(1))
+    # (another spectrum: its time point's second replicate, the test's spectrum before, does
+    # not exist in this project, so nothing was decided or written and the check passed
+    # whatever the window did)
+    window.results_page.tree.setCurrentItem(_second_spectrum(window.results_page))
+    written = table.stat().st_mtime_ns
     window.results_page.review.decide(status="accepted")
-    qtbot.wait(800)
-    assert loads == []
+    assert table.stat().st_mtime_ns != written  # written (at once) ...
+    # ... and not read again: the panel watches the table afresh after its own write, so the
+    # watcher has nothing to report; whatever it reports is delivered, and a settle it
+    # started is waited for, not a fixed time a loaded machine could outrun (Q-29)
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.processEvents()
+    qtbot.waitUntil(lambda: not window._review_settle.isActive(), timeout=10000)
+    QApplication.processEvents()
+    assert loads == [] and not window.loading
     # the same table changed elsewhere: read again, at the same place
     chosen = window.results_page.selection()
     with table.open(encoding="utf-8-sig", newline="") as fh:
@@ -545,7 +567,7 @@ def test_decisions_waiting_for_a_held_table_do_not_follow_other_results(qtbot, w
                                                                       monkeypatch, caplog):
     """Decisions kept waiting by a held table were written into the next project's review
     table by its next decision or Try again (audit of 2026-11-15, D-7)."""
-    import hxex.gui.review as review_module
+    import hxex.io.user_tables as tables_module  # the review table is written through it
     from hxex.gui.user_tables import TableLocked
 
     window, project, open_ = window_on
@@ -556,7 +578,7 @@ def test_decisions_waiting_for_a_held_table_do_not_follow_other_results(qtbot, w
     def held(table, path):
         raise TableLocked(f"{path} could not be written: another program holds it")
 
-    monkeypatch.setattr(review_module, "write_table", held)
+    monkeypatch.setattr(tables_module, "write_table", held)
     assert not page.review.decide(status="rejected") and page.review.pending
     caplog.set_level("WARNING", logger="hxex")
     page.show_results(page.results, project.parent / "elsewhere" / "hxex.toml")

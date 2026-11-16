@@ -44,15 +44,14 @@ from .results_tree import FILTERS, Peptide, left_out, left_out_counts, peptides,
 from .review_panel import ReviewPanel
 from .spectra_list import SpectraList, list_rows
 from .tasks import Latest
-from .tips import tip
+from .tips import set_choice_tips, tip
 from .window_edit import has_fragments, ions_legend, spread_files, view_tips, view_words
-from .window_editor import set_choice_tips
 
 log = logging.getLogger(__name__)
 
 TIME_AXES = {"log": "log time axis", "linear": "linear time axis",
              "index": "time points evenly spaced"}
-COLUMNS = ("peptide, charge, time, replicate", "sample", "identity", "ion", "MS level",
+COLUMNS = ("peptide, series, time point, spectrum", "sample", "identity", "ion", "MS level",
            "condition", "parent", "spectra", "flagged", "rejected", "left out", "K > 1", "K",
            "review", "flags")
 # the columns of fragment series, shown only for results read from mzML or Thermo files
@@ -65,9 +64,8 @@ IDENTITY_LEVELS = {"isoform": "peptides only one record of the pooled FASTA hold
                    "none": "peptides no record holds"}
 # what each column holds, as its header's tooltip
 COLUMN_TIPS = {
-    "identity": "what a pooled peptide may be ([input] pooled_fasta): the one record whose "
-                "sequence holds it, else the class all its records fall in, else the classes; "
-                "its level and every candidate in the tooltip",
+    "identity": "what a pooled peptide may be ([input] pooled_fasta): a record, a class, or "
+                "several; every candidate in the cell's tooltip",
     "ion": "the fragment ion (c-1:4: ion type and length; M: the precursor), empty for a "
            "peptide read at MS1",
     "MS level": "the MS level of the series' scans (1 for peptides, 2 or 3 for fragments)",
@@ -80,13 +78,12 @@ COLUMN_TIPS = {
                "nothing out",
     "rejected": "spectra rejected in the review (the review table, [[review.exclude]] rules, "
                 "or the bundle's own review); the analysis leaves them out",
-    "left out": "spectra the analysis settings leave out, and why ([analysis.filters], "
-                "exclude_flagged, exclude_times; the project file's settings, else the "
-                "defaults), as hxex analyse lists them in left_out_spectra.csv; accepting one "
-                "in the review keeps it against [analysis.filters]. 'kept at K = 1' is not counted",
+    "left out": "spectra the analysis settings leave out, and why (as left_out_spectra.csv "
+                "lists them); accepting one in the review keeps it; 'kept at K = 1' not "
+                "counted",
     "K > 1": "spectra fitted with more than one population (rejected ones not counted)",
     "K": "the number of populations of each replicate's fit",
-    "review": "the review's decision: accepted, rejected or none yet",
+    "review": "the review's decision: accepted, rejected, or none yet",
     "flags": "the quality flags of the spectrum (hover one for its meaning; the guide's "
              "flags.md, or hxex explain NAME, has them all)"}
 KIND, PAYLOAD = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
@@ -163,9 +160,15 @@ class ResultsWorkspace(QWidget):
         self.analysis_config = None  # the settings that says so
         self._left_task = Latest(self)
         self.tree_data: list[Peptide] = []
+        from .project_state import ProjectState
+
+        self._own_state = ProjectState()  # a project's state read here (no window, tests)
+        self._tab_keys: tuple = ()  # the figure tabs' keys (the data tab's text carries a count)
+        self._selection: tuple = (None, None)  # the row selected, as (kind, payload)
         self.path_label = QLabel("No results open.")
         open_button = QPushButton("Open results…")
-        open_button.setToolTip(tip("a results bundle: a folder, or a .zip"))
+        open_button.setToolTip(tip("a results folder (the bundle hxex run writes); a .zip bundle "
+                                   "opens through File > Open"))
         if window is not None:
             open_button.clicked.connect(window.open_results_dialog)
         top = QHBoxLayout()
@@ -177,10 +180,9 @@ class ResultsWorkspace(QWidget):
         self.notice.hide()
 
         self.filter = QComboBox()
-        for i, (key, (text, meaning)) in enumerate(FILTERS.items()):
+        for key, (text, _meaning) in FILTERS.items():
             self.filter.addItem(text, key)
-            self.filter.setItemData(i, tip(meaning), Qt.ItemDataRole.ToolTipRole)
-        self.filter.setToolTip(tip("which series the tree shows"))
+        set_choice_tips(self.filter, {key: meaning for key, (_t, meaning) in FILTERS.items()})
         self.filter.currentIndexChanged.connect(self._fill)
         # MS level and ion type: shown for results with fragment series
         self.ms_filter = QComboBox()
@@ -312,9 +314,8 @@ class ResultsWorkspace(QWidget):
         # the uptake page's time axis, for the window only (owner: the project's linear default
         # is not how uptake is usually read); the project's [figures] setting first
         self.time_axis = QComboBox()
-        self.time_axis.setToolTip(tip("how the uptake page spreads the times: the project file's "
-                                      "[figures] scale and x, or for this window only log, linear, "
-                                      "or one even step per time point"))
+        self.time_axis.setToolTip(tip("the uptake page's time axis: the project file's [figures] "
+                                      "setting, or one for this window only"))
         self.time_axis.currentIndexChanged.connect(self._redraw)
         # the overview tab's page: the run's summary pages, one at a time (owner, 2026-11-04)
         self.overview_page = QComboBox()
@@ -439,7 +440,8 @@ class ResultsWorkspace(QWidget):
 
                 panel.add_row(self.compare_box)
                 self.window_editor = WindowEditor(panel, self._trace_context,
-                                                  self._draw_plain_trace, self)
+                                                  self._draw_plain_trace, self,
+                                                  project_state=self._project_state)
                 self.window_editor.reset(getattr(self, "results_path", None))
                 self.window_editor.recording = getattr(self.window, "recording", None)
                 if self.window is not None:
@@ -460,7 +462,7 @@ class ResultsWorkspace(QWidget):
     def _show_tabs(self, kind: str) -> None:
         if kind == self.kind:
             return
-        keys = getattr(self, "_tab_keys", ())
+        keys = self._tab_keys
         at = self.figures.currentIndex()
         current = keys[at] if 0 <= at < len(keys) else None
         if self._keep_tab in TABS[kind]:  # the tab shown before the results were read again
@@ -499,7 +501,7 @@ class ResultsWorkspace(QWidget):
 
     def _draw_pending(self) -> None:
         """The tab now in view: its figure, when the selection left it to draw later."""
-        keys = getattr(self, "_tab_keys", ())
+        keys = self._tab_keys
         at = self.figures.currentIndex()
         name = keys[at] if 0 <= at < len(keys) else None
         draw = self._pending_draws.pop(name, None) if name is not None else None
@@ -521,7 +523,7 @@ class ResultsWorkspace(QWidget):
             self.compare.setItemText(i, text)
         set_choice_tips(self.compare, view_tips(has_fragments(source)))
         if results is not None and left is None:
-            left = _left_out_or_none(results, analysis)
+            left = left_out_or_none(results, analysis)
         self.left = left
         self.left_bar.hide()  # worked out as the results were read
         if results is not None and (path is None or Path(path).suffix != ".toml"):
@@ -541,7 +543,7 @@ class ResultsWorkspace(QWidget):
             and path == getattr(self, "results_path", None)
         # the same results read again (a decision, a changed setting, a finished run): the
         # figure tab, the filters, Find, and the List's row stay (audit of 2026-11-15, C-14)
-        keys = getattr(self, "_tab_keys", ())
+        keys = self._tab_keys
         at = self.figures.currentIndex()
         self._keep_tab = keys[at] if same and 0 <= at < len(keys) else None
         boxes = (self.ms_filter, self.ion_filter, self.level_filter, self.class_filter)
@@ -571,7 +573,7 @@ class ResultsWorkspace(QWidget):
                 box.setCurrentIndex(box.findData(value))
                 box.blockSignals(False)
         self._fill_time_axis()
-        self.review.show_spectra([], "Select a spectrum, a time point or a series.")
+        self.review.show_spectra([], "Select a spectrum, a time point, or a series.")
         self.path_label.setText("No results open." if results is None else str(path))
         self._fill()
         self._build_list()
@@ -624,14 +626,11 @@ class ResultsWorkspace(QWidget):
         data_root, thermo_dir = None, None
         path = getattr(self, "results_path", None)
         if path is not None and Path(path).suffix == ".toml":
-            from ..config import load_project
-
-            try:
-                inp = load_project(path, analysis_only=True).input
-            except Exception as exc:  # noqa: BLE001 (the project file changed: its folder then)
-                log.info("retention traces: %s (%s)", path, exc)
-                inp = None
-            if inp is not None:
+            state = self._project_state(Path(path))
+            inp = state.input
+            if inp is None:  # the project file does not load: its folder then
+                log.info("retention traces: %s (%s)", path, state.problem)
+            else:
                 data_root, thermo_dir = inp.data_root, inp.thermo_dir
             data_root = data_root or Path(path).parent
         elif path is not None:
@@ -652,6 +651,31 @@ class ResultsWorkspace(QWidget):
         for panel in self.panels.values():
             panel.clear()
         self._drop_reader()
+
+    def _project_state(self, path: Path):
+        """The parsed state of the project file at ``path``: the window's own when it is the
+        project open (one state for every panel, audit of 2026-11-15, Q-2), else read now."""
+        from .project_state import ProjectState
+
+        window = self.window
+        if window is not None and window.project is not None and window.project == path:
+            return window.fresh_project_state()
+        own = self._own_state  # the workspace on its own: read once, kept while unchanged
+        self._own_state = own.fresh() if own.path == path else ProjectState.read(path)
+        return self._own_state
+
+    def release(self) -> None:
+        """Let go of the results, their figures and their files (the window closes; audit of
+        2026-11-15, M-5): nothing is shown afterwards."""
+        self.drop_background()
+        self.show_results(None, None)
+        self._overview_of, self._overview_figures = None, {}
+        self._spectra_job, self._pending_draws = None, {}
+        self.left, self.analysis_config = None, None
+        self.table_view.clear()
+        self.list.set_rows([], [])
+        if self.window_editor is not None:
+            self.window_editor.forget()
 
     def _drop_reader(self) -> None:
         """Close the trace reader's files, off the window's thread: a read still running holds
@@ -694,7 +718,7 @@ class ResultsWorkspace(QWidget):
         replicates, or every file of its sample, or the peptide's other ions in this file;
         choice 1: nothing)."""
 
-        keys = getattr(self, "_tab_keys", ())
+        keys = self._tab_keys
         at = self.figures.currentIndex()
         if self.kind != "spectrum" or not (0 <= at < len(keys)) or keys[at] != "elution":
             return
@@ -855,7 +879,7 @@ class ResultsWorkspace(QWidget):
 
         if self.figures.currentWidget() is not self.table_view or self.results is None:
             return
-        kind, payload = getattr(self, "_selection", (None, None))
+        kind, payload = self._selection
         self.series_table.setVisible(kind not in (None, "spectrum", "point"))
         if kind is None:
             return
@@ -917,7 +941,7 @@ class ResultsWorkspace(QWidget):
         """What the data tab shows, by what names it (not by the payload's address, which
         Python gives to the next selection's tuple: audit of 2026-11-15, C-11); None when
         nothing is selected."""
-        kind, payload = getattr(self, "_selection", (None, None))
+        kind, payload = self._selection
         if kind is None:
             return None
         whole = self._selection_whole
@@ -1227,10 +1251,11 @@ class ResultsWorkspace(QWidget):
                 (self.class_filter, [("every class", None)] + [(c, c) for c in classes], {})):
             box.blockSignals(True)
             box.clear()
-            for i, (text, value) in enumerate(items):
+            for text, value in items:
                 box.addItem(text, value)
-                if value in meanings:
-                    box.setItemData(i, tip(meanings[value]), Qt.ItemDataRole.ToolTipRole)
+            if meanings:  # the identity levels: each choice says what it means (Q-18)
+                set_choice_tips(box, {None: "every pooled peptide, whatever it may be",
+                                      **meanings})
             box.blockSignals(False)
         self.level_filter.setVisible(pooled)
         self.class_filter.setVisible(pooled and bool(classes))
@@ -1370,7 +1395,7 @@ class ResultsWorkspace(QWidget):
         menu.clear()
         item = self.tree.currentItem()
         if item is None or self.results is None or item.data(0, KIND) not in DEPTH:
-            menu.addAction("Select a peptide, charge, time point, or spectrum").setEnabled(False)
+            menu.addAction("Select a peptide, series, time point, or spectrum").setEnabled(False)
             return {}
         kind = item.data(0, KIND)
         targets = self.export_targets(item)
@@ -1638,8 +1663,6 @@ class ResultsWorkspace(QWidget):
     def _reviewed(self, changed: list) -> None:
         """Decisions were made: the rows of the spectra they touch, their time points, series
         and peptides show them, and the figures are drawn again."""
-        from .review_panel import counts
-
         results = self.results
         status = np.asarray(results.review_status).astype(str)
         ks = results.effective_K
@@ -1655,7 +1678,7 @@ class ResultsWorkspace(QWidget):
                                           for j in range(point.childCount())))
                 self._sum_children(point)
         for data_id in series_ids:
-            rejected, multi = counts(results, data_id)
+            rejected, multi = series_counts(results, data_id)
             known = self._series_by_id.get(data_id)
             if known is not None:  # the counts the next rebuild and the filters use (C-9)
                 series = known[1]
@@ -1712,7 +1735,7 @@ class ResultsWorkspace(QWidget):
             return
         self.left_note.setText("Working out the 'left out' column…")
         self.left_update.setEnabled(False)
-        self._left_task.submit(lambda: _left_out_or_none(results, config),
+        self._left_task.submit(lambda: left_out_or_none(results, config),
                                lambda left: self._left_out_known(results, left),
                                self._left_failed)
 
@@ -1931,6 +1954,15 @@ def _series_names(series: list) -> list[str]:
             for s, n in zip(series, names, strict=True)]
 
 
+def series_counts(results, data_id: int) -> tuple[int, int]:
+    """A series' rejected spectra and those with more than one population (not rejected)."""
+    rows = np.flatnonzero(results.fit.data_id == data_id)
+    status = np.asarray(results.review_status).astype(str)[rows]
+    rejected = int((status == "rejected").sum())
+    multi = int(((results.effective_K[rows] > 1) & (status != "rejected")).sum())
+    return rejected, multi
+
+
 def _counts(c: dict) -> list[str]:
     return [str(c["n_spectra"]), str(c["n_flagged"] or ""), str(c["n_rejected"] or ""),
             str(c["n_left_out"] or ""), str(c["n_multi"] or "")]
@@ -1945,7 +1977,7 @@ def _same_record(a, b) -> bool:
         return False
 
 
-def _left_out_or_none(results, config) -> list[str] | None:
+def left_out_or_none(results, config) -> list[str] | None:
     """:func:`~hxex.gui.results_tree.left_out`, or None (said in the log) when the results do
     not allow it (no picked table, say)."""
     try:

@@ -1,9 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Fixtures every test shares."""
 
+import os
 import sys
 
 import pytest
+
+
+def pytest_configure(config):
+    """The window's tests run offscreen, set once here before pytest-qt makes the application
+    (a test file that set it later, in a fixture or a test body, opened windows on the screen
+    when run alone; audit of 2026-11-15, Q-25). A platform chosen outside (``QT_QPA_PLATFORM``
+    exported) is kept."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -33,24 +42,33 @@ def pytest_runtest_teardown(item):
     # (gui.window_edit._FIT_LOCK) and runs hxex in child processes.
     from PySide6.QtCore import QCoreApplication, QThreadPool
 
-    pools = [pool for pool in (tasks._DRAWING, QThreadPool.globalInstance())
+    pools = [(name, pool) for name, pool in (("the drawing thread", tasks._DRAWING),
+                                             ("Qt's global thread pool",
+                                              QThreadPool.globalInstance()))
              if pool is not None]
-    app = QCoreApplication.instance()
-    for _ in range(10):
-        for pool in pools:
-            pool.waitForDone(120000)
-        if app is None:
-            break
-        # what the finished work asked for (its callbacks): delivered, so that anything it
-        # starts is waited for as well
-        app.processEvents()
-        if not any(pool.activeThreadCount() for pool in pools):
-            break
-    # the window's garbage collection (gui.tasks.collection: off while a window exists, run
-    # from a timer between events): collected and given back between tests, so tests without
-    # a window collect as usual
-    if tasks._COLLECTION is not None:
-        tasks._COLLECTION.release()
+    try:
+        app = QCoreApplication.instance()
+        for _ in range(10):
+            for name, pool in pools:
+                # a pool still busy after two minutes is stuck: this test left it so, and it fails
+                # here rather than the next test with the work still running (audit of
+                # 2026-11-15, Q-30)
+                assert pool.waitForDone(120000), (
+                    f"{name} did not finish within two minutes of {item.nodeid}: "
+                    f"{pool.activeThreadCount()} job(s) still running")
+            if app is None:
+                break
+            # what the finished work asked for (its callbacks): delivered, so that anything it
+            # starts is waited for as well
+            app.processEvents()
+            if not any(pool.activeThreadCount() for _name, pool in pools):
+                break
+    finally:
+        # the window's garbage collection (gui.tasks.collection: off while a window exists,
+        # run from a timer between events): collected and given back between tests, so tests
+        # without a window collect as usual
+        if tasks._COLLECTION is not None:
+            tasks._COLLECTION.release()
 
 
 @pytest.fixture(autouse=True)

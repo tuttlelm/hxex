@@ -7,20 +7,19 @@ import sys
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from matplotlib.figure import Figure  # noqa: E402
-from PySide6.QtCore import QPointF, QSettings, QSize, Qt  # noqa: E402
-from PySide6.QtSvg import QSvgRenderer  # noqa: E402
+from matplotlib.figure import Figure
+from PySide6.QtCore import QPointF, QSettings, QSize, Qt
+from PySide6.QtSvg import QSvgRenderer
 
-from hxex.gui.figure_view import FigurePanel, FigureView  # noqa: E402
-from hxex.gui.figures import qt_ready  # noqa: E402
-from hxex.gui.session import load_session  # noqa: E402
-from hxex.gui.tips import tip  # noqa: E402
-from hxex.gui.window import MainWindow  # noqa: E402
-from test_analysis import two_sample_bundle  # noqa: E402, F401 - the fixture
-from test_run import config, raw_spectra, run  # noqa: E402
+from hxex.gui.figure_view import FigurePanel, FigureView
+from hxex.gui.figures import qt_ready
+from hxex.gui.session import load_session
+from hxex.gui.tips import tip
+from hxex.gui.window import MainWindow
+from test_analysis import two_sample_bundle  # noqa: F401 - the fixture
+from test_run import config, raw_spectra, run
 
 
 def _render_problems(svg: bytes, messages: list[str]) -> list[str]:
@@ -721,13 +720,18 @@ def test_the_results_lists_bar_wraps_when_it_is_narrow(qtbot):
     lst = SpectraList()
     qtbot.addWidget(lst)
     lst.show()
-    assert lst.minimumSizeHint().width() < 300
+    # widths compared within the window, never fixed pixel limits (Windows' fonts are wider;
+    # audit of 2026-11-15, Q-28): the list's narrowest is less than its choices in one line
+    one_line = lst.bar.layout().sizeHint().width()
+    narrow = lst.minimumSizeHint().width()
+    assert narrow < one_line
+    wide = 2 * one_line  # room for every choice in one line, margins and all
     heights = {}
-    for width in (1000, 250, 1000):
+    for width in (wide, narrow, wide):
         lst.resize(width, 400)
         QApplication.processEvents()
         heights.setdefault(width, []).append(lst.bar.height())
-    assert heights[250][0] > heights[1000][0] == heights[1000][1]
+    assert heights[narrow][0] > heights[wide][0] == heights[wide][1]
 
 
 def test_the_results_panel_counts_on_a_status_line_and_its_search_fills_the_row(qtbot):
@@ -749,7 +753,14 @@ def test_the_results_panel_counts_on_a_status_line_and_its_search_fills_the_row(
     # the panel's narrowest width is no longer set by a row of choices in one line: the tree's
     # widest piece is the search box, and the review's status choices wrap (in one line they
     # made the panel 522 px wide with Windows' font)
-    assert w.left_tabs.minimumSizeHint().width() <= w.search.minimumWidth() + 20
+    # (measured within the window, not against a fixed allowance; Q-28: widening the search
+    # box widens the panel by as much, so nothing else in it is wider)
+    narrowest, box = w.left_tabs.minimumSizeHint().width(), w.search.minimumWidth()
+    w.search.setMinimumWidth(2 * box)
+    QApplication.processEvents()  # the layouts worked out again
+    assert w.left_tabs.minimumSizeHint().width() - narrowest == box
+    w.search.setMinimumWidth(box)
+    QApplication.processEvents()
     radios = w.review.status.buttons()
     in_one_line = sum(b.sizeHint().width() for b in radios)
     assert w.review.status_row.minimumSizeHint().width() < in_one_line
@@ -823,14 +834,25 @@ def test_results_still_loading_never_show_under_another_project(qtbot, window, b
                                                                 monkeypatch):
     """Results loading for one project arrived after another project without results was
     opened, and were shown under it (audit of 2026-11-15, A-1): the load is dropped."""
+    import threading
     import time
+
+    from PySide6.QtCore import QThreadPool
+    from PySide6.QtWidgets import QApplication
 
     import hxex.report.notebook as notebook
     from hxex.config import template
 
-    real = notebook.load_results
-    monkeypatch.setattr(notebook, "load_results",
-                        lambda path, **kw: (time.sleep(1.0), real(path, **kw))[1])
+    real, ended = notebook.load_results, threading.Event()
+
+    def slow(path, **kw):
+        time.sleep(1.0)
+        try:
+            return real(path, **kw)
+        finally:
+            ended.set()
+
+    monkeypatch.setattr(notebook, "load_results", slow)
     window.open_path(bundle)
     assert window.loading and window.statusBar().currentMessage().startswith("loading")
     project = tmp_path / "fresh" / "hxex.toml"
@@ -839,7 +861,10 @@ def test_results_still_loading_never_show_under_another_project(qtbot, window, b
     assert window.open_asking(project)
     assert not window.loading and window.results_path is None
     assert not window.statusBar().currentMessage().startswith("loading")
-    qtbot.wait(1500)  # the first load ends meanwhile
+    # the first load ends and its result is sent back: waited for, not a fixed time (Q-29)
+    qtbot.waitUntil(lambda: ended.is_set()
+                    and QThreadPool.globalInstance().activeThreadCount() == 0, timeout=30000)
+    QApplication.processEvents()
     assert window.results_path is None and window.results_page.results is None
     assert window.project == project.absolute() and window.session().results is None
 

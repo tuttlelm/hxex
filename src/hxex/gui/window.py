@@ -54,7 +54,8 @@ from PySide6.QtWidgets import (
 )
 
 from .analysis_workspace import AnalysisWorkspace
-from .results_workspace import ResultsWorkspace, _left_out_or_none
+from .project_state import ProjectState
+from .results_workspace import ResultsWorkspace, left_out_or_none
 from .review import table_stamp
 from .run_workspace import RunWorkspace
 from .sequence_view import SequenceView
@@ -66,7 +67,6 @@ log = logging.getLogger(__name__)
 
 GUIDE_URL = "https://github.com/tuttlelm/hxex/blob/main/docs/guide/README.md"
 RECENT = 8  # sessions remembered in the File menu
-SERIES_KINDS = ("spectra", "uptake", "populations")
 # the tabs' tooltips (owner, 2026-11-13)
 WORKSPACE_TIPS = {
     "project": "the project file: its settings, its tables (peptides, review, elution "
@@ -85,24 +85,7 @@ PROJECT_TIPS = {
                 "coverage",
     "File": "the project file as text (read only)",
 }
-PEPTIDE_WIDTH = 170  # pixels: the widest the peptide column starts
 ABOUT_LOGO_WIDTH = 220  # pixels: the logo in the About box
-
-
-def _analysis_settings(project: Path | None):
-    """The ``[analysis]`` settings of ``project`` (their defaults without one, or when the file
-    does not read: the run workspace says why)."""
-    from ..analysis import AnalysisConfig
-
-    if project is not None:
-        from ..config import load_project
-
-        try:
-            return load_project(project, analysis_only=True).analysis or AnalysisConfig()
-        except Exception as exc:  # noqa: BLE001 - the defaults, said in the log
-            log.warning("the project's [analysis] settings do not read (%s): the tree's 'left "
-                        "out' column uses the defaults", exc)
-    return AnalysisConfig()
 
 
 def _note(text: str) -> QLabel:
@@ -145,6 +128,7 @@ class ProjectWorkspace(QWidget):
         from .project_editor import ProjectEditor
         from .table_editor import TablesView
 
+        self.window = window
         self.path_label = QLabel("No project file open.")
         new_button = QPushButton("New project file…")
         new_button.clicked.connect(window.new_project_dialog)
@@ -179,8 +163,11 @@ class ProjectWorkspace(QWidget):
         self._file_changed()
 
     def _file_changed(self) -> None:
+        # the one parsed state of the project file every panel reads, renewed before any of
+        # them looks (audit of 2026-11-15, Q-2)
+        self.window.project_state = ProjectState.read(self.path)
         self.tables.show_project(self.path, self.editor.values, self.editor.format)
-        self.sequence.show_project(self.path)
+        self.sequence.show_project(self.window.project_state)
         self.file_changed.emit()
         if self.path is None:
             self.text.setPlainText("")
@@ -249,6 +236,9 @@ class MainWindow(QMainWindow):
         self.settings = settings or QSettings("hxex", "hxex-gui")
         self.session_path: Path | None = None
         self.project: Path | None = None
+        # the project file as read last: one parsed state for every panel (Q-2), renewed by
+        # the Project workspace whenever the file changes
+        self.project_state = ProjectState()
         self.results_path: Path | None = None
         self._saved_text: str | None = None
         self._restoring = False  # results of the session just opened are still loading
@@ -271,6 +261,7 @@ class MainWindow(QMainWindow):
             self.render = "matplotlib"
         self.project_page = ProjectWorkspace(self)
         self.run_page = RunWorkspace()
+        self.run_page.project_values = lambda: self.project_state.values
         self.run_page.results_changed.connect(self._results_changed)
         self.run_page.show_setting.connect(self.show_setting)
         self.project_page.file_changed.connect(self.run_page.show_device)
@@ -675,15 +666,11 @@ class MainWindow(QMainWindow):
         self._show_project(path)
         if path is None or not load_results:
             return
-        from ..config import ProjectError, load_project
-
-        try:
-            project = load_project(path, analysis_only=True)
-        except (ProjectError, OSError, ValueError) as exc:
-            log.warning("%s: %s", path, exc)
+        state = self.project_state
+        if state.loaded is None:  # said in the log when the state was read
             return
-        bundle = project.output.bundle
-        if bundle is not None and Path(bundle).exists():
+        bundle = state.bundle
+        if bundle is not None and bundle.exists():
             self.open_results(path)  # the project's results, with its review applied
         else:
             log.info("no results yet (hxex run %s, in %s, makes them)", path.name, path.parent)
@@ -715,14 +702,15 @@ class MainWindow(QMainWindow):
         before = (self._figure_and_review_settings() if project is not None else None,
                   self._figure_and_review_settings(("analysis",)) if project is not None
                   else None)
+        state = self.project_state if project is not None else ProjectState()
 
         def load():
             stamp = table_stamp(project)  # before reading: a change while it reads shows later
             # a review K the screen skipped is kept, the spectrum shown at the fit's K (the
             # review panel says so; the commands refuse it: audit of 2026-11-15, D-9)
             results = load_results(path, unfitted="keep")
-            analysis = _analysis_settings(project)
-            return results, analysis, _left_out_or_none(results, analysis), stamp
+            analysis = state.analysis  # the state as the load started (immutable)
+            return results, analysis, left_out_or_none(results, analysis), stamp
 
         self._loading.submit(load, lambda loaded: self._results_loaded(*loaded, path, before),
                              lambda message: self._results_failed(path, message))
@@ -730,6 +718,22 @@ class MainWindow(QMainWindow):
     @property
     def loading(self) -> bool:
         return self._loading.running
+
+    def _release(self) -> None:
+        """Let go of the results and figures the closing window holds. A closed window's
+        Python side stays alive in its own cycles (its workspaces, bound methods and callback
+        closures; Qt's parent-child ownership hides some references from the garbage
+        collector), so each closed window kept its whole results and four figures, 60 to 300
+        MB, in a process that makes several windows, such as a test session (audit of
+        2026-11-15, M-5). The ``hxex gui`` process makes one window and ends with it."""
+        self._loading.drop()  # its done/failed closures held the window
+        self._pending_selection = {}
+        self.results_page.release()
+        self.analysis_page.release()
+        self.project_page.editor.sample_names = None  # a bound method of this window
+        self.project_page.sequence.show_coverage(None)
+        self._view_settings = self._analysis_text = None
+        self.project_state = ProjectState()
 
     def _results_loaded(self, results, analysis, left, stamp, path: Path,
                         before: tuple = (None, None)) -> None:
@@ -748,8 +752,8 @@ class MainWindow(QMainWindow):
                     or (stamp is not None and table_stamp(self.project) != stamp):
                 again = True
             elif analysis_before is not None and self._analysis_text != analysis_before:
-                analysis = _analysis_settings(self.project)  # the tree's 'left out' column
-                left = _left_out_or_none(results, analysis)
+                analysis = self.project_state.analysis  # the tree's 'left out' column
+                left = left_out_or_none(results, analysis)
         self.results_page.show_results(results, path, left, analysis)
         self.analysis_page.results_changed()
         self._show_coverage()
@@ -777,7 +781,7 @@ class MainWindow(QMainWindow):
         from .sequence_view import coverage_of
 
         results = self.results_page.results
-        mine = results is not None and self.results_path == self.project
+        mine = results is not None and self.project_results
         self.project_page.sequence.show_coverage(coverage_of(results) if mine else None)
 
     def sample_names(self) -> list[str]:
@@ -814,19 +818,33 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentIndex(WORKSPACES.index("results"))
         return True
 
+    def fresh_project_state(self) -> ProjectState:
+        """The project state, read again first when the file changed on disk since it was read
+        (its size or modification time differ): for a panel answering an action before the
+        file watcher's settle time has passed (the state is renewed when it fires too)."""
+        state = self.project_state
+        if state.path != self.project:
+            state = ProjectState.read(self.project)
+        else:
+            state = state.fresh()
+        self.project_state = state
+        return state
+
+    @property
+    def project_results(self) -> bool:
+        """Whether the results shown are the project file's own (opened through it, with its
+        review applied): the project's review table takes the decisions, its [analysis]
+        applies, and a change of the file reloads them (audit of 2026-11-15, Q-3)."""
+        return self.project is not None and self.results_path == self.project
+
     def _figure_and_review_settings(self, keep=("figures", "review")) -> dict | None:
         """The project file's [figures] and [review] settings (the ones loaded results carry),
-        or those of the tables ``keep``."""
+        or those of the tables ``keep``; None without a project, or when the file does not
+        read (nothing to compare)."""
         if self.project is None:
             return None
-        from ..project_edit import live_settings
-
-        try:
-            values, tables = live_settings(self.project.read_text(encoding="utf-8-sig"))
-        except Exception:  # noqa: BLE001 - a file that does not read: nothing to compare
-            return None
-        return {"values": {k: v for k, v in values.items() if k.split(".")[0] in keep},
-                "tables": sorted(n for n in tables if n.split(".")[0] in keep)}
+        state = self.fresh_project_state()
+        return state.of_tables(*keep) if state.parsed else None
 
     def watch_review_table(self) -> None:
         """Watch the review table of the project whose results are shown (none otherwise):
@@ -839,8 +857,7 @@ class MainWindow(QMainWindow):
         if self.review_watcher.files():
             self.review_watcher.removePaths(self.review_watcher.files())
         stamp = self.results_review_stamp
-        if self.project is not None and self.results_path == self.project and stamp \
-                and stamp[1] is not None:
+        if self.project_results and stamp and stamp[1] is not None:
             self._watch(stamp[0])
 
     def _watch(self, path: str) -> None:
@@ -858,8 +875,7 @@ class MainWindow(QMainWindow):
         stamp = table_stamp(self.project)
         if stamp and stamp[1] is not None and stamp[0] not in self.review_watcher.files():
             self._watch(stamp[0])  # a file replaced is no longer watched
-        if self.project is None or self.results_path != self.project or self.loading \
-                or stamp == self.results_review_stamp:
+        if not self.project_results or self.loading or stamp == self.results_review_stamp:
             return
         log.info("the review table changed: the results are read again with it")
         self.results_page.review.commit_note()  # a note being typed is kept
@@ -876,12 +892,10 @@ class MainWindow(QMainWindow):
         analysis_before, self._analysis_text = self._analysis_text, analysis
         now = self._figure_and_review_settings()
         if (analysis_before is not None and analysis != analysis_before
-                and self.results_path == self.project and self.project is not None
-                and now == self._view_settings and not self.loading):
-            self.results_page.analysis_changed(_analysis_settings(self.project))
+                and self.project_results and now == self._view_settings and not self.loading):
+            self.results_page.analysis_changed(self.project_state.analysis)
         before, self._view_settings = self._view_settings, now
-        if before is None or now == before or self.results_path != self.project \
-                or self.project is None or self.loading:
+        if before is None or now == before or not self.project_results or self.loading:
             return
         if self.naming_review_table and _only_the_table_named(before, now):
             # the review panel's first decision named its table: the decision is in the
@@ -915,7 +929,7 @@ class MainWindow(QMainWindow):
     def session(self) -> GuiSession:
         # results opened through the project file are the project's: the session names the
         # project only, so reopening it opens whatever results the project then has
-        results = None if self.results_path == self.project else self.results_path
+        results = None if self.project_results else self.results_path
         return GuiSession(
             project=self.project, results=results,
             workspace=WORKSPACES[self.tabs.currentIndex()],
@@ -1028,6 +1042,10 @@ class MainWindow(QMainWindow):
             for pool in (drawing_pool(), QThreadPool.globalInstance()):
                 pool.clear()
                 pool.waitForDone(10000)
+            try:
+                self._release()
+            except Exception:  # noqa: BLE001 - the window closes all the same
+                log.exception("the closing window could not let go of its results")
             event.accept()
         else:
             event.ignore()

@@ -103,6 +103,7 @@ from .species import (
     SpeciesUptake,
     analysis_controls,
     best_sets,
+    left_out_reasons,
     left_out_spectra,
     left_out_summary,
     set_average_ks,
@@ -186,6 +187,7 @@ __all__ = [
     "set_average_ks",
     "K2_AVERAGE_SEPARATION",
     "set_pvalues",
+    "left_out_reasons",
     "left_out_spectra",
     "left_out_summary",
 ]

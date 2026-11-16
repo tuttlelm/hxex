@@ -3,24 +3,22 @@
 matplotlib view, no white blink between figures, failures said on the panel, the wheel, Actual
 size and saving (the GUI audit of 2026-11-15, scope C). Run offscreen (no screen needed)."""
 import io
-import os
 import threading
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from matplotlib.figure import Figure  # noqa: E402
-from matplotlib.lines import Line2D  # noqa: E402
-from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QWheelEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication, QComboBox  # noqa: E402
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QWheelEvent
+from PySide6.QtWidgets import QApplication, QComboBox
 
-from hxex.gui import figure_view  # noqa: E402
-from hxex.gui.figure_view import FigurePanel  # noqa: E402
-from hxex.gui.order import natural_key  # noqa: E402
-from hxex.gui.tasks import drawing_pool  # noqa: E402
+from hxex.gui import figure_view
+from hxex.gui.figure_view import FigurePanel
+from hxex.gui.order import natural_key
+from hxex.gui.tasks import drawing_pool
 
 
 def _fig(gid: str = "", size=(3, 2)) -> Figure:

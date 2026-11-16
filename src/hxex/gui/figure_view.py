@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The SVG figure view: a figure drawn by a report function, shown sharp at any size, zoomed,
-saved as SVG, PDF or PNG, and clickable by its artists' ``gid`` (docs/PLAN.md, "GUI").
+saved as SVG, PDF, or PNG, and clickable by its artists' ``gid`` (docs/PLAN.md, "GUI").
 
 :class:`FigurePanel` draws a figure in a worker thread (the report functions use ``Figure()``,
 never pyplot, so they can) and shows it in a :class:`FigureView` with a small toolbar.
@@ -56,7 +56,7 @@ from .figures import (
     save_figure,
 )
 from .tasks import Latest, drawing_pool
-from .tips import tip
+from .tips import ERROR_COLOUR, tip
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +84,6 @@ SPECTRA_HINT = ("\nMouse over a peptide or bar: its details.\n"
 SPAN_HINT = ("\nEdit window is on: drag across the trace (or the drift profile) to set the "
              "window; the figure does not move.")
 FADED = 0.35  # how much of the figure shows through the veil while the next one is drawn
-ERROR_COLOUR = "#b3261e"  # the status line's failures
 
 
 class FigureView(QWidget):
@@ -247,7 +246,8 @@ class FigureView(QWidget):
 
     def element_at(self, point: QPointF) -> str | None:
         """The ``gid`` of the drawn element under ``point`` (in the view's coordinates), the
-        smallest when several overlap."""
+        smallest when several overlap. Used by the tests (a click goes through
+        :meth:`mark_at`)."""
         mark = self.mark_at(point)
         return mark.gid if mark is not None else None
 
@@ -268,7 +268,8 @@ class FigureView(QWidget):
             event.ignore()
 
     def tooltip_at(self, point: QPointF) -> str:
-        """The tooltip of the drawn element under ``point`` ('' when none has one)."""
+        """The tooltip of the drawn element under ``point`` ('' when none has one). Used by the
+        tests (the pointer's tooltip goes through :meth:`mark_at`)."""
         mark = self.mark_at(point, text=True)
         return mark.text if mark is not None else ""
 
@@ -514,6 +515,7 @@ class TitleLabel(QLabel):
         self._elide()
 
     def full(self) -> str:
+        """The whole text, unshortened (the tests read the status line's through it)."""
         return self._full
 
     def resizeEvent(self, event):  # noqa: N802 - Qt's name
@@ -544,7 +546,7 @@ class StatusLabel(TitleLabel):
 
 
 class FigurePanel(QWidget):
-    """A :class:`FigureView` in a scroll area, with buttons to zoom, fit and save. Give it a
+    """A :class:`FigureView` in a scroll area, with buttons to zoom, fit, and save. Give it a
     figure (:meth:`show_figure`) or a function that draws one (:meth:`draw`, run in a worker
     thread)."""
 
@@ -560,6 +562,7 @@ class FigurePanel(QWidget):
     def __init__(self, parent=None, pool: QThreadPool | None = None,
                  render: str = "matplotlib", hint: str = HINT):
         super().__init__(parent)
+        self.span_mode = False  # a drag selects a span (set_span_mode), not moves the figure
         self.render = render
         self.view = VIEWS[render]()
         self.scroll = QScrollArea()
@@ -599,7 +602,7 @@ class FigurePanel(QWidget):
                                  self.zoom_in),
                                 ("Actual size", "show the figure at its own size (100 %)",
                                  self.actual_size),
-                                ("Save figure…", "save as SVG, PDF or PNG", self.save_dialog)):
+                                ("Save figure…", "save as SVG, PDF, or PNG", self.save_dialog)):
             button = QPushButton(text)
             button.setToolTip(tip(words))
             button.clicked.connect(slot)
@@ -654,7 +657,7 @@ class FigurePanel(QWidget):
         if isinstance(view, RasterView):
             view.pictured.connect(self._pictured)
             view.failed.connect(self._failed)
-        view.span_mode = getattr(self, "span_mode", False)
+        view.span_mode = self.span_mode
         if view.span_mode:
             view.setCursor(Qt.CursorShape.CrossCursor)
 

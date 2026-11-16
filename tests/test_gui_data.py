@@ -3,23 +3,21 @@
 copied, saved as CSV, and a peptide's row (or bar) leading to its spectra. Runs offscreen."""
 import csv
 import math
-import os
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from matplotlib.figure import Figure  # noqa: E402
-from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from matplotlib.figure import Figure
+from PySide6.QtCore import QCoreApplication, Qt
+from PySide6.QtWidgets import QApplication
 
-from hxex.gui.data_table import DataPanel, cell_text  # noqa: E402
-from hxex.gui.figures import figure_rows  # noqa: E402
-from hxex.gui.tasks import drawing_pool  # noqa: E402
-from hxex.report.hover import set_row  # noqa: E402
-from test_analysis import two_sample_bundle  # noqa: E402, F401 - the fixture
-from test_gui import _window  # noqa: E402
+from hxex.gui.data_table import DataPanel, cell_text
+from hxex.gui.figures import figure_rows
+from hxex.gui.tasks import drawing_pool
+from hxex.report.hover import set_row
+from test_analysis import two_sample_bundle  # noqa: F401 - the fixture
+from test_gui import _window
 
 ROWS = [{"sample": "S", "start": 10, "end": 15, "fD": 0.5, "significant": True},
         {"sample": "S", "start": 2, "end": 9, "fD": math.nan, "significant": False},
@@ -223,9 +221,14 @@ def test_a_kind_selected_gathers_every_figures_rows(qtbot, tmp_path, project):
     page.list.setCurrentItem(coverage)
     with qtbot.waitSignal(page.panel.drawn, timeout=60000):
         page.list.setCurrentItem(coverage.child(0))
-    # both jobs done in the drawing thread, their results delivered, before the check
+    # both jobs done in the drawing thread, their results delivered, before the check: a job's
+    # result is posted to the window's thread before the job ends, so once the pool is done
+    # sending the posted events delivers them (no fixed wait: audit of 2026-11-15, Q-29)
     assert drawing_pool().waitForDone(60000)
-    qtbot.wait(50)  # their results delivered
+    QCoreApplication.sendPostedEvents()
+    qtbot.waitUntil(lambda: len(page.data.model.rows)
+                    == sum(r["figure"] == stems[0] for r in gathered), timeout=10000)
+    assert "figure" not in page.data.model.columns  # the stopped gathering's never shown
     page._rows_gathered("coverage", None)  # a stopped gathering returns nothing
     assert "figure" not in page.data.model.columns
 
@@ -344,6 +347,7 @@ def test_copy_keeps_the_digits_the_csv_files_keep(qtbot):
     panel = DataPanel()
     qtbot.addWidget(panel)
     panel.show_rows(["mz", "ok"], [{"mz": 652.3412, "ok": True}])
+    panel.table.selectRow(0)
     panel.copy()
     assert QApplication.clipboard().text() == "mz\tok\n652.3412\tTrue\n"
 

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 
 from .flow_layout import FlowLayout
 from .tasks import Latest
-from .tips import rich_tip, tip
+from .tips import set_choice_tips, tip
 from .window_edit import (
     APPLY,
     neighbour_scan,
@@ -61,20 +61,6 @@ class _SnapBox(QDoubleSpinBox):
             super().stepBy(steps)
             return
         self.setValue(self.step_to(self.value(), steps))
-
-
-def set_choice_tips(combo: QComboBox, tips: dict[str, str]) -> None:
-    """Give each choice of ``combo`` its tooltip (``tips`` by the choice's data, bold between
-    ``**``), shown on the open list's items and, for the selected choice, on the box (owner,
-    2026-11-12: one long tooltip for every choice was hard to read)."""
-    for i in range(combo.count()):
-        combo.setItemData(i, rich_tip(tips.get(combo.itemData(i), "")),
-                          Qt.ItemDataRole.ToolTipRole)
-    combo.setToolTip(combo.itemData(combo.currentIndex(), Qt.ItemDataRole.ToolTipRole) or "")
-    if not combo.property("tips_follow"):  # connected once: the box follows the selection
-        combo.setProperty("tips_follow", True)
-        combo.currentIndexChanged.connect(lambda i: combo.setToolTip(
-            combo.itemData(i, Qt.ItemDataRole.ToolTipRole) or ""))
 
 
 @dataclass
@@ -115,11 +101,15 @@ class WindowEditor(QObject):
     saved = Signal(str)  # the elution-window table written (its path)
 
     def __init__(self, panel, context: Callable[[], TraceContext | None],
-                 plain: Callable[[], None], parent=None):
+                 plain: Callable[[], None], parent=None, project_state=None):
         super().__init__(parent)
         self.panel = panel
         self.context = context
         self.plain = plain
+        # the parsed state of a project file (the window's one state, Q-2; read now otherwise)
+        from .project_state import ProjectState
+
+        self.project_state = project_state or ProjectState.read
         self.preview = None
         self.failure: str | None = None
         self.history: list = []  # SavedWindow, the latest last (Undo); the results' own
@@ -138,7 +128,6 @@ class WindowEditor(QObject):
         self._scan_times: np.ndarray | None = None  # the ion's scans in the file (minutes)
         self._drift_bins: np.ndarray | None = None  # the file's drift bins (ms)
         self._saving: str | None = None  # the spectrum whose save is matching other files
-        self._project_cache: tuple | None = None  # (results path, signature, project or None)
         self._previewed: tuple | None = None  # (spectrum id, window, drift) of a fitted preview
         self._summed: tuple | None = None  # the same, of the spectrum summed (fitted or not)
         self._task = Latest(self)
@@ -156,8 +145,8 @@ class WindowEditor(QObject):
         row = FlowLayout(self.bar)
         self.edit = QCheckBox("Edit window")
         self.edit.setToolTip(
-            tip("Change the scans this spectrum sums: drag across the trace or type the times. "
-                "The new spectrum is drawn beside the current one."))
+            tip("change the scans this spectrum sums (drag across the trace or type the times); "
+                "the new spectrum is drawn beside the current one"))
         self.edit.toggled.connect(self._toggled)
         self.start, self.end = self._box("minutes"), self._box("minutes")
         self.start.setToolTip(tip("the window's start (min, the acquisition clock): the first "
@@ -184,7 +173,7 @@ class WindowEditor(QObject):
         self.save = QPushButton("Save window")
         self.save.clicked.connect(self._save)
         self.undo = QPushButton("Undo")
-        self.undo.setToolTip(tip("Undo the last save."))
+        self.undo.setToolTip(tip("undo the last save"))
         self.undo.clicked.connect(self._undo)
         self.undo.setEnabled(False)
         # two rows of their own under the figure's buttons (in the buttons' row they made the
@@ -568,55 +557,42 @@ class WindowEditor(QObject):
 
     def _project(self, ctx: TraceContext) -> Path | None:
         """The project file, when the results came from one of a scan format (else None:
-        nothing can be saved). Loaded once per project file as long as it is unchanged on
-        disk (audit of 2026-11-15, F-12: three loads per spectrum shown)."""
-        from .window_edit import _signature
-
+        nothing can be saved). From the window's one parsed state of the project file (audit
+        of 2026-11-15, Q-2 and F-12: it was loaded three times per spectrum shown)."""
         path = ctx.results_path
         if path is None or Path(path).suffix != ".toml":
             return None
-        sig = _signature(Path(path))
-        kept = self._project_cache
-        if kept is not None and kept[0] == path and kept[1] == sig and sig is not None:
-            return kept[2]
-        from ..config import load_project
-
-        project: Path | None = Path(path)
-        try:
-            inp = load_project(path, analysis_only=True).input
-        except Exception as exc:  # noqa: BLE001 (the project file does not load: say so)
-            log.info("window editing: %s (%s)", path, exc)
-            project = None
-        else:
-            if inp is None or inp.format not in ("mzml", "thermo"):
-                project = None
-        self._project_cache = (path, sig, project)
-        return project
+        state = self.project_state(Path(path))
+        inp = state.input
+        if inp is None:
+            log.info("window editing: %s (%s)", path, state.problem or "no [input]")
+            return None
+        return Path(path) if inp.format in ("mzml", "thermo") else None
 
     def _key(self, ctx: TraceContext) -> tuple[str, str, str] | None:
         """The spectrum's row in the table: its sample, file name, and ion (as its id names
         it)."""
-        from ..io.mzml import _target_label, run_name
+        from ..io.mzml import run_name, target_label
 
         where = ctx.reader.locate(ctx.spectrum_id, ctx.data_id)
         if where is None:
             return None
         run = ctx.reader.runs[where[0]]
         target = ctx.reader.targets[ctx.reader.of_series[ctx.data_id]]
-        return run.sample, run_name(run), _target_label(target)
+        return run.sample, run_name(run), target_label(target)
 
     def _peptide(self, ctx: TraceContext) -> tuple[str, tuple[str, ...], bool]:
         """The spectrum's peptide (as the table's peptide rows name it), its ions (as spectrum
         ids name them: its charge states, and its fragments when it is a parent), and whether
         another peptide has an ion of this spectrum's name (two parents sharing a terminus)."""
         from ..io.elution_windows import peptide_label
-        from ..io.mzml import _target_label
+        from ..io.mzml import target_label
 
         target = ctx.reader.targets[ctx.reader.of_series[ctx.data_id]]
-        name, label = peptide_label(target.entry), _target_label(target)
-        ions = tuple(_target_label(t) for t in ctx.reader.targets
+        name, label = peptide_label(target.entry), target_label(target)
+        ions = tuple(target_label(t) for t in ctx.reader.targets
                      if peptide_label(t.entry) == name)
-        shared = any(_target_label(t) == label and peptide_label(t.entry) != name
+        shared = any(target_label(t) == label and peptide_label(t.entry) != name
                      for t in ctx.reader.targets)
         return name, ions, shared
 

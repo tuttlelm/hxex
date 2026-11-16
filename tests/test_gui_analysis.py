@@ -3,18 +3,16 @@
 results shown, the catalogue's reasons for those left out, and an analysis marked out of date
 when the results or [analysis] change. Runs offscreen."""
 import dataclasses
-import os
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import Qt
 
-from hxex.gui.analysis_workspace import setting_table  # noqa: E402
-from test_analysis import two_sample_bundle  # noqa: E402, F401 - the fixture
-from test_gui import _window  # noqa: E402
+from hxex.gui.analysis_workspace import setting_table
+from test_analysis import two_sample_bundle  # noqa: F401 - the fixture
+from test_gui import _window
 
 
 @pytest.fixture
@@ -346,6 +344,23 @@ def _held_analysis(monkeypatch, *, listens: bool = True):
     return started, release, outcome
 
 
+def _settled() -> None:
+    """Every background job of the window finished and what it sent back delivered: the
+    evidence that something did not happen is that nothing is left to make it happen, not a
+    fixed wait a loaded machine could outrun (audit of 2026-11-15, Q-29)."""
+    from PySide6.QtCore import QCoreApplication, QThreadPool
+
+    from hxex.gui.tasks import drawing_pool
+
+    pools = (drawing_pool(), QThreadPool.globalInstance())
+    for _ in range(10):
+        for pool in pools:
+            assert pool.waitForDone(60000)
+        QCoreApplication.processEvents()
+        if not any(pool.activeThreadCount() for pool in pools):
+            break
+
+
 def _nothing_computed(page) -> None:
     assert page.outputs is None and page.shared_outputs is None and not page.computing
     assert not page._analyses and not page.busy.isVisibleTo(page)
@@ -378,7 +393,7 @@ def test_another_project_opened_during_a_compute_shows_nothing_of_the_first(
                     timeout=30000)
     release.set()
     qtbot.waitUntil(lambda: "end" in outcome, timeout=120000)
-    qtbot.wait(300)  # anything the computation sent back has arrived
+    _settled()  # anything the computation sent back has arrived
     assert outcome["end"] == "cancelled"  # the library stopped at its next step
     _nothing_computed(page)
     assert page.shown_reference in ("", "V")
@@ -403,7 +418,7 @@ def test_a_bundle_opened_during_the_first_compute_shows_nothing_of_the_project(
     assert not page.computing  # dropped as soon as the bundle is shown
     release.set()
     qtbot.waitUntil(lambda: "end" in outcome, timeout=120000)
-    qtbot.wait(300)
+    _settled()
     assert outcome["end"] == "done"
     _nothing_computed(page)
     # and an analysis of other results arriving is never stored as this one's
@@ -427,7 +442,7 @@ def test_a_recompute_waiting_for_its_results_does_not_start_for_others(
     window.open_results(two_sample_bundle)  # before the project's results are read again
     qtbot.waitUntil(lambda: not window.loading
                     and window.results_path == two_sample_bundle.absolute(), timeout=30000)
-    qtbot.wait(300)
+    _settled()
     _nothing_computed(page)  # not started for the bundle
 
 
@@ -472,7 +487,7 @@ def test_a_recompute_draws_the_figure_shown_once(qtbot, tmp_path, project):
     page.compute()
     qtbot.waitUntil(lambda: page.outputs is not first and not page.computing, timeout=120000)
     qtbot.waitUntil(lambda: not page.panel.drawing and bool(draws), timeout=60000)
-    qtbot.wait(500)
+    _settled()
     assert len(draws) == 1
 
 
@@ -536,5 +551,5 @@ def test_stop_ends_the_computation_and_keeps_the_figures(qtbot, tmp_path, projec
     assert page.compute_button.isEnabled() and page.outputs is first
     release.set()
     qtbot.waitUntil(lambda: "end" in outcome, timeout=120000)
-    qtbot.wait(300)
+    _settled()
     assert outcome["end"] == "cancelled" and page.outputs is first

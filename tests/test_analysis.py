@@ -262,7 +262,7 @@ def test_series_left_out_of_the_analysis(results):
 
     from hxex.fragments import fragment_targets
     from hxex.io import MzmlTarget
-    from hxex.report.analysis import _fragment_series
+    from hxex.report.analysis import fragment_series_ids
     from hxex.spectra import PeptideEntry
 
     both = species_uptake(results, ks=(1,))
@@ -275,7 +275,7 @@ def test_series_left_out_of_the_analysis(results):
               "series": [{"data_id": i, "sample": "S", "target": i}
                          for i in range(len(targets))]}
     run = SimpleNamespace(settings=SimpleNamespace(spectra_source=source))
-    series, only = _fragment_series(run)
+    series, only = fragment_series_ids(run)
     assert series == set(range(1, len(targets))) and not only  # the MS1 peptide is kept
 
 

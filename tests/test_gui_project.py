@@ -2,26 +2,24 @@
 """The project editor of hxex's window (hxex.gui.project_editor): settings written as hxex set
 writes them, refused changes, stages switched on and off, the format's settings, and changes
 made outside the window. Runs offscreen."""
-import os
 from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-import tomllib  # noqa: E402
+import tomllib
 
-from PySide6.QtCore import QSettings  # noqa: E402
+from PySide6.QtCore import QSettings
 
-from hxex.config import template  # noqa: E402
-from hxex.gui.project_editor import (  # noqa: E402
+from hxex.config import template
+from hxex.gui.project_editor import (
     ProjectEditor,
     full_location,
     plain,
     relative,
 )
-from hxex.gui.window import MainWindow, new_project  # noqa: E402
+from hxex.gui.window import MainWindow, new_project
 
 
 @pytest.fixture
@@ -278,6 +276,11 @@ def test_a_list_of_tables_is_copied_as_a_table(scan_editor, qtbot):
     qtbot.keyClick(grid, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)  # every cell
     qtbot.keyClick(grid, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
     assert QApplication.clipboard().text() == lists.table_text()  # with the column names
+    # nothing selected: the current row with the column names (audit of 2026-11-15, Q-12)
+    grid.clearSelection()
+    grid.setCurrentCell(1, path_c, grid.selectionModel().SelectionFlag.NoUpdate)
+    lines = lists.copied_text().splitlines()
+    assert lines[0].split("\t") == keys and lines[1].split("\t")[path_c] == "D_60s_01.mzML"
 
 
 def test_a_table_of_names_is_edited(editor, project):

@@ -362,14 +362,16 @@ command line and the Python interface stay as they are, and nothing is possible 
   `gui-scripts` entry point `hxex-gui` (no console window on Windows). Lower bound measured in
   G0 (Python 3.11 to 3.14 on the three systems); 6.12.0 excluded (it aborts on Python 3.11,
   HISTORY 249).
-- **Figures are shown as SVG**: each figure is saved to SVG in memory and drawn by Qt's SVG
-  renderer (`QtSvg`), so it stays sharp at any size. Measured on a tutorial series page
-  (HISTORY 231): every element renders as in matplotlib, hatching included, in about 0.05 s
-  (saving the SVG takes 0.1-0.8 s). Zooming magnifies the picture; changing an axis range is a
-  change to the figure, which is redrawn. Click-through uses the artists' `gid`s, which appear as element ids in the SVG
-  (`QSvgRenderer.boundsOnElement`).
-- **Every figure can be saved** as SVG, PDF, or PNG from the same `Figure`, one at a time or
-  all figures shown.
+- **Figures are drawn by matplotlib at the view's pixel size** (the default since HISTORY
+  238: sharper on screen) **or shown as SVG** (View menu): each figure saved to SVG in memory
+  and drawn by Qt's SVG renderer (`QtSvg`), sharp at any size. Measured on a tutorial series
+  page (HISTORY 231): every element renders as in matplotlib, hatching included, in about
+  0.05 s (saving the SVG takes 0.1-0.8 s). Zooming magnifies the picture; changing an axis
+  range is a change to the figure, which is redrawn. Click-through uses the artists' `gid`s,
+  which appear as element ids in the SVG (`QSvgRenderer.boundsOnElement`) and are mapped on
+  the matplotlib picture.
+- **Every figure can be saved** as SVG, PDF, or PNG from the same `Figure`, one at a time
+  (the figure shown; saving all figures shown at once is not built).
 - **Tests**: `pytest-qt` (MIT) in the `dev` extra; the GUI tests skip without PySide6 and run
   offscreen (`QT_QPA_PLATFORM=offscreen`) in CI on all three systems; the minimum-versions job
   covers the extra's lower bound. A test renders every figure kind through `QtSvg` and fails on
@@ -401,9 +403,10 @@ calls the library in the GUI's own process. Details:
   switches tables on as `hxex set` does; it is extended to the lists of tables
   (`[[input.runs]]`, `[[input.exclude]]`, `[[review.exclude]]`, fragments) and to the per-run
   nested tables. Problems show as the project is edited, in the words `hxex check` uses. A new
-  project starts from `hxex init` and an input step (format, folder, peptide table, controls by
-  role). The file is watched: a change made in a text editor is offered for reloading. The TOML
-  is shown read-only beside the form.
+  project starts from `hxex init` with the format and a name (the input paths are then set in
+  the form; a fuller input step was planned and not built). The file is watched: a change made
+  in a text editor is shown at once (the form reloads; Undo covers the window's own changes).
+  The TOML is shown read-only on the File tab beside the Settings form.
 - **The tables users write or edit** (owner: every table a user is expected to interact with):
   the peptide table of the scan formats, the file table of the folder formats, the
   retention-time table, and the user review table. They are edited as tables: columns the user
@@ -505,16 +508,19 @@ kinds, in order of how far they reach:
 
 The change list of kind 2 is applied by a library function (planned
 `hxex.report.apply_changes(figure, changes)`), so a figure changed in the GUI can be
-reproduced from Python, and it is stored with the figure in the GUI session file. Kinds 1 and
-2 start in G3 (results) and grow in G4 (analysis).
+reproduced from Python, and it is stored with the figure in the GUI session file. NOT BUILT
+(status, 2026-11-15): kind 1 exists only as the settings the window already offers (the time
+axis, the pages' size, `[figures]` written to the project file); kinds 2 and 3 are not
+started, and the session file's `figures` field is reserved for them (HISTORY 393).
 
 ### The GUI session file
 
 The owner asked for a saved GUI project that reopens a previous session. A small TOML file
 chosen by the user (suggested `NAME.hxexgui` beside the project file) holds only the view: the
-project file (relative path), the results and analysis folders open, the selections (sample,
-peptide, charge, reference, times, K), the figures open with their changes ("Changing a
-figure"), and the window layout, with a version number. It never holds settings or review decisions, which stay in
+project file (relative path), the results folder open, the selections (sample, peptide,
+charge, reference, times, K), and the window layout, with a version number; the analysis
+folder and the figures open with their changes ("Changing a figure") are reserved fields,
+read and written but not filled until that is built (HISTORY 393). It never holds settings or review decisions, which stay in
 the project file and the user's tables. On reopening, an item that no longer exists (a bundle
 replaced, a peptide gone) is dropped with a note. Recently opened sessions are remembered per
 user by Qt (`QSettings`).
@@ -526,7 +532,7 @@ user by Qt (`QSettings`).
 | G0 | `[gui]` extra, `hxex gui`/`hxex-gui`, a window with the four workspaces (project, run, results, analysis), the session file, the SVG figure view with saving, pytest-qt in CI | Opens and closes on the three systems in CI; every figure kind renders through QtSvg |
 | G1 | Project editor and the user tables | The tutorial's project file built from scratch in the GUI passes `hxex check` like the hand-written one; table edits keep the user's columns |
 | G2 | Running stages (child processes, console, progress, Stop) and the command-line additions | The tutorial run, stopped, and resumed from the GUI on the three systems |
-| G3 | Results and review; changing a figure (what is drawn, how it looks) | Review edits made in the GUI give the same `hxex report` tables as the same edits made in a spreadsheet |
+| G3 | Results and review; changing a figure (what is drawn, how it looks: NOT BUILT, see "Changing a figure") | Review edits made in the GUI give the same `hxex report` tables as the same edits made in a spreadsheet (passed, HISTORY 285) |
 | G4 | Analysis views and click-through | Every figure of the tutorial's analysis folder reachable from the GUI; saved without changes, identical to `hxex analyse`'s |
 | Later | Installers (torch makes them large), remote use | — |
 
@@ -599,8 +605,9 @@ A summary of the "... status" sections and items in `docs/HISTORY.md`, which hol
   233-235: the settings form, lists of tables, tables of names, the tables users write);
   G2 built (HISTORY 236: the commands run from the window, Stop through the input); G3 and
   G4 built (HISTORY 237-285 and Next steps 18). Audited 2026-11-15
-  (docs/AUDIT_GUI_2026-11-15.md, HISTORY 387): the fix sessions follow that document's order;
-  the new-user evaluation of the window comes after them.
+  (docs/AUDIT_GUI_2026-11-15.md, HISTORY 387) and fixed in six sessions (HISTORY 388-393);
+  the new-user evaluation of the window comes next. Changing a figure (G3's second half) is
+  not built.
 
 ## Deliberate differences from pyHXExpress
 
@@ -1025,7 +1032,7 @@ Planned, not built:
    filters in the list; the details beside the figures (a spectrum's `spectra.csv` row, a
    series' `uptake.csv` rows) and a read-only Tables view in Results; (the series review table:
    not for now, owner 2026-11-04);
-   the analysis tables. Panel limits for the other figures (owner, 2026-11-04): done for the
+   the analysis tables (all built: HISTORY 261-280). Panel limits for the other figures (owner, 2026-11-04): done for the
    analysis figures by `[analysis] page_size` (HISTORY 276) and the Results populations
    page (on the spectra's pages, HISTORY 277) and the fragment ladder (HISTORY 278); the
    closure figure grows only with the conditions (two or three) and stays one page. Also to
@@ -1034,10 +1041,11 @@ Planned, not built:
    uptake and populations pages through the table tab (HISTORY 274). Every analysis figure now
    lists its rows. G3's exit check passes (HISTORY 285): review edits made in the window give
    the same `hxex report` tables as the same edits made in a spreadsheet.
-   Later: retention and drift windows edited in the review (item 26). The window was audited
-   on 2026-11-15 (docs/AUDIT_GUI_2026-11-15.md: 13 High, 47 Medium, 72 Low; quality and speed
-   in its Part 2); the fix sessions follow that document's order, then the new-user evaluation
-   of the window.
+   Retention and drift windows are edited in the review (item 26, built: the elution tab).
+   The window was audited on 2026-11-15 (docs/AUDIT_GUI_2026-11-15.md: 13 High, 47 Medium,
+   72 Low; quality and speed in its Part 2); its six fix sessions are done (HISTORY 388-393);
+   next, the new-user evaluation of the window. Not built: changing a figure (section
+   "Changing a figure"), the series review table (owner: not for now), custom figures.
 19. **Outputs borrowed from HDXBoxeR** (owner, 2026-11-04; for the future, not scheduled;
    item (1), the summary table, BUILT 2026-11-13, HISTORY 377: `summary.csv`/`summary.md` of
    every analysis and the window's HDX Summary Table tab, with `[analysis.summary]`).

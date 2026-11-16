@@ -114,9 +114,7 @@ def test_review_rows_the_results_do_not_have_are_found():
 
 @pytest.fixture
 def tables_view(qtbot, tmp_path):
-    import os
 
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from PySide6.QtWidgets import QMessageBox
 
@@ -354,6 +352,15 @@ def test_ctrl_c_copies_every_selected_cell(tables_view, qtbot):
     qtbot.keyClick(editor.grid, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
     lines = QApplication.clipboard().text().splitlines()
     assert lines[0].split("\t") == list(editor.table.columns) and len(lines) == 4
+    # nothing selected: the current row, with the column names, as every grid of the window
+    # copies it (audit of 2026-11-15, Q-12)
+    chosen.clearSelection()
+    chosen.setCurrentIndex(model.index(1, 0), QItemSelectionModel.SelectionFlag.NoUpdate)
+    assert not chosen.selectedIndexes()
+    qtbot.keyClick(editor.grid, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    lines = QApplication.clipboard().text().splitlines()
+    assert lines[0].split("\t") == list(editor.table.columns)
+    assert lines[1].split("\t")[:2] == ["s2", "accepted"] and len(lines) == 2
 
 
 def test_the_review_table_shades_rows_the_results_do_not_have(tables_view, monkeypatch):

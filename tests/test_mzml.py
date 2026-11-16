@@ -874,9 +874,9 @@ def test_fragments_take_the_scans_of_their_own_parent(tmp_path, caplog):
     with caplog.at_level(logging.WARNING):
         assert list(target_scans(table, run, ms3, config)) == [2]
     assert "1 MS3 scans do not state their earlier stages" in caplog.text
-    from hxex.io.mzml import _target_label
+    from hxex.io.mzml import target_label
 
-    assert _target_label(ms3).endswith("-ms3-pre:HCD-pz2") and "ms" not in _target_label(ms2)
+    assert target_label(ms3).endswith("-ms3-pre:HCD-pz2") and "ms" not in target_label(ms2)
     assert MzmlTarget.from_dict(ms3.to_dict()) == ms3
     assert "parent_mz" not in MzmlTarget(ENTRY).to_dict()  # older records stay as they were
     with pytest.raises(ValueError, match="parent_mz"):

@@ -2,20 +2,18 @@
 """Ctrl+mouse wheel over a table sets the font size of every table of the window, remembered in
 its settings; Ctrl+0 goes back to the system's; a plain wheel still scrolls (owner, 2026-11-13).
 Runs offscreen."""
-import os
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QKeyEvent, QWheelEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication, QTableView  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QKeyEvent, QWheelEvent
+from PySide6.QtWidgets import QApplication, QTableView
 
-from hxex.gui.data_table import DataPanel  # noqa: E402
-from hxex.gui.table_zoom import SETTING  # noqa: E402
-from test_gui import _window  # noqa: E402
+from hxex.gui.data_table import DataPanel
+from hxex.gui.table_zoom import SETTING
+from test_gui import _window
 
 
 def _wheel(view: QTableView, up: bool, ctrl: bool = True) -> bool:

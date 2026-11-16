@@ -91,9 +91,7 @@ def test_the_pages_are_drawn_and_written(results, tmp_path):
 
 
 def test_the_window_offers_the_pages(qtbot, results):
-    import os
 
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from hxex.gui.results_workspace import ResultsWorkspace
 
@@ -142,9 +140,7 @@ def test_replicated_controls_alone_fill_the_grid_on_every_page(monkeypatch):
 def test_a_spectrum_keeps_its_series_axis_and_plot_area(qtbot, results):
     """Stepping from a series to a time point and a spectrum keeps the series' m/z range
     (owner: it changed), and intensity labels of one decimal keep the plot area in place."""
-    import os
 
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from hxex.gui.results_workspace import ResultsWorkspace
     from hxex.report.series import series_mz_range
@@ -178,9 +174,7 @@ def test_the_arrows_go_through_a_series_pages_before_the_next_series(qtbot):
     """Stepping by series with the spectra in view (owner: pages 2, 3 ... were missed):
     forward through the pages, then the next series' first page; back from a first page, the
     previous series' last page."""
-    import os
 
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from hxex.gui.results_workspace import ResultsWorkspace
     from hxex.report import Results
@@ -223,9 +217,7 @@ def test_the_populations_go_on_over_the_spectras_pages(qtbot, results, tmp_path)
     assert figures["populations_2"]._suptitle.get_text().endswith("(page 2 of 3)")
     written = sorted(p.name for p in write_figures(results, tmp_path / "png", cfg))
     assert len([n for n in written if "_populations_" in n]) == 3
-    import os
 
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from hxex.gui.results_workspace import ResultsWorkspace
 

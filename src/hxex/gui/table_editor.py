@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractTableModel, QFileSystemWatcher, QModelIndex, Qt, Signal
+from PySide6.QtCore import QAbstractTableModel, QFileSystemWatcher, QModelIndex, Qt
 from PySide6.QtGui import QBrush, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -34,7 +34,8 @@ from PySide6.QtWidgets import (
 )
 
 from .order import natural_key
-from .tips import tip
+from .table_copy import install_copy, selection_text, set_clipboard
+from .tips import ERROR_COLOUR, tip
 from .user_tables import (
     ReviewMatch,
     Table,
@@ -48,13 +49,14 @@ from .user_tables import (
     table_problem,
     write_table,
 )
+from .watched_file import WatchedFile
 
 log = logging.getLogger(__name__)
 
 # a review-table row naming a spectrum the results do not have: a translucent red, readable on
 # light and dark backgrounds
 UNMATCHED = QColor(220, 50, 47, 70)
-UNMATCHED_TEXT = QColor("#b3261e")
+UNMATCHED_TEXT = QColor(ERROR_COLOUR)
 
 
 def _stamp(path: Path) -> tuple[int, int] | None:
@@ -129,26 +131,8 @@ class TableModel(QAbstractTableModel):
         self.endResetModel()
 
 
-class _Grid(QTableView):
-    """The editor's grid, whose Ctrl+C copies every selected cell (Qt's own copied only the
-    current one; owner, 2026-11-04)."""
-
-    def __init__(self, editor: TableEditor):
-        super().__init__()
-        self.editor = editor
-
-    def keyPressEvent(self, event):  # noqa: N802 - Qt's name
-        if event.matches(QKeySequence.StandardKey.Copy):
-            self.editor.copy_selection()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-
 class TableEditor(QWidget):
     """One table as a grid, with Save and Revert."""
-
-    saved = Signal(Path)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -158,8 +142,7 @@ class TableEditor(QWidget):
         self.table: Table | None = None
         self.modified = False
         self._stamp = None
-        self.watcher = QFileSystemWatcher(self)
-        self.watcher.fileChanged.connect(self._file_changed)
+        self.watched = WatchedFile(self, self._file_changed)
 
         self.heading = QLabel()
         font = self.heading.font()
@@ -167,7 +150,7 @@ class TableEditor(QWidget):
         self.heading.setFont(font)
         self.problem = QLabel()
         self.problem.setWordWrap(True)
-        self.problem.setStyleSheet("color: #b00020;")
+        self.problem.setStyleSheet(f"color: {ERROR_COLOUR};")
         self.problem.hide()
         # review-table rows naming spectra the results do not have (owner, 2026-11-08: hxex
         # check's warning named the spectrum, not where it is in the table)
@@ -190,8 +173,11 @@ class TableEditor(QWidget):
         self._order: list[int] = []  # the table's rows in the order shown
         self._sort: tuple[int, bool] | None = None  # (column, ascending)
         self.model = TableModel(self)
-        self.grid = _Grid(self)
+        self.grid = QTableView()
         self.grid.setModel(self.model)
+        # Ctrl+C copies every selected cell (Qt's own copied only the current one; owner,
+        # 2026-11-04)
+        install_copy(self.grid, self.copy_selection)
         self.grid.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.grid.customContextMenuRequested.connect(self._menu)
         self.grid.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -267,8 +253,7 @@ class TableEditor(QWidget):
 
     def open(self, kind: TableKind | None, path: Path | None, project: Path | None) -> None:
         """Show the table ``kind`` at ``path`` (None: no table)."""
-        if self.watcher.files():
-            self.watcher.removePaths(self.watcher.files())
+        self.watched.watch(None)
         if path != self.path:
             self._sort = None  # another table opens in its file's order (audit, B-13)
         self.kind, self.path, self.project = kind, path, project
@@ -285,7 +270,7 @@ class TableEditor(QWidget):
         if kind.setting == "review.table" and project is not None:
             self._results = results_ids(project)
         self.reload()
-        self.watcher.addPath(str(path))
+        self.watched.watch(path)
 
     def reload(self) -> None:
         try:
@@ -309,8 +294,6 @@ class TableEditor(QWidget):
             self.problem.hide()
 
     def _file_changed(self, path: str) -> None:
-        if Path(path).exists() and path not in self.watcher.files():
-            self.watcher.addPath(path)  # a replaced file is no longer watched
         if not self.modified and _stamp(Path(path)) != self._stamp:
             self.reload()
             log.info("%s changed outside the window: shown as it is now", Path(path).name)
@@ -335,24 +318,12 @@ class TableEditor(QWidget):
         self.model.setData(self.model.index(row, column), value)
 
     def copied_text(self) -> str:
-        """The selected cells as a spreadsheet takes them: the block from the first selected row
-        and column to the last, tab-separated, a cell not selected inside it left empty; with
-        every cell selected (Ctrl+A), the column names first (owner, 2026-11-09)."""
-        picked = self.grid.selectionModel().selectedIndexes()
-        if not picked:
-            current = self.grid.currentIndex()
-            picked = [current] if current.isValid() else []
-        if not picked:
-            return ""
-        chosen = {(i.row(), i.column()) for i in picked}
-        rows = range(min(r for r, _ in chosen), max(r for r, _ in chosen) + 1)
-        columns = range(min(c for _, c in chosen), max(c for _, c in chosen) + 1)
-        lines = ["\t".join(self.cell(r, c) if (r, c) in chosen else "" for c in columns)
-                 for r in rows]
-        if len(chosen) == self.model.rowCount() * self.model.columnCount():
-            lines.insert(0, "\t".join(str(self.model.headerData(c, Qt.Orientation.Horizontal))
-                                      for c in columns))
-        return "\n".join(lines) + "\n"
+        """The selected cells as a spreadsheet takes them (the block from the first selected
+        row and column to the last; every cell selected: the column names first; nothing
+        selected: the current row with the names), by :func:`hxex.gui.table_copy.selection_text`."""
+        names = [str(self.model.headerData(c, Qt.Orientation.Horizontal))
+                 for c in range(self.model.columnCount())]
+        return selection_text(self.grid, lambda r, c: self.cell(r, c) or "", names)
 
     def cell_menu(self):
         """The grid's right-click menu: Copy (the selected cells, as Ctrl+C)."""
@@ -371,11 +342,7 @@ class TableEditor(QWidget):
         menu.deleteLater()
 
     def copy_selection(self) -> None:
-        from PySide6.QtWidgets import QApplication
-
-        text = self.copied_text()
-        if text:
-            QApplication.clipboard().setText(text)
+        set_clipboard(self.copied_text())
 
     def _selected_rows(self) -> list[int]:
         return sorted({i.row() for i in self.grid.selectionModel().selectedIndexes()})
@@ -542,13 +509,8 @@ class TableEditor(QWidget):
                 and not self.ask_overwrite():
             return False
         try:
-            watched = self.watcher.files()  # not watched while written (Windows refuses)
-            if watched:
-                self.watcher.removePaths(watched)
-            try:
+            with self.watched.paused():  # not watched while written (Windows refuses)
                 write_table(self.table, self.path)
-            finally:
-                self.watcher.addPath(str(self.path))
         except (TableLocked, TableReadOnly) as exc:
             log.warning("%s", exc)
             self.tell("Table not saved", str(exc))
@@ -559,7 +521,6 @@ class TableEditor(QWidget):
             self.problem.hide()
         self._enable()
         log.info("saved %s (%d rows)", self.path, len(self.table.rows))
-        self.saved.emit(self.path)
         return True
 
     def may_leave(self) -> bool:

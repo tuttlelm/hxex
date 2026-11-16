@@ -4,17 +4,15 @@ the project file made while the results load is seen when they arrive; the first
 project, which names its review table in the project file, does not read the results again;
 and a run or resume of the project shown says that the results will be replaced. Runs
 offscreen."""
-import os
 import time
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from hxex.cli import main  # noqa: E402
-from hxex.gui.review import table_stamp  # noqa: E402
-from test_cli import mzml_project  # noqa: E402
+from hxex.cli import main
+from hxex.gui.review import table_stamp
+from test_cli import mzml_project
 
 
 @pytest.fixture
@@ -58,7 +56,9 @@ def test_the_first_decision_does_not_read_the_results_again(qtbot, window_on, mo
     assert page.review.decide(status="rejected")
     assert (project.parent / "user_review_table.csv").exists()
     window.project_page.editor._file_changed(str(project))  # as the watcher reports it
-    qtbot.wait(100)
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.processEvents()  # the change handled (at once; not a fixed wait: Q-29)
     assert loads == []
     assert "review.table" in window._view_settings["values"]
     # a later [review] change still reads them again

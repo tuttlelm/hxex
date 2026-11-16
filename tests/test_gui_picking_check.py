@@ -1,17 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The Results workspace's picking check tab (hxex.report.picking_check): on a spectrum of
 results picked with the profile fit, and only there. Runs offscreen."""
-import os
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from hxex.gui.results_workspace import ResultsWorkspace  # noqa: E402
-from hxex.pipeline import RunConfig, run  # noqa: E402
-from hxex.report import Results  # noqa: E402
-from test_profile_fit import CFG, run_set  # noqa: E402
+from hxex.gui.results_workspace import ResultsWorkspace
+from hxex.pipeline import RunConfig, run
+from hxex.report import Results
+from test_profile_fit import CFG, run_set
 
 
 @pytest.fixture(scope="module")

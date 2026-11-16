@@ -7,14 +7,13 @@ import sys
 
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from hxex.cli import EXIT_STOPPED  # noqa: E402
-from hxex.gui import runner as runner_module  # noqa: E402
-from hxex.gui.run_workspace import RunWorkspace  # noqa: E402
-from hxex.gui.runner import CommandRun, outcome, shown_command  # noqa: E402
-from test_cli import mzml_project  # noqa: E402
+from hxex.cli import EXIT_STOPPED
+from hxex.gui import runner as runner_module
+from hxex.gui.run_workspace import RunWorkspace
+from hxex.gui.runner import CommandRun, outcome, shown_command
+from test_cli import mzml_project
 
 # a stand-in for hxex: a line on stdout, a progress record, then waits; obeys "stop" lines
 # unless told to be stubborn
@@ -360,8 +359,11 @@ def test_the_replace_question_comes_only_for_the_refusal_of_a_replaceable_comman
         assert asked == [], command  # never inside the finished slot (A-16)
         if asks:
             qtbot.waitUntil(lambda: asked == [1], timeout=5000)
-        else:
-            qtbot.wait(200)
+        else:  # the question is asked from a zero timer: delivered, not waited for (Q-29)
+            from PySide6.QtWidgets import QApplication
+
+            QApplication.processEvents()
+            QApplication.processEvents()
             assert asked == [], command
     # not asked while the window is closing or the project changed under it
     message.write_text(cases[2][1])

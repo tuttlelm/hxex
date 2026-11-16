@@ -1078,13 +1078,13 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
     from .io.mzml import (
         MzmlFile,
         _has_fragments,
-        _target_label,
         instrument_record,
         profile_record,
         records_noise,
         reduced_profile_text,
         scan_index_rows,
         target_applies,
+        target_label,
         target_scans,
     )
 
@@ -1130,7 +1130,7 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
             if index_rows is not None and _has_rules(project):
                 index_rows += scan_index_rows(table, path.name, run, targets,
                                               project=project.project, config=inp.scans)
-        none = [_target_label(t) for t, n in zip(mine, counts, strict=True) if n == 0]
+        none = [target_label(t) for t, n in zip(mine, counts, strict=True) if n == 0]
         _say(f"run {path.name}: sample {run.sample}, rep {run.rep}, {_run_time_text(run)}, "
              f"{len(table)} scans; {len(mine) - len(none)} of {len(mine)} targets have "
              "scans")

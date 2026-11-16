@@ -2,16 +2,14 @@
 """The elution tab's window editing (hxex.gui.window_editor; PLAN Next steps 26): the switch,
 the boxes, a drag across the trace, the preview beside the spectrum, Save to the elution-window
 table and Undo. Runs offscreen."""
-import os
 
 import numpy as np
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from hxex.gui.results_workspace import ResultsWorkspace  # noqa: E402
-from test_window_edit import PEPTIDE, RT, N, _read, _results, project  # noqa: E402, F401
+from hxex.gui.results_workspace import ResultsWorkspace
+from test_window_edit import PEPTIDE, RT, N, _read, _results, project  # noqa: F401
 
 
 def _titles(panel):
@@ -27,6 +25,25 @@ def _pictured(panel) -> bool:
 
 def _scan_times(w):
     return w._shown_traces[3].scan_times
+
+
+def _sent(task):
+    """The tickets whose results ``task``'s background jobs have sent back, delivered to the
+    window or ignored (a job replaced meanwhile)."""
+    sent = []
+    task._signals.done.connect(lambda ticket, _result: sent.append(ticket))
+    task._signals.failed.connect(lambda ticket, _message: sent.append(ticket))
+    return sent
+
+
+def _wait_delivered(qtbot, ticket, sent):
+    """Waits until the job ``ticket`` sent its result back and the window had the chance to
+    act on it: the evidence that something did not happen is the event that would have made
+    it happen, not a fixed wait a loaded machine could outrun (audit of 2026-11-15, Q-29)."""
+    from PySide6.QtWidgets import QApplication
+
+    qtbot.waitUntil(lambda: ticket in sent, timeout=30000)
+    QApplication.processEvents()  # the window's own slot, queued before ours, has run
 
 
 def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypatch):  # noqa: F811
@@ -389,6 +406,7 @@ def test_another_spectrum_never_draws_the_one_before(qtbot, project, monkeypatch
         drawn.append(getattr(fig, "hxex_spectrum", None)), show(fig, *a, **k))[1])
     editor.start.stepBy(1)  # a new window (one scan later): read in the background
     qtbot.waitUntil(lambda: editor._task.running, timeout=10000)
+    held, sent = editor._task._ticket, _sent(editor._task)
     # the new spectrum's trace is read slowly (as from large scan files): the previous
     # spectrum's preview is ready first
     reader, slow = w._reader(), threading.Event()
@@ -397,7 +415,9 @@ def test_another_spectrum_never_draws_the_one_before(qtbot, project, monkeypatch
     w.tree.setCurrentItem(second)
     drawn.clear()  # from here on, only the new spectrum may be drawn
     gate.set()
-    qtbot.wait(1500)  # the previous preview read, fitted and (before the fix) drawn
+    # the previous preview read and its result sent back (before the fix: drawn); waited
+    # for, not a fixed time (audit of 2026-11-15, Q-29)
+    _wait_delivered(qtbot, held, sent)
     qtbot.waitUntil(lambda: not panel.drawing, timeout=30000)
     slow.set()
     qtbot.waitUntil(lambda: w._shown_traces is not None and w._shown_traces[1] != old
@@ -667,11 +687,12 @@ def test_a_save_still_matching_is_dropped_when_another_spectrum_is_selected(
     editor.scope.setCurrentIndex(editor.scope.findData("replicates"))
     editor.save.click()
     assert editor._saving == w._shown_traces[1] and not editor.save.isEnabled()
+    held, sent = editor._spread_task._ticket, _sent(editor._spread_task)
     w.tree.setCurrentItem(series.child(0).child(0))  # another spectrum while matching
     assert editor._saving is None and editor.save.isEnabled()
     assert messages and messages[-1].startswith("not saved: another spectrum was selected")
     gate.set()
-    qtbot.wait(1500)
+    _wait_delivered(qtbot, held, sent)  # the match's result back (before the fix: saved)
     assert not (project.parent / "rt_elution_windows.csv").exists()
     editor.edit.setChecked(False)
 

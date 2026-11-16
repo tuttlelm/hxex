@@ -8,8 +8,9 @@ you can switch between them at any point.
 The window is being built in steps. What it does today:
 
 - **Project**: makes a new project file or opens one, and changes its settings (below).
-- **Results**: opens results as a tree of peptides, their charges, time points, and
-  replicates, and shows the figures of what you select (below).
+- **Results**: opens results as a tree of peptides, their series (one per charge state, or
+  per fragment ion), time points, and spectra (the replicates), and shows the figures of what
+  you select (below).
 - **Run**: runs *hxex*'s commands on the project (check, run, resume, report, analyse, info),
   with their messages, a progress bar, and a Stop button (below).
 - **Analysis**: shows the figures `hxex analyse` would write with the project's settings, and
@@ -51,23 +52,30 @@ hxex gui hxex.toml
 the *hxex* logo, in its light or dark version to match your desktop. The window's **Messages**
 pane at the bottom shows what *hxex* reports, as a terminal would.
 
-**File > Open** takes a project file (`.toml`), a session (`.hxexgui`, below), or results.
-Opening a project file also opens its results when it has some, with your review table and
-exclusion rules applied, as `hxex report hxex.toml` uses them. **File > Open results** opens a
-results folder (a bundle) on its own.
+**File > Open** takes a project file (`.toml`), a session (`.hxexgui`, below), or a results
+bundle saved as a `.zip` file. Opening a project file also opens its results when it has some,
+with your review table and exclusion rules applied, as `hxex report hxex.toml` uses them.
+**File > Open results**, and the **Open results…** button in the Results part, open a results
+folder (a bundle) on its own, with the default analysis settings. **File > New session** starts
+afresh, **File > Save session as…** writes the session under a new name (below), and
+**File > Quit** closes the window, asking about an unsaved session first. **Help > User guide**
+opens this guide, and **Help > About hxex** names the version.
 
 ## Settings
 
 The **Project** part of the window shows the project file's settings, one table at a time (the
 list on the left), each with its description, the text of the [settings reference](settings.md).
-**File > New project file** asks for the input format and a name and writes a project file with
-every setting at its default, as `hxex init` does.
+**File > New project file** (or the **New project file…** button at the top of the Project
+part, beside **Open project file…**) asks for the input format and a name and writes a project
+file with every setting at its default, as `hxex init` does.
 
 - A setting the file sets is in **bold**; an empty box shows the default in grey. Type a value
   and press Enter (or click elsewhere): it is written to the project file at once, as `hxex set`
   writes it, so the file keeps your comments and its layout. **Default** puts the setting back
-  to its default (a `#` in front of its line). Text needs no quotes.
-- **Undo** and **Redo** (or Ctrl+Z and Ctrl+Shift+Z, while the Project part has the keyboard)
+  to its default (a `#` in front of its line); the button reads **Preset** when a preset
+  named in the file sets the value, and puts it back to the preset's. Text needs no quotes.
+- **Undo** and **Redo** (or Ctrl+Z and Ctrl+Shift+Z, while the Settings form has the
+  keyboard; the Tables grid has no Undo)
   take back or make again the changes made in the window, one at a time, as many as you like:
   the file is put back exactly as it was, comments included. The line beside them names the
   last change (`[run.controls] d2o_fraction: default → 0.85`), so a change made by accident is
@@ -114,8 +122,8 @@ every setting at its default, as `hxex init` does.
   paste into a spreadsheet.
 - A table of names you choose (sample names under `[analysis.controls]`, run names under
   `[analysis.runs]`, ...) is a table of names and values: type a name and its value and click
-  **Add**, or change a value in the table. Under `[analysis.colours]`, each colour is shown
-  beside its name.
+  **Add**, change a value in the table, or select a row and click **Remove the selected
+  name**. Under `[analysis.colours]`, each colour is shown beside its name.
 - `[analysis] samples` sets which samples the analysis uses and their order in every figure
   and table: it is a list, with **↑** and **↓** to move the selected sample, **Remove**, and
   **Add** with the samples of the results that are open (or type one). The reference goes
@@ -198,12 +206,13 @@ where the data tell that record apart from the others.
 
 ## Results
 
-**Results** shows a run's results as a tree: each peptide of each sample, under it its charges
-(each a series), under a charge its time points (the undeuterated controls first, the fully
-deuterated last), and under a time point its replicates, which are the spectra. Each row
+**Results** shows a run's results as a tree: each peptide of each sample, under it its series
+(one per charge state, `z=2`, or per fragment ion), under a series its time points (the
+undeuterated controls first, the fully deuterated last), and under a time point its spectra,
+the replicates (`rep 1`, `rep 2`). Each row
 counts its spectra, how many have a quality flag, how many are rejected, how many the analysis
 leaves out, and how many have more than one population; a time point lists the K of its
-replicates. A replicate's row says "yes" when it is flagged or rejected, why the analysis
+spectra. A spectrum's row says "yes" when it is flagged or rejected, why the analysis
 leaves it out, its K, its review status, and its flags. Rest the pointer on a column's header
 to see what it counts, and on a flag or a reason it is left out to see what it means (every one
 is in [Flags and reasons](flags.md)). The same works in the List tab and in every table shown
@@ -240,15 +249,16 @@ In **List**, the same columns come from `spectra.csv`, and **Find** finds them t
 
 Click a row, or move through the tree with the arrow keys, to see:
 
-- **a peptide or a charge**: the series' pages, as `hxex report` draws them: the spectra, the
-  uptake plot, and the population map (when a spectrum has more than one population);
-- **a time point**: its replicates side by side, on the same m/z range as the whole series;
-  its replicates fitted at each K, a row per replicate with the K chosen for it framed; and
-  the series' uptake plot;
-- **a replicate**: that spectrum on its own, its fits at each K side by side (the one chosen
+- **a peptide or a series**: the series' pages, as `hxex report` draws them: the spectra, the
+  uptake plot, and the population map (when a spectrum has more than one population); a
+  peptide shows its first series' figures;
+- **a time point**: its spectra side by side, on the same m/z range as the whole series;
+  each fitted at each K, a row per spectrum with the K chosen for it framed; and the
+  series' uptake plot;
+- **a spectrum**: that spectrum on its own, its fits at each K side by side (the one chosen
   framed), and the series' uptake plot.
 
-A time point with a single replicate shows that spectrum's figures, as its replicate does.
+A time point with a single spectrum shows that spectrum's figures, as the spectrum does.
 The tab in view is drawn when you select a row; the other tabs of the selection are drawn
 when you open them (a selection no longer draws every tab, so moving through a large run is
 quicker). On a spectra page, and on the fits at each K, click a spectrum's panel to select
@@ -435,9 +445,10 @@ scores, and why the analysis leaves it out). Click a column's header to sort by 
 filter (flagged, K above 1, not reviewed, rejected, left out) or a sample, or type in **Find**.
 Right-click a column's header to filter by that column: tick the values to keep when it has few
 (a time by its label, such as `30 min`), give a range when it holds many numbers (a screen
-score from `0.1`, say; a time with its units, `30 s` to `2 min`), or text the value contains.
-Filters on several columns combine; a filtered column's header has a ▼ (its tooltip says how),
-and **Clear column filters** shows every row again.
+score from `0.1`, say; a time with its units, `30 s` to `2 min`), or text the value contains;
+in that dialog **All** ticks every value, **None** unticks them, and **Clear** removes the
+column's filter. Filters on several columns combine; a filtered column's header has a ▼ (its
+tooltip says how), and **Clear column filters** shows every row again.
 Choosing a row shows that spectrum, with the review panel, as the tree does, and **◀ ▶** step
 through the list one row at a time in the order shown (the choice of spectrum, time point, or
 charge beside them is greyed out on the List tab; Ctrl+C, or a right click, copies the row chosen or every
@@ -500,22 +511,23 @@ report hxex.toml` does.
 
 ### Exporting a series
 
-Select a peptide, a charge, a time point, or a replicate in the tree, then click **Export
+Select a peptide, a series, a time point, or a spectrum in the tree, then click **Export
 data**, beside **Save figure…** above its figures: **Export for HX-Express** writes the series
-(for a peptide, each of its charges) as an HX-Express spreadsheet, and **Export plot data**
-writes the data behind its figures as CSV files (for a time point or a replicate, only that
-part). A dialog asks for the folder, an
-optional prefix and suffix for the names, and the options; it lists the names it will write
+(for a peptide, each of its series) as an HX-Express spreadsheet, and **Export plot data**
+writes the data behind its figures as CSV files (for a time point or a spectrum, only that
+part). A dialog asks for the folder (**Browse…**), an optional prefix and suffix for the names,
+and the options (the **Spectra**, **Controls**, and **Fits** lists: which spectra, which
+controls, and the fits at which K go into the files); it lists the names it will write
 and asks before replacing anything. What each export holds is in
 [Outputs](outputs.md#exporting-one-series).
 
 ## Reviewing spectra
 
 The **Review** panel under the tree records your decision on what is selected: one spectrum,
-or every spectrum of a time point, a charge, or a peptide (all the charges the tree shows under
-it; its figures are those of its first charge).
+or every spectrum of a time point, a series, or a peptide (all the series the tree shows under
+it; its figures are those of its first series).
 
-- **◀** and **▶** (top right) go to the previous and next spectrum, time point, or charge
+- **◀** and **▶** (top right) go to the previous and next spectrum, time point, or series
   (the list beside them), through everything the tree shows (with the list above the tree,
   only flagged series, say). On the List tab they go row by row.
 - The line under the tree says how many series it shows of all the results' (under the list,
@@ -529,7 +541,9 @@ it; its figures are those of its first charge).
   decisions go in the project's review table, so open the project file to record them.
 - **Status**: not reviewed, accepted, or rejected. In the tree, the keys **A**, **R**, and **U**
   do the same, so you can review with the arrow keys and those three letters.
-- **K**: the fit's choice, or the number of populations to use (as far as the run fitted).
+- **K**: the fit's choice, or the number of populations to use (as far as the run fitted);
+  with several spectra selected whose K differ, the list reads "(differs between the
+  spectra)" until you choose one for them all.
   When no bootstrap was made at the K you choose, **Add the bootstrap (Resume)** runs `hxex
   resume`, which adds it. When the run's quick screen (`[run.fit] screen`) skipped that K for
   the spectrum, the spectrum stays at the fit's K, and the panel says so, until **Resume** fits
@@ -541,7 +555,7 @@ it; its figures are those of its first charge).
   leave the box, and a note you are still typing goes with the status or K you choose next,
   or with the spectrum when you move on to another. A note the run's own review layer holds
   (one set from Python, or carried over by a rerun) is shown, and the box says so when you
-  rest the pointer on it; emptying the box clears it. With a time point or a charge selected,
+  rest the pointer on it; emptying the box clears it. With a time point or a series selected,
   the box shows the note its spectra
   share, and a note typed there replaces each spectrum's own. When their notes differ, the box
   is empty and says so; leaving it empty keeps each one's note. A note needs no decision: on a
