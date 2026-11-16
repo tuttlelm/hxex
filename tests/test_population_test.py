@@ -498,6 +498,26 @@ def test_the_analysis_uses_the_test_and_draws_the_tiers(tested_run, tmp_path):
     assert labels and all("deuterated" in label for label in labels)
     later = plot_population_tiers(rm, times=[60.0])
     assert {r["time"] for r in figure_rows(later)[1]} == {60.0}
+    # each row outlines the residue blocks of its residues (the resolution), as the
+    # significance maps do; every residue of a block shares its tier
+    k1 = (rm.K == 1) & (rm.population_tier != "") & ~rm.no_amide
+    wanted = {(str(s), int(a), int(b)) for s, a, b in
+              zip(rm.sample[k1], rm.block_start[k1], rm.block_end[k1], strict=True)}
+    assert wanted
+    for s, a, _ in wanted:
+        inside = k1 & (rm.sample == s) & (rm.block_start == a)
+        for t in set(rm.time[inside].tolist()):
+            same = inside & (np.isnan(rm.time) if np.isnan(t) else rm.time == t)
+            assert len(set(rm.population_tier[same & (rm.role == rm.role[same][0])])) == 1
+    outlined = set()
+    for p in plot_population_tiers(rm).axes[0].patches:
+        gid = p.get_gid() or ""
+        if gid.startswith("block:"):
+            first, last = gid.rsplit(":", 1)[1].split("-")
+            outlined.add((gid.split(":")[1].split()[0], int(first), int(last)))
+    assert outlined == wanted
+    plain = plot_population_tiers(rm, block_outline=None)
+    assert not any((p.get_gid() or "").startswith("block:") for p in plain.axes[0].patches)
     with open(tmp_path / "a" / "species_uptake.csv") as fh:
         row = next(csv.DictReader(fh))
     assert row["set_p_1"] != "" and row["best_set_reason"].startswith("set test")

@@ -10406,3 +10406,17 @@ CSVs or mzML if wanted.
     `stored_in` nor `read_plan` counts as a changed `spectra_source`. `hxex resume` stays the
     quicker route between presets (the run works out every whole-run step again: picking
     checks, controls, noise curve, flags). Tests: `tests/test_stored_read.py`.
+
+398. **The population tier map outlines the residue blocks (owner, 2026-11-16: "agree").**
+    `plot_population_tiers` outlines each row's residue blocks (`block_start`, `block_end` of
+    the sample's own residue map at that point: the stretches between neighbouring peptide
+    ends), as the significance maps do since item 207, in the same dark grey and line width
+    (`block_outline`, None leaves them out), with the legend entry "a block the peptides cannot
+    divide (resolution)". The samples are now apart by a true gap (`pcolormesh` on uneven rows)
+    instead of a white line over the boundary, which would hide the outlines' edges. A tier is
+    one value per block by construction (each covering peptide weighs by its own length, and a
+    block's residues share their covering peptides): checked on the tutorial (1,601 blocks) and
+    the benchmark (3,487 blocks), none with two tiers. So the outlines add only where
+    neighbouring blocks share a tier: a long stretch of one colour can be several blocks, and
+    "localised" is localised to a block. Guide population-test.md "The residue tiers", the
+    figure catalogue line. Test: `test_the_analysis_uses_the_test_and_draws_the_tiers`.

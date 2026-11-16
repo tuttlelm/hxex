@@ -82,6 +82,10 @@ peptides that end between the regions tell the two cases apart, the residue leve
 `hxex analyse` draws the tiers in `population_tiers.pdf`: one row per sample and time point,
 with the undeuterated and fully deuterated controls first, one column per residue. The
 undeuterated rows should show no tier above *no sign*: where they do, look at those peptides.
+Each row outlines the residue blocks of that sample's peptides at that point: the stretches
+between neighbouring peptide ends, which the peptides cannot divide. Every residue of a block
+has the same covering peptides, so the same tier: a long stretch of one colour can be several
+blocks, and "localised" means localised to a block, not to a single residue.
 
 The tiers also decide what the residue plots show (`choice_<sample>_<time>`,
 `populations.csv`, and the comparisons between samples): two populations wherever the tier is

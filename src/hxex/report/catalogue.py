@@ -278,7 +278,8 @@ KINDS: tuple[FigureKind, ...] = (
     FigureKind(
         "population_tiers", "Population tiers", ANALYSE,
         ("population_tiers", "population_tiers_{page}"),
-        "the residue tiers of the population test, one row per sample and time point",
+        "the residue tiers of the population test, one row per sample and time point, each "
+        "residue block the peptides cannot divide outlined",
         "population-test.md#the-residue-tiers", (_TEST,),
         data="where a residue has a tier", changed_by=("[analysis] page_size",)),
     FigureKind(
