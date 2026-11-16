@@ -10311,4 +10311,10 @@ CSVs or mzML if wanted.
     is passed now), and the elution editor's dropped-save test selected the other spectrum
     before the pool thread had started the held match, so the replaced job never ran and the
     ticket it waited for never came (one run in three locally on four cores; it now waits for
-    the match to start).
+    the match to start). Then the lowest-versions job failed in Save session as… (the File
+    menu's Open recent "already deleted"): the test helper found menu actions through
+    `QAction.menu()`, and under PySide6 6.7.0 collecting the wrapper that call returns marks
+    the menu's submenus deleted although Qt still has them (6.11 does not; reproduced alone in
+    a lowest-versions environment). hxex itself never calls it, and events through the
+    window's application-wide filter do not trigger it, so only the test was affected; the
+    helper now finds the menu among the menu bar's children.

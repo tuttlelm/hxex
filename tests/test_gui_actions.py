@@ -9,7 +9,14 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QKeyCombination, Qt
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QMenu,
+    QPushButton,
+    QToolButton,
+    QWidget,
+)
 
 from hxex.config import template
 from test_gui import _window, bundle  # noqa: F401 - the fixture
@@ -54,10 +61,14 @@ def _ask(monkeypatch, name, answer="", chosen=""):
 
 
 def _action(window, menu: str, text: str) -> QAction:
-    """The action ``text`` of the menu bar's menu ``menu`` (shortcut ampersands ignored)."""
-    for top in window.menuBar().actions():
-        if top.text().replace("&", "") == menu:
-            for action in top.menu().actions():
+    """The action ``text`` of the menu bar's menu ``menu`` (shortcut ampersands ignored).
+    The menu is found among the menu bar's children, not through ``QAction.menu()``: under
+    PySide6 6.7 (the lowest version allowed) collecting the wrapper that call returns marked
+    the menu's submenus deleted (the File menu's Open recent, so Save session as… failed),
+    though Qt still had them; 6.11 does not."""
+    for top in window.menuBar().findChildren(QMenu):
+        if top.title().replace("&", "") == menu:
+            for action in top.actions():
                 if action.text().replace("&", "") == text:
                     return action
     raise LookupError(f"no {menu} > {text}")
