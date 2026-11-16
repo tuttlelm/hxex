@@ -10420,3 +10420,41 @@ CSVs or mzML if wanted.
     neighbouring blocks share a tier: a long stretch of one colour can be several blocks, and
     "localised" is localised to a block. Guide population-test.md "The residue tiers", the
     figure catalogue line. Test: `test_the_analysis_uses_the_test_and_draws_the_tiers`.
+
+399. **Back-exchange standard, signal accounting and unlisted charge states on the
+    intact-peptide benchmark's raw files** (owner, 2026-11-16; scratch only, no change to
+    *hxex*). The owner supplied the lab protocol behind the benchmark, the tutorial data and the
+    private noisy unimodal dataset (private notes). It names a back-exchange standard,
+    bradykinin, added to every exchange buffer, and "internal exchange reporters" in the
+    protein stocks whose identity is not known.
+    - Bradykinin is in the benchmark's converted raw files (not in the HDExaminer exports):
+      2+ at its own retention time, ~5e6 in the undeuterated runs but 150-2,000x weaker in the
+      labelled, fully deuterated and TD runs (cause unknown). Its D is flat over time (median
+      2.8-3.1 of 5 amides, the 20 h runs the cleanest), a retention of ~0.70 at 85 % D2O, and
+      the fully deuterated runs read the same as the labelled ones (the heated control's D
+      fraction matches the labelling's). Possible uses: calibrating the kint back-exchange
+      stand-in against measured FD controls, a per-injection back-exchange check (LC columns);
+      too weak here for either.
+    - No exchange reporter was found (two candidate peptides and the owner's note of an m/z were
+      searched). A first result was a protein peptide 66 ppm from a candidate, caught by a
+      +-40 ppm search window, and was retracted after the owner had begun to interpret it.
+      Lesson: check every candidate's measured m/z (+-15 ppm on this Q-TOF) against the
+      protein's peptide list before reading its uptake.
+    - Of all MS1 intensity in the WT undeuterated runs, 26-27 % lies in the picked spectra's
+      windows (30-31 % of points above the noise level); 10 % on the listed ions' peaks outside
+      their drift ranges (drift tails or other ions: not settled); 5 % at unlisted charges;
+      42-45 % unlisted ions during the gradient; 12 % before or after the elution range.
+    - Unlisted charge states: the listed ions' signal stands 130-150x above the between-peak
+      background at 2+ and 3+, 30-50x at 4+ to 6+ (higher charges noisier, item 187). The 61
+      unlisted peptide-charges that pass in both undeuterated runs (signal, natural-abundance
+      pattern, no listed ion on their m/z) were added to the whole benchmark as a test: the
+      charge-averaged peptide values' replicate errors did not change (median ratio 1.00;
+      means moved 0.04 D median), half the added ions disagree with their listed charges by
+      0.3-2.7 D in every sample and time (undeuterated-only checks miss interference that
+      appears with deuteration), and the default filters leave out 2.0 % of them (0.4 % of
+      the listed). Gains only where the unlisted charge was much the stronger (3 of 4 such
+      peptides). The replicate scatter here is mostly between injections, which every charge
+      of one injection shares. Decision: no automatic adding of charge states; a suggestions
+      list (strength in the undeuterated controls, agreement after a run) is possible.
+    Private record: `hxex_private/analysis_examples/{bradykinin_backexchange,signal_accounting}`
+    (READMEs).
