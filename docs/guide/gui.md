@@ -713,9 +713,11 @@ would type it. One command runs at a time.
 - Run the project again after changing what is read: the peptide table, the elution windows
   saved in the elution tab, or the picking or fit settings, with overwrite enabled:
   `overwrite = true` in the project file's `[output]` part (then **Run** replaces the earlier
-  results without asking), or **Replace** when it asks. The run reads every file again but fits
-  again only the series whose spectra changed, so it takes a fraction of the first run's time,
-  and your review decisions are kept.
+  results without asking), or **Replace** when it asks. The run reads your data files again only
+  when something that decides the read changed (otherwise it takes the spectra stored in the
+  results: after a change of preset or fit settings, say), and fits again only the series whose
+  spectra changed, so it takes a fraction of the first run's time, and your review decisions
+  are kept ([Running again](outputs.md#running-again)).
 - The list below the buttons chooses where **Run** and **Resume** fit. Its first entry is the
   project file's setting, `[run.fit.backend] device`, with its value (`auto`, the default, uses
   an NVIDIA graphics card when *hxex* can see one, else the CPU); **Change…** opens that

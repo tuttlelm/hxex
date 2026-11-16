@@ -115,8 +115,23 @@ from the results in the bundle now, and which command writes each, with one clos
 `--overwrite` and `--keep-previous`. They are information, not problems: the check still ends with `ok`, since each
 command stops by itself, before doing any work.
 
+**Spectra kept from the earlier results.** When `hxex run` replaces a bundle (`--overwrite`
+or `--keep-previous`) and nothing that decides the read has changed, it takes the raw spectra
+stored in that bundle instead of reading your data files again. Nothing has changed when the
+`[input]` settings, the peptide table, the elution-window table, the FASTA files, and, for
+mzML and Thermo files, the `[run.picker]` settings are the same, and every data file still has
+the size and checksum it had when it was read. A change of preset or of the fitting settings
+is not such a change, so the run goes straight to fitting. The log says either `taking the raw
+spectra stored in results` or why the input is read (`reading the input: [input] scans changed
+...`), and `hxex info results` says `read  not repeated` when the read was skipped.
+`hxex run --overwrite --reread` reads the input again in any case. A newer *hxex* whose readers
+changed reads again by itself, and so do results made before 16 November 2026, which do not
+record what their read depended on; results written with `keep_spectra = false` have no
+spectra to take.
+
 **Fits kept from the earlier results.** When `hxex run` replaces a bundle (`--overwrite` or
-`--keep-previous`), it still reads and picks every spectrum, but it does not fit again the
+`--keep-previous`), it picks every spectrum (the picking stored in the bundle is taken when
+the spectra and the picking settings are the same), but it does not fit again the
 peptides and fragments whose spectra are all exactly as before: each keeps its fits,
 population test, and bootstrap from the earlier results. Only what changed is fitted, so a run
 after a small change (a retention window edited in the window, one spectrum left out, a peptide

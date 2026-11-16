@@ -104,7 +104,8 @@ and `spectra_source` when other files were read or read differently) and `review
 (`carried`, `stale`: the review entries carried over and how many are stale), `fits_reused`
 and `spectra` (how many of the run's spectra kept the replaced bundle's fit, population test
 and bootstrap because their series' input was unchanged, out of how many; `hxex.reuse`;
-absent before 2026-11-07);
+absent before 2026-11-07), `spectra_taken` (true when the run took the replaced bundle's
+stored spectra instead of reading the input: `hxex.stored_read`; absent otherwise);
 `hxex.io.provenance_of` builds it, and a resumed bundle keeps it; `resumed` lists what
 `hxex resume` added to the bundle since, one entry each: `at`, `added` (`population test`,
 `bootstrap` (added or made again), `bootstrap at chosen K` (the K a review chose), or
@@ -167,7 +168,14 @@ it unless the project file sets it. A scan-file
 record also holds `windows`, the m/z range each target's scans were cut to (the picker's
 predicted bins plus `mz_margin`; a rerun from stored spectra whose picker reaches beyond it
 warns). Spectra taken from an earlier bundle or spectra file (`[input] spectra`) keep that
-read's record with `stored_in`, the path they were taken from;
+read's record with `stored_in`, the path they were taken from. A record made by a read of a
+project file (`hxex.config.read_input`, since 2026-11-16) carries `read_plan`: what the read
+depended on, worked out before any data file was opened (the readers' code fingerprint, the
+`[input]` settings, the entries or targets of the peptide table, the elution-window rows, the
+picker and registry for scan files, the identities of FASTA, retention-time, and pooled FASTA
+files); `hxex run` replacing the bundle compares it with the project's, and the `files`
+identities with the data, before taking the stored spectra (`hxex.stored_read`). Neither
+`stored_in` nor `read_plan` counts as a changed `spectra_source` in the provenance;
 `project_file`: the project file's other settings as the run used them (`project`, `threads`,
 `input` and `output`, each table with every setting written out and the command line's
 `--bundle`, `--overwrite`, and `--keep-previous` applied; paths recorded as `[input]

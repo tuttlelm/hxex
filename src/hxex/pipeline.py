@@ -1352,6 +1352,10 @@ def run(
     previous, review = (_previous(out, overwrite or keep_previous) if out is not None
                         else (None, None))
     moved = None
+    # spectra taken from the bundle this run replaces (hxex run without a read: hxex.stored_read)
+    where = (getattr(data, "source", None) or {}).get("stored_in")
+    taken = bool(previous is not None and where
+                 and Path(where).resolve() == Path(out).resolve())
     if previous is not None and keep_previous:
         # before anything is read or fitted (audit 2026-11-01 High 4): a folder that cannot be
         # moved stops the run with everything where it was, and a run that fails later leaves
@@ -1545,6 +1549,8 @@ def run(
         # how many spectra kept the replaced bundle's fits (hxex.reuse)
         provenance["fits_reused"] = 0 if reused is None else len(reused)
         provenance["spectra"] = len(measurements)
+        if taken:  # the input was not read again: the replaced bundle's spectra were taken
+            provenance["spectra_taken"] = True
         if reused is not None and reused.made_with:  # kept from other software, same engine
             provenance["fits_reused_made_with"] = list(reused.made_with)
     checkpoint = out is not None and config.bootstrap is not None

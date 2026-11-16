@@ -10377,3 +10377,30 @@ CSVs or mzML if wanted.
     (Ubuntu 20.04, RHEL 8) and macOS 12. 6.8 is Qt's long-term support release. `pyproject.toml`
     `gui` and `dev` extras; the lowest-versions job now tests 6.8.0.
 
+397. **A run that replaces a bundle takes its stored spectra when the read would give them
+    again** (owner, 2026-11-16). Moving a test project from the `quick` preset to `bimodal`
+    with `hxex run --overwrite` read every data file again, although the bundle held the same
+    spectra and the fits were then reused (HISTORY 326); `--spectra` could not help, since a
+    run refuses to take its spectra from the bundle it replaces. Owner: run and resume blur
+    here; the agreed rule is that `hxex run` brings the results up to date with the project
+    file and repeats only what changed. Built (`hxex.stored_read`): a fresh read of a project
+    file records its *read plan* in the read record (`read_plan`): the fingerprint of the
+    readers' code (`hxex._engine.reader_fingerprint`: the io readers, `spectra`, `chem`,
+    `picking`; the engine's fingerprint is unchanged, so no fit is invalidated), the `[input]`
+    settings that decide the read (not `spectra`, `exclude`, `time_scale`), what they give
+    before any data file is opened (folder formats: the entries and the data folder;
+    scan formats: the targets, `[run.picker]`, the registry, the data root and every row of
+    the elution-window table), and the identities of the SpecExport FASTA files, the
+    retention-time table and the pooled FASTA (with its classes). `hxex run` replacing a
+    bundle (`--overwrite`, `--keep-previous`, the window's Replace) computes the plan again;
+    when it equals the stored one and every data file matches the identity the read recorded
+    (size and checksum: an indexed mzML's own SHA-1, else SHA-256 of the file or of a
+    SpecExport folder's files), it takes the stored spectra (with the steps after a read:
+    `time_scale`, retention times, pooled candidates; `hxex.config.after_read`), and the
+    stored picking follows when its settings and the hxex version match. Otherwise it reads,
+    and the log names the first differences (`[input] scans`, `the targets`, a file). Results
+    made before have no plan and read once. `hxex run --reread` reads in any case. The
+    provenance records `spectra_taken` (`hxex info`: `read  not repeated`), and neither
+    `stored_in` nor `read_plan` counts as a changed `spectra_source`. `hxex resume` stays the
+    quicker route between presets (the run works out every whole-run step again: picking
+    checks, controls, noise curve, flags). Tests: `tests/test_stored_read.py`.

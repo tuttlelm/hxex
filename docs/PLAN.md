@@ -1313,7 +1313,10 @@ Planned, not built:
      bootstrap of every series whose input is unchanged (`hxex.reuse`), fitting the rest; every
      whole-run step (peak measure, envelopes, noise curve, m/z check, controls, flags) is redone,
      so the result is a full run's up to batch rounding. `--refit` fits everything. A partial
-     read stays possible later if the read time gets in the way.
+     read stays possible later if the read time gets in the way. Since 2026-11-16 (owner) the
+     read itself is skipped when nothing that decides it changed: the run takes the replaced
+     bundle's stored spectra (`hxex.stored_read`: the read plan recorded with them and the
+     data files' identities); `--reread` reads.
    - *To settle*: a spectrum's id names the scans it summed (`.../scans247-257`), so a new window
      gives a new id and its review entries would go stale; they should follow the spectrum by
      file and peptide ion. SETTLED by item 27 (built).

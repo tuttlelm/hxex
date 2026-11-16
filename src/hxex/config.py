@@ -1689,18 +1689,30 @@ def read_input(
                  if unused else "")
         spectra = load_stored_spectra(inp.spectra)
     else:
+        from .stored_read import PLAN_KEY, read_plan
+
+        plan = read_plan(project)  # before the read: what it depends on (hxex.stored_read)
         spectra = _read_input(project, progress=progress, cancel=cancel)
+        if plan is not None:
+            spectra = replace(spectra, source={**(spectra.source or {}), PLAN_KEY: plan})
+    return after_read(spectra, inp, stored=inp.spectra is not None)
+
+
+def after_read(spectra: SpectrumSet, inp: InputSettings, *, stored: bool) -> SpectrumSet:
+    """The steps :func:`read_input` takes after the read, on the spectra read or taken from
+    storage (``stored``: the log says when ``time_scale`` replaces theirs): the time scale, the
+    retention times of ``retention_times``, and the candidates of ``pooled_fasta``."""
     if (spectra.source or {}).get("time_scale", "seconds") != inp.time_scale:
-        if inp.spectra is not None:
+        if stored:
             log.info("input.time_scale = %r replaces the stored spectra's %r", inp.time_scale,
                      (spectra.source or {}).get("time_scale", "seconds"))
         spectra = replace(spectra, source={**(spectra.source or {}),
                                            "time_scale": inp.time_scale})
-    if project.input.retention_times is not None:
+    if inp.retention_times is not None:
         from .io import apply_retention_times, read_retention_times
 
         spectra = apply_retention_times(spectra, read_retention_times(
-            project.input.retention_times))
+            inp.retention_times))
     if inp.pooled_fasta is not None:
         spectra = _with_candidates(spectra, inp)
     return spectra

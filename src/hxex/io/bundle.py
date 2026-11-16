@@ -613,9 +613,22 @@ def settings_changed(old: Mapping | None, new: Mapping | None) -> list[str]:
     else:
         for key in ("fit", "bootstrap", "picker", "controls", "quality", "envelope"):
             changed += _diff(old.get(key), new.get(key), key)
-    if _without_stamps(old.get("spectra_source")) != _without_stamps(new.get("spectra_source")):
+    if _read_of(old.get("spectra_source")) != _read_of(new.get("spectra_source")):
         changed.append("spectra_source")
     return sorted(changed)
+
+
+# read-record keys that say how the spectra were come by, not what was read: where stored
+# spectra were taken from (hxex.config.load_stored_spectra) and the read plan
+# (hxex.stored_read), whose reader fingerprint changes with the code
+_NOT_THE_READ = ("stored_in", "read_plan")
+
+
+def _read_of(source):
+    """A read record without its stamps and without :data:`_NOT_THE_READ`."""
+    if isinstance(source, Mapping):
+        source = {k: v for k, v in source.items() if k not in _NOT_THE_READ}
+    return _without_stamps(source)
 
 
 def _diff(old, new, prefix: str) -> list[str]:

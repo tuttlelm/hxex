@@ -52,8 +52,9 @@ log = logging.getLogger(__name__)
 COMMANDS = (("Check", "check", "check the project file and show what would be read"),
             ("Run", "run",
              "read, pick, fit, and bootstrap: the results bundle; run again (Replace when it "
-             "asks) after changing what is read: only the series whose spectra changed are "
-             "fitted again, and your review decisions are kept"),
+             "asks) after changing what is read: the data files are read again only when "
+             "something that decides the read changed, only the series whose spectra changed "
+             "are fitted again, and your review decisions are kept"),
             ("Resume", "resume",
              "add to the results without fitting again: a stopped or changed bootstrap, the K "
              "your review chose, the population test, changed controls, or the quality flags"),

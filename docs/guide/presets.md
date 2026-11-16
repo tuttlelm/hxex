@@ -145,5 +145,10 @@ Going down to `quick` from a complete preset is refused: the results already hol
 `quick` gives. Keep them, or make a new run with `hxex run hxex.toml --overwrite`. A change of
 other fitting settings (`[run.fit]` other than `k_max`) also needs a new run.
 
+`hxex run hxex.toml --overwrite` with the new preset gives the same results too: it does not
+read your data files again (it takes the spectra stored in the results, as long as nothing that
+decides the read has changed) and keeps the fits it can, but it works out everything else
+again, so `hxex resume` is the quicker route.
+
 After resuming, run `hxex report hxex.toml --figures --overwrite` and `hxex analyse
 hxex.toml --overwrite` to bring the figures and the analysis up to date.

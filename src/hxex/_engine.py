@@ -18,15 +18,22 @@ from pathlib import Path
 
 # under src/hxex: the modules (or packages) that decide a fit, given its input
 ENGINE = ("fit", "model", "noise.py", "bootstrap.py", "population_test.py")
+# under src/hxex: the modules (or packages) that decide what a read gives, given its settings
+# and files: the readers, the shared spectrum types, the chemistry, and the picking the scan
+# readers use (m/z windows, calibration, retention search). ``hxex run`` takes the stored
+# spectra of the bundle it replaces in place of a read only when this is unchanged
+READER = ("io/read.py", "io/specexport.py", "io/hxexpress.py", "io/pooled.py", "io/entries.py",
+          "io/mzml.py", "io/thermo.py", "io/drift_gate.py", "io/elution_windows.py",
+          "io/retention_search.py", "io/times.py", "io/_common.py", "spectra.py", "chem",
+          "picking")
 
 
-@lru_cache(maxsize=1)
-def engine_fingerprint() -> str:
-    """The first 16 hex digits of the SHA-256 of the engine's source files (their paths
-    within the package and their bytes, in path order)."""
+def _fingerprint(names) -> str:
+    """The first 16 hex digits of the SHA-256 of the source files ``names`` (modules or
+    packages under src/hxex): their paths within the package and their bytes, in path order."""
     root = Path(__file__).resolve().parent
     files: list[Path] = []
-    for name in ENGINE:
+    for name in names:
         path = root / name
         files += sorted(path.rglob("*.py")) if path.is_dir() else [path]
     h = hashlib.sha256()
@@ -36,3 +43,15 @@ def engine_fingerprint() -> str:
         h.update(path.read_bytes())
         h.update(b"\0")
     return h.hexdigest()[:16]
+
+
+@lru_cache(maxsize=1)
+def engine_fingerprint() -> str:
+    """The fingerprint of the engine's source files (:data:`ENGINE`)."""
+    return _fingerprint(ENGINE)
+
+
+@lru_cache(maxsize=1)
+def reader_fingerprint() -> str:
+    """The fingerprint of the readers' source files (:data:`READER`)."""
+    return _fingerprint(READER)

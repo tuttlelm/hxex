@@ -112,6 +112,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="fit every spectrum again; without it, a spectrum whose input is the "
                         "same as in the bundle being replaced keeps its fit, population test "
                         "and bootstrap")
+    p.add_argument("--reread", action="store_true",
+                   help="read the input again; without it, a run that replaces a bundle takes "
+                        "the raw spectra stored there when the input settings and files are "
+                        "those they were read from")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of run.fit.backend)")
     _spectra_option(p)
     _threads_option(p)
@@ -1319,11 +1323,20 @@ def cmd_run(args) -> int:
     stop = _Stop()
     threads = args.threads if args.threads is not None else project.threads
     with stop.installed(), _threads(threads):
-        if stored is None:
-            log.info("reading the %s input of %s", project.input.format, project.project)
-        with _progress(args, name="read") as progress:
-            spectra = read_input(project, progress=progress, cancel=stop)
-        log.info("%d spectra read", len(spectra))
+        spectra = None
+        if (stored is None and not getattr(args, "reread", False) and (overwrite or keep_previous)
+                and bundle.exists()):
+            # the spectra of the bundle being replaced, when a read would give them again
+            # (hxex.stored_read; owner, 2026-11-16)
+            from .stored_read import stored_spectra_for
+
+            spectra = stored_spectra_for(project, bundle)
+        if spectra is None:
+            if stored is None:
+                log.info("reading the %s input of %s", project.input.format, project.project)
+            with _progress(args, name="read") as progress:
+                spectra = read_input(project, progress=progress, cancel=stop)
+            log.info("%d spectra read", len(spectra))
         with _progress(args) as progress:
             result = run(
                 spectra, config, out=bundle, project=project.project, notes=out.notes,
@@ -2211,6 +2224,9 @@ def _provenance_rows(prov) -> list[tuple[str, str]]:
         rows.append(("changed", "nothing" if not changed else
                      f"{len(changed)} setting(s): " + ", ".join(changed[:8])
                      + (", ..." if len(changed) > 8 else "")))
+        if prov.get("spectra_taken"):
+            rows.append(("read", "not repeated: the raw spectra stored in the replaced bundle "
+                                 "were taken (the same input settings and files)"))
         if "fits_reused" in prov:
             other = prov.get("fits_reused_made_with") or []
             rows.append(("fits reused", f"{prov['fits_reused']} of {prov.get('spectra', '?')} "
