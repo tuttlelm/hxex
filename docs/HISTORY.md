@@ -10227,3 +10227,15 @@ CSVs or mzML if wanted.
     `test_gui_review.py` (the notes rule, D-3, D-9 with E-4 on a screened run),
     `test_gui_analysis.py`, `test_gui_run.py`, `test_gui.py`, `test_cli.py`,
     `test_fragment_kinetics.py`.
+    Afterwards, the same day: the lowest-versions CI job of e17ec48 (Session 4) failed in
+    `test_the_populations_go_on_over_the_spectras_pages` with the mathtext `ParseException` of
+    HISTORY 282 (owner pasted the log; not reproduced in a local lowest-versions venv). The
+    conftest's wait for the drawing thread ran as a fixture's teardown, but pytest-qt's own
+    teardown (a hook wrapper placed last) processes the application's events once more after
+    the fixtures, and a drawing's "done" delivered there asks for the next one (a stage of a
+    staged drawing, a figure tab opened by the test's last click), which then ran in the
+    drawing thread while the next test drew in the main thread. Measured with a plugin that
+    counts tests starting while the drawing thread is busy (session scratchpad): 34 of 281 GUI
+    tests with the fixture, the failed test among them; 0 with the wait as a hook wrapper
+    around the whole teardown, which processes events and waits again until nothing new starts
+    (`tests/conftest.py`).
