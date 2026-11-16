@@ -46,7 +46,7 @@ dev = [
     # the window's tests (tests/test_gui.py); pytest-qt needs a Qt binding to start at all;
     # not 6.12.0, as for the gui extra below
     "pytest-qt>=4.4",
-    "PySide6-Essentials>=6.7,!=6.12.0",
+    "PySide6-Essentials>=6.8,!=6.12.0",
 ]
 # reading Thermo .raw files (hxex.io.thermo); also needs a .NET runtime and Thermo's
 # RawFileReader assemblies, which are not Python packages
@@ -59,11 +59,13 @@ notebook = [
     "notebook>=7.2",
 ]
 # hxex's window (hxex.gui; `hxex gui`): Qt for Python, LGPL. 6.7 is the first whose SVG
-# renderer draws matplotlib's hatching (docs/HISTORY.md, item 232). Not 6.12.0: on Python 3.11
+# renderer draws matplotlib's hatching (docs/HISTORY.md, item 232); the floor is 6.8 (Qt's
+# long-term support release), as 6.7 handed event filters invalid plain events (item 396;
+# 6.8 drops only macOS 11; 6.10 would drop glibc < 2.34 and macOS 12). Not 6.12.0: on Python 3.11
 # each call of a Qt function that returns nothing takes a reference from None, and the window
 # aborts once None has none left (item 249; tests/test_gui.py checks every version CI installs)
 gui = [
-    "PySide6-Essentials>=6.7,!=6.12.0",
+    "PySide6-Essentials>=6.8,!=6.12.0",
 ]
 
 [project.scripts]

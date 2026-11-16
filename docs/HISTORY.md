@@ -10361,3 +10361,19 @@ CSVs or mzML if wanted.
     the coverage with four levels `░▒▓█` and the bar `─`, which every fixed font has, instead
     of the eight-level ramp. On Linux nothing changes. Test in `tests/test_gui_sequence.py`.
 \n
+
+396. **PySide6 floor raised from 6.7 to 6.8.** Under 6.7.0 (the lowest-versions CI job) three
+    window tests failed when `tests/test_gui_actions.py` ran alone (they passed after
+    `tests/test_gui.py`, CI's order): the window's application-wide event filter (Ctrl+wheel
+    table zoom, `gui.table_zoom`) was handed key presses as already-invalid plain `QEvent`s
+    without `modifiers()`, the same family of 6.7 wrapper bugs as the review keys (item 241)
+    and the figure view's tooltips (item 248), whose workarounds in `results_workspace.py` and
+    `figure_view.py` stay. 6.8.0 and 6.9.0 pass that file alone;
+    the `QAction.menu()` bug of item 393's last sentence is in 6.7.0 to 6.9.0 (6.11 does not
+    have it; hxex does not call it). The owner chose raising the floor over a class check in
+    the filter. Cost, from the PyPI wheels: 6.8 needs macOS 12 (6.7: 11), the same Linux
+    (glibc 2.28 on x86_64) and Windows, and Python 3.9 to 3.12, so only Macs on macOS 11
+    lose the window; a floor of 6.10 or later would have dropped Linux with glibc below 2.34
+    (Ubuntu 20.04, RHEL 8) and macOS 12. 6.8 is Qt's long-term support release. `pyproject.toml`
+    `gui` and `dev` extras; the lowest-versions job now tests 6.8.0.
+

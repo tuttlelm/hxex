@@ -22,7 +22,8 @@ def _settings(tmp_path) -> QSettings:
 
 def _menu(window) -> QMenu:
     """View > Appearance, found among the menu bar's descendants: not through
-    ``QAction.menu()``, whose wrapper under PySide6 6.7 marks submenus deleted (HISTORY 393)."""
+    ``QAction.menu()``, whose wrapper under PySide6 6.7 to 6.9 marks submenus deleted
+    (HISTORY 393)."""
     return next(m for m in window.menuBar().findChildren(QMenu) if m.title() == "Appearance")
 
 

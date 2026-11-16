@@ -63,9 +63,9 @@ def _ask(monkeypatch, name, answer="", chosen=""):
 def _action(window, menu: str, text: str) -> QAction:
     """The action ``text`` of the menu bar's menu ``menu`` (shortcut ampersands ignored).
     The menu is found among the menu bar's children, not through ``QAction.menu()``: under
-    PySide6 6.7 (the lowest version allowed) collecting the wrapper that call returns marked
-    the menu's submenus deleted (the File menu's Open recent, so Save session as… failed),
-    though Qt still had them; 6.11 does not."""
+    PySide6 6.7 to 6.9 (6.8 is the lowest allowed) collecting the wrapper that call returns
+    marked the menu's submenus deleted (the File menu's Open recent, so Save session as…
+    failed), though Qt still had them; 6.11 does not."""
     for top in window.menuBar().findChildren(QMenu):
         if top.title().replace("&", "") == menu:
             for action in top.actions():
