@@ -323,7 +323,7 @@ class MainWindow(QMainWindow):
             lambda: self.tabs.setCurrentIndex(WORKSPACES.index("run")))
         self.running.hide()
         self.statusBar().addPermanentWidget(self.running)
-        self.replacing = QLabel("the results shown are replaced when it finishes")
+        self.replacing = QLabel("the results shown are updated when the run finishes")
         self.replacing.setToolTip(tip("a run or resume of the project whose results are shown "
                                       "is in progress; the window shows the new results when it "
                                       "ends"))
@@ -353,7 +353,7 @@ class MainWindow(QMainWindow):
 
     def _run_notice(self) -> None:
         """While a run or resume of the project shown runs, the Results panel and the status
-        bar say that the results shown are replaced when it ends (audit of 2026-11-15, A open
+        bar say that the results shown are updated when the run ends (audit of 2026-11-15, A open
         question 1: no blocking; the window reloads them then, with the bundle's stamp
         checked before any figure reads it)."""
         from .results_workspace import RUN_NOTICE

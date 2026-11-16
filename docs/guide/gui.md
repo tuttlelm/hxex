@@ -736,7 +736,7 @@ would type it. One command runs at a time.
   several project files share a folder. The next command you run clears the console.
 - After **Run**, **Resume**, or **Report**, the Results part shows the new results. While a
   **Run** or **Resume** of the project whose results are shown is running, the Results part
-  and the status bar say that the results shown are replaced when it finishes; you can keep
+  and the status bar say that the results shown are updated when the run finishes; you can keep
   looking at them meanwhile.
 - While a command runs, the other parts of the window show it too: the tab reads **Running**
   in the highlight colour, and the right end of the status bar, at the bottom of

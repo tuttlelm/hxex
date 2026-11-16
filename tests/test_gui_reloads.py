@@ -105,10 +105,10 @@ def test_a_table_saved_while_the_results_load_is_applied(qtbot, window_on, monke
     assert page.selection().get("spectrum_id") == sid  # the place kept
 
 
-def test_a_run_of_the_project_shown_says_the_results_are_replaced(qtbot, window_on,
+def test_a_run_of_the_project_shown_says_the_results_are_updated(qtbot, window_on,
                                                                    monkeypatch):
     """While a run or resume of the project whose results are shown runs, the Results panel
-    and the status bar say that the results shown are replaced when it finishes; nothing is
+    and the status bar say that the results shown are updated when the run finishes; nothing is
     blocked (audit of 2026-11-15, A open question 1)."""
     window, project, open_ = window_on
     page = open_(project)
@@ -117,7 +117,7 @@ def test_a_run_of_the_project_shown_says_the_results_are_replaced(qtbot, window_
     run_page._ran_on = project
     monkeypatch.setattr(type(run_page.runner), "running", property(lambda self: True))
     window._run_activity("hxex run hxex.toml: fit")
-    assert page.notice.isVisibleTo(page) and "replaced when it finishes" in page.notice.text()
+    assert page.notice.isVisibleTo(page) and "updated when the run finishes" in page.notice.text()
     assert window.replacing.isVisibleTo(window)
     run_page.args = ["check", project.name]  # a check changes no results
     window._run_activity("hxex check hxex.toml")

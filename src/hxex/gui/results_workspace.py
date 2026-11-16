@@ -143,8 +143,8 @@ OVERVIEW_PAGES = {"k_selection": "K selection", "controls": "controls",
 SPECTRA_PAGE_HINT = HINT + "\nClick a spectrum's panel: select that spectrum in the tree."
 # a run or resume of the project is replacing the results shown (audit of 2026-11-15, A open
 # question 1: no blocking; the window reloads them when it ends)
-RUN_NOTICE = ("A run of this project is in progress: the results shown are replaced when it "
-              "finishes.")
+RUN_NOTICE = ("A run of this project is in progress: the results shown are updated when the "
+              "run finishes.")
 
 
 class ResultsWorkspace(QWidget):
