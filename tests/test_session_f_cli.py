@@ -5,6 +5,7 @@ and the heading still switched off, the version names its commit, and the CSV nu
 short."""
 
 import csv
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -171,6 +172,29 @@ def test_the_version_names_its_commit(monkeypatch, tmp_path, capsys):
     assert _versions()["hxex"] == hxex.__version__  # the rerun check compares the version
     monkeypatch.setattr(hxex, "_commit", "")
     assert hxex.version_text() == f"hxex {hxex.__version__}" and "hxex_commit" not in _versions()
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_git_is_asked_without_a_console_window_on_windows(monkeypatch, platform):
+    """git is a console program: asked from a process without a console (the window's
+    commands run under pythonw on Windows) it flashed a console window of its own at every
+    command's start (Windows test, 2026-11-16). On Windows it is started without one."""
+    import subprocess
+    import sys
+
+    calls = []
+
+    def run(args, **kw):
+        calls.append(kw)
+        return subprocess.CompletedProcess(args, 1, "", "")
+
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+    monkeypatch.setattr(subprocess, "run", run)
+    assert hxex._commit_from_git(Path(hxex.__file__).parent) is None
+    assert calls  # asked, and every call carries the flag on Windows only
+    flags = [kw.get("creationflags") for kw in calls]
+    assert flags == ([0x08000000] * len(calls) if platform == "win32" else [None] * len(calls))
 
 
 def test_a_command_names_the_commit_it_started_with(monkeypatch, tmp_path):

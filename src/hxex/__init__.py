@@ -49,11 +49,17 @@ def _commit_from_git(package: Path) -> str | None:
     ``+dirty`` when tracked files differ from it; None when it is not one, or git is missing or
     slow."""
     import subprocess
+    import sys
+
+    # git is a console program: started from a process without a console (the window's
+    # commands run under pythonw on Windows) it would flash a console window of its own
+    hidden = ({"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+              if sys.platform == "win32" else {})
 
     def git(*args: str) -> str | None:
         try:
             done = subprocess.run(["git", "-C", str(package), *args], capture_output=True,
-                                  text=True, timeout=3, check=False)
+                                  text=True, timeout=3, check=False, **hidden)
         except (OSError, subprocess.SubprocessError):
             return None
         return done.stdout.strip() if done.returncode == 0 else None
