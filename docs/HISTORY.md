@@ -10113,3 +10113,44 @@ CSVs or mzML if wanted.
     (D open question 7). Guide gui.md updated. Tests: `tests/test_gui_figure_view.py`,
     `test_gui_list.py`, `test_gui_reloads.py` (new), `test_report.py` (subset tables equal the
     whole tables' rows), `test_gui_results.py`, `test_gui_data.py`.
+
+391. **The window's elution editor and preview (2026-11-15; fix Session 4 of
+    docs/AUDIT_GUI_2026-11-15.md).** The boxes rounded the window to their decimals, so an
+    unchanged window was previewed, and saved, over fewer scans (13 of 20 targeted spectra, 12
+    of 20 pooled ones; one pooled spectrum went from K = 3 to K = 1; a save, reopen, save
+    narrowed it further): a window is a set of scans, so the boxes now snap to the ion's own
+    scan times (`RetentionTraces.scan_times`, every scan of the ion in the file;
+    `snap_window`, the nearest scan each end; the arrows step scan by scan, `_SnapBox`), the
+    drift boxes widen outwards to the file's drift bins (`widen_drift`; no inward rounding,
+    open question 3), and the editor keeps the exact values, the boxes showing them to 4
+    decimals of a minute and 3 of a millisecond (F-1); one scan is a window. A review decision
+    on the spectrum being edited gave new Results, which the editor took for another spectrum,
+    throwing the typed window and its preview away (F-2): the editor's target is the spectrum
+    and its read record (one trace reader per record), and the tab keeps the traces and
+    redraws instead of reading them again when only the Results object changed. The preview
+    of a fragment ion of a file the run fitted through the per-scan cut is fitted through it
+    too (`TraceReader.summed` builds the scans' record as the reader does; F-3). Fits at each
+    K draws only the K the new window's spectrum was fitted at (F-5). "Now" and the new window
+    are drawn at the K in effect (a review K, else the run's: the K a rerun keeps), the new
+    window's title naming the criterion's K when it differs (F-8, F-13, open question 2). A
+    save at level 3 or 4 reads the drift range at the click, not in its worker (F-7); one still
+    matching when another spectrum is selected is dropped and said (D-11, F-16). A table that
+    does not read is said when the boxes are set (F-9); a file whose trace could not be read
+    gets a row saying why in Each file's window, the match carrying the reader's note (F-10); a
+    window outside the trace no longer widens the axis to a sliver but is pointed to at its
+    edge (F-11); the project file is loaded once per results and the table's rows kept until
+    the file changes on disk or the editor writes it (`window_edit._cached`, 0.2 s per
+    spectrum shown before; F-12); a file that is not the one the run read (its size, or an
+    indexed mzML's own checksum; a SHA-256 is not computed on open) is said in the figure
+    (F-14); Save after a failed read gives the failure instead of saying to wait (F-15);
+    Each file's window is greyed out when the match found no other file (F-17); a closed trace
+    reader refuses reads instead of reopening its files (F-18); a drag is mapped with the
+    figure whose picture is on screen (`shown_figure`; F-19). The drift panel shows the drift
+    profile of the scans the new window sums (`Preview.profile`), over the run's profile's axis
+    (open question 1). A save says why when the project file stopped loading (D-10); a
+    level-1 save writes the drift range only when it was changed, like the whole-peptide
+    saves (D open question 3, option b); `WindowEditor.saved` refreshes the drift baseline and
+    Save's state (D-13). Guide gui.md updated. Tests: `tests/test_retention_trace.py`,
+    `test_window_edit.py`, `test_gui_window_edit.py` (its rows test now waits for the
+    picture before reading a span's transform: the matplotlib view draws the picture at the
+    view's dpi in its worker, and the race failed the lowest-versions CI job of 5731ad2).

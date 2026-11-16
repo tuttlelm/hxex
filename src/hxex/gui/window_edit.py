@@ -62,6 +62,9 @@ class Preview:
     k: int | None = None
     notes: tuple[str, ...] = ()
     warm: bool = False
+    # the drift profile of the scans summed (hxex.io.retention_trace.DriftProfile; None: no
+    # ion mobility bins, or not read): the editor's drift panel follows the window being edited
+    profile: object = None
 
     @property
     def spectra(self) -> SpectrumSet:
@@ -69,7 +72,7 @@ class Preview:
 
 
 def preview(results, spectrum: Spectrum, *, fit: bool = True, threads: int | None = None,
-            start_from: str | None = None) -> Preview:
+            start_from: str | None = None, profile=None) -> Preview:
     """Pick and fit ``spectrum`` (summed over a new window) as the run picked and fitted the
     spectrum it replaces in ``results``: the run's picker settings and bin measure, the series'
     envelope, the fit settings at every K (no screen; on the CPU, with ``threads`` PyTorch
@@ -78,13 +81,13 @@ def preview(results, spectrum: Spectrum, *, fit: bool = True, threads: int | Non
     ``fit`` False: picked only (:func:`fit_preview` fits it). ``start_from`` (a spectrum id of
     ``results``) starts the fit from that spectrum's fit and from the new spectrum's own start,
     keeping the better, in a few steps (:data:`PREVIEW_STEPS`); None: the run's own starts and
-    steps."""
-    picked = _picked(results, spectrum)
+    steps. ``profile``: the drift profile of the scans summed (:class:`Preview.profile`)."""
+    picked = _picked(results, spectrum, profile)
     return (fit_preview(results, picked, threads=threads, start_from=start_from) if fit
             else picked)
 
 
-def _picked(results, spectrum: Spectrum) -> Preview:
+def _picked(results, spectrum: Spectrum, profile=None) -> Preview:
     settings = results.settings
     config = settings.run if settings is not None else None
     if config is None:
@@ -98,7 +101,7 @@ def _picked(results, spectrum: Spectrum) -> Preview:
                      f"{config.envelope.mode!r}; its fit shape is kept)")
     if binned.no_signal[0]:
         raise ValueError("no signal in the new window: no bin reaches the picker's threshold")
-    return Preview(spectrum, binned, notes=tuple(notes))
+    return Preview(spectrum, binned, notes=tuple(notes), profile=profile)
 
 
 def fit_preview(results, picked: Preview, *, threads: int | None = None, cancel=None,
@@ -173,9 +176,89 @@ def _warm(results, spectrum_id: str, measurements) -> dict:
     return starts
 
 
+# --- the boxes snap to scans (audit of 2026-11-15, F-1: the boxes rounded the window to
+# their decimals, so an unchanged window was previewed, and saved, over fewer scans)
+
+
+def snap_window(window: tuple[float, float], scan_times) -> tuple[float, float]:
+    """``window`` (minutes) with each end moved to the nearest of ``scan_times`` (the ion's
+    scans in the file, sorted): a window is a set of scans, so a box never falls between two
+    scans; the ends are ordered (one scan when both snap to the same). Without scan times the
+    window is given back as it is."""
+    a, b = (float(v) for v in window)
+    times = None if scan_times is None else np.asarray(scan_times, dtype=float)
+    if times is None or not len(times):
+        return (a, b) if a <= b else (b, a)
+    a, b = (float(times[int(np.argmin(np.abs(times - v)))]) for v in (a, b))
+    return (a, b) if a <= b else (b, a)
+
+
+def neighbour_scan(value: float, scan_times, steps: int) -> float:
+    """The scan ``steps`` scans after (negative: before) the one nearest ``value`` (minutes),
+    for a box's arrows: a step of a hundredth of a minute could snap back to the same scan."""
+    times = np.asarray(scan_times, dtype=float)
+    at = int(np.argmin(np.abs(times - float(value))))
+    return float(times[min(max(at + int(steps), 0), len(times) - 1)])
+
+
+def widen_drift(drift: tuple[float, float], bins) -> tuple[float, float]:
+    """``drift`` (ms) rounded outwards to the file's drift ``bins`` (sorted): the start down
+    to the nearest bin at or below it, the end up to the nearest at or above it, so that the
+    range never loses a bin's share to rounding (owner: no inward rounding). An end beyond the
+    bins stays as it is (outwards of every bin)."""
+    a, b = (float(v) for v in drift)
+    if a > b:
+        a, b = b, a
+    grid = None if bins is None else np.asarray(bins, dtype=float)
+    if grid is None or not len(grid):
+        return a, b
+    below, above = grid[grid <= a + 1e-9], grid[grid >= b - 1e-9]
+    return (float(below.max()) if len(below) else a), (float(above.min()) if len(above) else b)
+
+
 # --- the elution-window table ----------------------------------------------------------------
 
 DEFAULT_NAME = "rt_elution_windows.csv"  # beside the project file, when it names no table
+
+# what was read from the project file and the table, kept until the file changes on disk or
+# this module writes it (audit of 2026-11-15, F-12: every spectrum shown with Edit window on
+# loaded the project file three times and read the whole table, 0.2 s on a 12,000-row table)
+_CACHE: dict[tuple[str, Path], tuple[tuple, object]] = {}
+
+
+def _signature(path: Path) -> tuple | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+def _cached(kind: str, path: Path, make):
+    """``make()`` for ``path``, kept under ``kind`` while the file's size and modification
+    time stay (None: the file is not there; made every time)."""
+    sig = _signature(path)
+    key = (kind, path)
+    if sig is None:
+        _CACHE.pop(key, None)
+        return make()
+    kept = _CACHE.get(key)
+    if kept is not None and kept[0] == sig:
+        return kept[1]
+    value = make()
+    _CACHE[key] = (sig, value)
+    return value
+
+
+def forget_cached(path: str | Path | None = None) -> None:
+    """Drop what was read from ``path`` (None: everything): this module writes a file, or a
+    test replaces one in place."""
+    if path is None:
+        _CACHE.clear()
+        return
+    path = Path(path)
+    for key in [k for k in _CACHE if k[1] == path]:
+        del _CACHE[key]
 
 
 @dataclass(frozen=True)
@@ -214,7 +297,8 @@ def table_path(project_path: str | Path) -> tuple[Path, bool]:
     from ..config import load_project
 
     project_path = Path(project_path)
-    named = load_project(project_path).input.rt_elution_windows
+    named = _cached("table_path", project_path,
+                    lambda: load_project(project_path).input.rt_elution_windows)
     return (Path(named), True) if named is not None else (project_path.parent / DEFAULT_NAME,
                                                           False)
 
@@ -546,13 +630,13 @@ def align_files(reader, results, spectrum_id: str, data_id: int, *, peptide: str
         found = reader.locate(sid, d)
         run = reader.runs[found[0]]
         file, samples = run_name(run), samples_reading(reader, sid, d, ions, peptide)
-        got = reader.traces([sid], d, drift_ranges=None if drift is None else {sid: drift},
-                            cancel=cancel).traces
-        if not got:
+        read = reader.traces([sid], d, drift_ranges=None if drift is None else {sid: drift},
+                             cancel=cancel)
+        if not read.traces:  # why (the file not found, say), not only that it was not read
             plans.append(FilePlan(file, str(run.path), samples, None, None,
-                                  why="its trace could not be read"))
+                                  why=read.note or "its trace could not be read"))
             continue
-        trace = replace(got[0], selected=False)
+        trace = replace(read.traces[0], selected=False)
         shift, r, why = trace_shift(ref.times, ref.intensity, trace.times, trace.intensity)
         plans.append(FilePlan(file, str(run.path), samples, shift, None, r, why, trace=trace))
     return Alignment(spectrum_id, level, drift, ref, tuple(plans))
@@ -677,6 +761,9 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
     is spread to (:func:`plan_spread`, shifted by each file's elution), written as ``whole``
     rows are (the peptide's row; ``drift`` on the ion's own row), and there every ion of the
     peptide gives up a window of its own (the window asks first, :func:`own_windows`).
+    ``drift`` None leaves the drift range an ion's own row holds as it is (a save that moved
+    only the retention window does not pin the reader's drift choice; audit of 2026-11-15, D
+    open question 3).
 
     The row is changed, or one is added. When the project file names no table, the first save
     writes ``table`` (the window asks where, :func:`hxex.gui.table_choice.ask_table`; else
@@ -763,7 +850,8 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
         else:
             row, added = put(pep, ion)
             span(row, window, 4, "rt_start", "rt_end")
-            span(row, drift, 3, "drift_start", "drift_end")
+            if drift is not None:  # else the row's own drift range stays (D open question 3)
+                span(row, drift, 3, "drift_start", "drift_end")
         return row, added, own_rows
 
     # the edited file's other ions follow the peptide's row too, as in the files it is spread
@@ -781,6 +869,7 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
         raise ValueError(problem)
     project_before = project_path.read_bytes()
     write_table(table, path)
+    forget_cached(path)
     files = [(path, before, path.read_bytes())]
     if not named:
         try:
@@ -793,6 +882,7 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
         except Exception:
             _restore(path, before)
             raise
+        forget_cached(project_path)
         files.append((project_path, project_before, project_path.read_bytes()))
     return SavedWindow(tuple(files), {c: v for c, v in zip(table.columns, row, strict=True)},
                        added, own_rows, written, project=project_path.absolute())
@@ -801,6 +891,7 @@ def save_window(project_path: str | Path, key: tuple[str, str, str],
 def _restore(path: Path, before: bytes | None) -> None:
     from ..project_edit import replace_file
 
+    forget_cached(path)
     if before is None:
         path.unlink(missing_ok=True)
         return
@@ -833,7 +924,7 @@ def saved_window(project_path: str | Path, key: tuple[str, str, str],
     path, _named = table_path(project_path)
     if not path.is_file():
         return None
-    rows = read_elution_windows(path)
+    rows = _cached("rows", path, lambda: read_elution_windows(path))
     sample, file, ion = key
     window, drift, used = window_for(ion, peptide or "", sample, file, by_key(rows),
                                      by_peptide(rows))

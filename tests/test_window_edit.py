@@ -9,7 +9,10 @@ import pytest
 from hxex.config import load_project, read_input
 from hxex.fit import FitConfig
 from hxex.gui.window_edit import (
+    align_files,
+    forget_cached,
     has_fragments,
+    neighbour_scan,
     own_windows,
     plan_spread,
     preview,
@@ -19,11 +22,14 @@ from hxex.gui.window_edit import (
     saved_words,
     scope_words,
     sibling_windows,
+    snap_window,
     spread_files,
     spread_words,
+    table_path,
     trace_shift,
     undo_window,
     view_words,
+    widen_drift,
 )
 from hxex.io.retention_trace import TraceReader
 from hxex.model import Backend
@@ -441,3 +447,230 @@ def test_the_edited_files_other_charge_states_follow_the_peptide(tmp_path):
                        keep_own=True)
     assert kept.own == (z3,)
     assert saved_window(path, ("S", "un1.mzML", z3), peptide)[2] == "ion"
+
+
+# --- the audit of 2026-11-15, fix Session 4 ---------------------------------------------------
+
+
+def test_the_boxes_snap_to_scans_and_the_drift_range_widens_to_bins():
+    """A window is a set of scans: each end goes to the nearest scan time, never between two
+    (F-1); a drift range rounds outwards to the file's bins (open question 3, no inward
+    rounding); the arrows step scan by scan."""
+    times = np.array([1.0, 1.004, 1.008, 1.012, 1.016])
+    assert snap_window((1.001, 1.0105), times) == (1.0, 1.012)
+    assert snap_window((1.0119, 1.0121), times) == (1.012, 1.012)  # one scan
+    assert snap_window((1.013, 1.001), times) == (1.0, 1.012)  # ordered
+    assert snap_window((0.9, 2.0), times) == (1.0, 1.016)  # beyond the file: its ends
+    assert snap_window((1.001, 1.0105), None) == (1.001, 1.0105)  # no scan times: as typed
+    assert neighbour_scan(1.0105, times, 1) == 1.016 and neighbour_scan(1.0, times, -1) == 1.0
+    assert neighbour_scan(1.016, times, 3) == 1.016
+    bins = np.array([5.1, 5.2, 5.3, 5.4, 5.5])
+    assert widen_drift((5.25, 5.35), bins) == (5.2, 5.4)
+    assert widen_drift((5.2, 5.4), bins) == (5.2, 5.4)  # on the bins: unchanged
+    assert widen_drift((5.4, 5.2), bins) == (5.2, 5.4)
+    assert widen_drift((5.0, 5.7), bins) == (5.0, 5.7)  # beyond the bins: outwards already
+    assert widen_drift((5.25, 5.35), None) == (5.25, 5.35)
+
+
+def _one_measurement_unfitted(kfit, i: int = 0) -> None:
+    """Measurement ``i`` of a K's fit as the engine leaves one it did not fit (NaN)."""
+    for name in ("A", "n", "p", "log_A", "n_raw", "logit_p"):
+        getattr(kfit, name)[i] = np.nan
+    kfit.nll[i] = np.nan
+
+
+def test_the_new_window_is_drawn_at_the_k_in_effect_and_only_at_fitted_ks(project):
+    """"Now" is drawn at the K in effect (a reviewer's K) and the new window at the same K, the
+    criterion's K named when it differs (F-8, F-13; open question 2); Fits at each K leaves
+    out a K that was not fitted for the new window's spectrum (F-5)."""
+    from hxex.io.bundle import ReviewTable
+    from hxex.report.retention import plot_window_edit
+
+    spectra = _read(project)
+    results = _results(spectra)
+    reader = TraceReader(spectra.source, data_root=project.parent)
+    sid, did = spectra.spectrum_id[0], int(spectra.data_id[0])
+    window = (spectra.rt_start[0], spectra.rt_end[0])
+    shown = preview(results, reader.spectrum(sid, did, window), start_from=sid)
+    traces = reader.traces([sid], did)
+    i = list(results.fit.spectrum_id).index(sid)
+    other = 2 if int(results.effective_K[i]) == 1 else 1
+    reviewed = results.with_review(ReviewTable.empty().update(sid, k_override=other))
+    assert int(reviewed.effective_K[i]) == other
+
+    def titles(res, each_k=False):
+        fig = plot_window_edit(traces, res, sid, shown, edit=window, each_k=each_k)
+        return [ax.get_title() for ax in fig.axes if ax.get_title()]
+
+    now, new = [t for t in titles(reviewed) if t.startswith(("now", "new window"))]
+    assert f"K = {other}" in now and f"K = {other} as now" in new
+    assert f"the criterion chooses {shown.k}" in new
+    now, new = [t for t in titles(results) if t.startswith(("now", "new window"))]
+    assert "criterion" not in new and f"K = {shown.k}" in new
+    every = [t for t in titles(reviewed, each_k=True) if t.startswith("new window")]
+    assert len(every) == 2 and any("(as now)" in t for t in every)
+    assert any("(the criterion's choice)" in t for t in every)
+    # K = 2 not fitted for the new window's spectrum (at most one deuteron, the cut): left out
+    _one_measurement_unfitted(shown.results.fit.fits[2])
+    every = [t for t in titles(reviewed, each_k=True) if t.startswith("new window")]
+    assert len(every) == 1 and "K = 1" in every[0]
+    (new,) = [t for t in titles(results.with_review(
+        ReviewTable.empty().update(sid, k_override=2))) if t.startswith("new window")]
+    assert "K = 1 (not fitted at 2 as now)" in new
+
+
+def test_a_file_whose_trace_cannot_be_read_gets_a_row_saying_why(project):
+    """A replicate's file missing: the match says why (the reader's note, not only that the
+    trace could not be read), and Each file's window draws a row for it (F-10)."""
+    from hxex.report.retention import plot_each_file
+
+    spectra = _read(project)
+    results = _results(spectra)
+    reader = TraceReader(spectra.source, data_root=project.parent)
+    i = next(k for k, s in enumerate(spectra.spectrum_id) if "/un2.mzML/" in s)
+    sid, did = spectra.spectrum_id[i], int(spectra.data_id[i])
+    traces = reader.traces([sid], did)
+    gone = project.parent / "un1.mzML"
+    gone.rename(project.parent / "un1.gone")
+    try:
+        aligned = align_files(reader, results, sid, did, peptide=f"0001-{N:04d}-{PEPTIDE}",
+                              ion=sid.split("/")[2], ions=(sid.split("/")[2],),
+                              level="replicates")
+    finally:
+        (project.parent / "un1.gone").rename(gone)
+    (plan,) = aligned.plans
+    assert plan.trace is None and plan.shift is None and "not found" in plan.why
+    window = (spectra.rt_start[i], spectra.rt_end[i])
+    fig = plot_each_file(traces, aligned, edit=window)
+    assert len(fig.axes) == 2 and "1 other file(s)" in fig._suptitle.get_text()
+    said = [t.get_text() for t in fig.axes[1].texts if t.get_gid() == "unread"]
+    assert said and "un1.mzML" in said[0] and "not found" in said[0]
+    assert not fig.axes[1].lines  # no trace to draw
+
+
+def test_a_window_outside_the_trace_does_not_widen_the_axis(project):
+    """A window far from the trace (typed, or saved before) is marked at the axis's edge, the
+    trace keeping its own range (F-11: it was drawn as a sliver over 200 minutes)."""
+    from hxex.report.retention import plot_retention, plot_window_edit
+
+    spectra = _read(project)
+    results = _results(spectra)
+    reader = TraceReader(spectra.source, data_root=project.parent)
+    sid, did = spectra.spectrum_id[0], int(spectra.data_id[0])
+    traces = reader.traces([sid], did)
+    own = plot_retention(traces).axes[0].get_xlim()
+    for fig in (plot_retention(traces, edit=(200.0, 201.0)),
+                plot_window_edit(traces, results, sid, None, edit=(200.0, 201.0),
+                                 waiting="no scan")):
+        ax = next(a for a in fig.axes if a.get_xlabel().startswith("retention time"))
+        assert ax.get_xlim() == pytest.approx(own)
+        marks = [t.get_text() for t in ax.texts if t.get_gid() == "edited_outside"]
+        assert marks and "200.00-201.00 min" in marks[0] and marks[0].endswith("▶")
+    before = plot_retention(traces, edit=(0.0, 0.01)).axes[0]
+    assert before.get_xlim() == pytest.approx(own)
+    assert any(t.get_text().startswith("◀") for t in before.texts)
+    # a window inside the trace but beyond the margin still widens the axis
+    times = traces.traces[0].times
+    inside = plot_retention(traces, edit=(float(times.min()), float(times.min()) + 0.01))
+    assert inside.axes[0].get_xlim()[0] <= float(times.min())
+    assert not [t for t in inside.axes[0].texts if t.get_gid() == "edited_outside"]
+
+
+def test_the_drift_panel_draws_the_new_windows_profile(project):
+    """With ion mobility, the drift panel shows the drift profile of the scans the new window
+    sums (preview.profile) over the run's own profile's axis (open question 1); without a
+    preview's profile, the run's."""
+    import dataclasses
+
+    from hxex.io.retention_trace import DriftProfile
+    from hxex.report.retention import plot_window_edit
+
+    spectra = _read(project)
+    results = _results(spectra)
+    reader = TraceReader(spectra.source, data_root=project.parent)
+    sid, did = spectra.spectrum_id[0], int(spectra.data_id[0])
+    window = (spectra.rt_start[0], spectra.rt_end[0])
+    bins = np.round(np.arange(4.0, 7.0, 0.1), 3)
+    run_y = np.exp(-0.5 * ((bins - 5.3) / 0.15) ** 2)
+    new_y = 0.5 * np.exp(-0.5 * ((bins - 5.6) / 0.15) ** 2)
+    traces = dataclasses.replace(reader.traces([sid], did),
+                                 drift=DriftProfile(bins, run_y, (5.2, 5.4)))
+    summed = reader.spectrum(sid, did, window)
+    plain = preview(results, summed, fit=False)
+    with_profile = preview(results, summed, fit=False,
+                           profile=DriftProfile(bins, new_y, (5.2, 5.4)))
+    assert plain.profile is None and with_profile.profile is not None
+
+    def profile_line(shown):
+        fig = plot_window_edit(traces, results, sid, shown, edit=window, drift_edit=(5.2, 5.4))
+        ax = next(a for a in fig.axes if a.get_xlabel().startswith("drift time"))
+        line = next(ln for ln in ax.lines if ln.get_gid() == "drift_profile")
+        return ax, np.asarray(line.get_ydata())
+
+    ax, y = profile_line(plain)
+    np.testing.assert_allclose(y, run_y)
+    assert "new window" not in ax.get_ylabel()
+    ax_new, y = profile_line(with_profile)
+    np.testing.assert_allclose(y, new_y)
+    assert "new window" in ax_new.get_ylabel()
+    lo, hi = ax.get_xlim()  # the run's axis, widened only where the new profile reaches
+    assert ax_new.get_xlim()[0] == pytest.approx(lo) and ax_new.get_xlim()[1] >= hi
+
+
+def test_a_save_for_one_charge_state_keeps_the_rows_drift_range(tmp_path):
+    """A level-1 save writes the drift range only when it was changed (given), as the
+    whole-peptide saves do: the ion's row keeps its own drift range otherwise (D open
+    question 3, option b)."""
+    from test_elution_windows import _charges_project
+
+    peptide, z2, _z3 = _peptide_ions()
+    path = _charges_project(tmp_path / "p", "sample,file,peptide,ion,rt_start,rt_end,"
+                                            "drift_start,drift_end\n"
+                                            f"S,un1.mzML,{peptide},{z2},0.6000,0.6600,5.200,"
+                                            "5.400\n")
+    key = ("S", "un1.mzML", z2)
+    saved = save_window(path, key, (0.61, 0.65), peptide=peptide)
+    assert (saved.row["drift_start"], saved.row["drift_end"]) == ("5.200", "5.400")
+    assert saved_window(path, key, peptide)[1] == (5.2, 5.4)
+    changed = save_window(path, key, (0.61, 0.65), drift=(5.25, 5.45), peptide=peptide)
+    assert (changed.row["drift_start"], changed.row["drift_end"]) == ("5.250", "5.450")
+
+
+def test_the_table_and_the_project_file_are_read_once_until_they_change(project, monkeypatch):
+    """saved_window reads the project file and the whole table once, keeping them while the
+    files are unchanged on disk; a save, an undo, or a change on disk reads again (F-12:
+    0.2 s per spectrum shown on a 12,000-row table)."""
+    import hxex.config as config
+    import hxex.io.elution_windows as elution_windows
+
+    forget_cached()
+    spectra = _read(project)
+    key = _key(spectra, 0)
+    saved = save_window(project, key, (0.61, 0.65))
+    loads, reads = [], []
+    load, read = config.load_project, elution_windows.read_elution_windows
+    monkeypatch.setattr(config, "load_project",
+                        lambda *a, **k: (loads.append(a), load(*a, **k))[1])
+    monkeypatch.setattr(elution_windows, "read_elution_windows",
+                        lambda *a, **k: (reads.append(a), read(*a, **k))[1])
+    forget_cached()
+    table = saved.path
+
+    def table_reads():  # a save checks the table through a temporary copy: not counted
+        return sum(r[0] == table for r in reads)
+
+    for _ in range(3):
+        assert saved_window(project, key) is not None
+        assert table_path(project)[1]
+    assert len(loads) == 1 and table_reads() == 1
+    undo_window(saved)  # this module's writes forget what it read
+    assert saved_window(project, key) is None
+    assert not table_path(project)[1] and len(loads) == 2 and table_reads() == 1
+    again = save_window(project, key, (0.61, 0.65))
+    assert saved_window(project, key)[0] == (0.61, 0.65) and table_reads() == 2
+    text = again.path.read_text().replace("0.6100", "0.6200")  # changed by hand
+    again.path.write_text(text)
+    import os
+    os.utime(again.path, ns=(os.stat(again.path).st_mtime_ns + 10 ** 9,) * 2)
+    assert saved_window(project, key)[0][0] == 0.62 and table_reads() == 3
+    forget_cached()

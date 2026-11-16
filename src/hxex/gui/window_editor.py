@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -34,11 +35,32 @@ from PySide6.QtWidgets import (
 from .flow_layout import FlowLayout
 from .tasks import Latest
 from .tips import rich_tip, tip
-from .window_edit import APPLY, scope_tips, scope_words
+from .window_edit import (
+    APPLY,
+    neighbour_scan,
+    scope_tips,
+    scope_words,
+    snap_window,
+    widen_drift,
+)
 
 log = logging.getLogger(__name__)
 
 _WAIT_MS = 400  # a changed box is previewed once it has been left alone this long
+
+
+class _SnapBox(QDoubleSpinBox):
+    """A box whose arrows (and wheel) step to the next scan or drift bin rather than by a
+    fixed amount (``step_to(value, steps)``; None: the fixed step), so that a step never snaps
+    back onto the same scan (audit of 2026-11-15, F-1)."""
+
+    step_to: Callable[[float, int], float] | None = None
+
+    def stepBy(self, steps: int) -> None:  # noqa: N802 - Qt's name
+        if self.step_to is None:
+            super().stepBy(steps)
+            return
+        self.setValue(self.step_to(self.value(), steps))
 
 
 def set_choice_tips(combo: QComboBox, tips: dict[str, str]) -> None:
@@ -105,9 +127,18 @@ class WindowEditor(QObject):
         # the window's context manager recording a write of the project file for the Project
         # editor's Undo (hxex.gui.window.MainWindow.recording; None: not recorded; Q-1)
         self.recording = None
-        self._target: tuple | None = None  # (results, spectrum id) the boxes were set for
+        self._target: tuple | None = None  # (trace reader, spectrum id) the boxes were set for
         self._has_drift = False  # the spectrum was summed over a drift range
-        self._drift_shown: tuple | None = None  # the drift range the boxes were set to
+        self._drift_shown: tuple | None = None  # the drift range the table or the run gives
+        # the window and drift range exactly as set (the boxes show them to their decimals; a
+        # window is a set of scans, so the boxes snap to the ion's scan times and the drift
+        # range widens to the file's drift bins: audit of 2026-11-15, F-1)
+        self._window: tuple[float, float] | None = None
+        self._drift: tuple[float, float] | None = None
+        self._scan_times: np.ndarray | None = None  # the ion's scans in the file (minutes)
+        self._drift_bins: np.ndarray | None = None  # the file's drift bins (ms)
+        self._saving: str | None = None  # the spectrum whose save is matching other files
+        self._project_cache: tuple | None = None  # (results path, signature, project or None)
         self._previewed: tuple | None = None  # (spectrum id, window, drift) of a fitted preview
         self._summed: tuple | None = None  # the same, of the spectrum summed (fitted or not)
         self._task = Latest(self)
@@ -129,8 +160,10 @@ class WindowEditor(QObject):
                 "The new spectrum is drawn beside the current one."))
         self.edit.toggled.connect(self._toggled)
         self.start, self.end = self._box("minutes"), self._box("minutes")
-        self.start.setToolTip(tip("the window's start (min, the acquisition clock)"))
-        self.end.setToolTip(tip("the window's end (min)"))
+        self.start.setToolTip(tip("the window's start (min, the acquisition clock): the first "
+                                  "scan summed; the arrows step scan by scan"))
+        self.end.setToolTip(tip("the window's end (min): the last scan summed; the arrows step "
+                                "scan by scan"))
         self.drift_start, self.drift_end = self._box("ms"), self._box("ms")
         self.drift_start.setToolTip(tip("the drift range's start (ms)"))
         self.drift_end.setToolTip(tip("the drift range's end (ms)"))
@@ -182,15 +215,24 @@ class WindowEditor(QObject):
         layout = panel.layout()  # after the editing rows: directly above the title
         layout.insertWidget(layout.indexOf(panel.title), self.notes)
         panel.spanned.connect(self._spanned)
+        self.saved.connect(self._after_save)
 
     def _box(self, unit: str) -> QDoubleSpinBox:
-        box = QDoubleSpinBox()
-        box.setDecimals(3)
+        box = _SnapBox()
+        box.setDecimals(4 if unit == "minutes" else 3)
         box.setRange(0.0, 1e5)
         box.setSingleStep(0.01)
         box.setKeyboardTracking(False)
         box.valueChanged.connect(lambda _v: self._changed())
+        if unit == "minutes":
+            box.step_to = self._next_scan
         return box
+
+    def _next_scan(self, value: float, steps: int) -> float:
+        """A minutes box stepped: the scan ``steps`` scans from the one at ``value``."""
+        if self._scan_times is None or not len(self._scan_times):
+            return value + 0.01 * steps
+        return neighbour_scan(value, self._scan_times, steps)
 
     @property
     def active(self) -> bool:
@@ -235,12 +277,20 @@ class WindowEditor(QObject):
     def forget(self) -> None:
         """Another spectrum is selected: what is still being read, fitted or matched for the
         one before is dropped (done, it drew the previous spectrum's view over the cleared tab
-        before the new spectrum's trace was read; owner, 2026-11-12)."""
+        before the new spectrum's trace was read; owner, 2026-11-12). A save still matching
+        the other files is dropped too, and said: its question and message would have come
+        under the new spectrum (audit of 2026-11-15, D-11, F-16)."""
         self._generation += 1  # a preview's fit stops
         self._aligning = None  # and a match (its cancel hook asks for its key)
         self._target = None
         self._task.submit(lambda: None, lambda _r: None, lambda _m: None)
         self._align_task.submit(lambda: None, lambda _r: None, lambda _m: None)
+        if self._saving is not None:
+            self._spread_task.submit(lambda: None, lambda _r: None, lambda _m: None)
+            self.message.emit("not saved: another spectrum was selected while the other "
+                              "files were being matched; select it again and save")
+            self._saving = None
+            self.save.setEnabled(True)
         self.panel.set_task(None)
 
     def update(self) -> None:
@@ -254,19 +304,27 @@ class WindowEditor(QObject):
             self._show_controls(False)
             self.plain()
             return
-        target = (ctx.results, ctx.spectrum_id)
+        # the spectrum and the read record (its trace reader: one per record, kept across
+        # review decisions): a decision gives new Results for the same spectrum, which must
+        # not throw the window being edited away (audit of 2026-11-15, F-2); results read
+        # again from disk give a new reader, and the boxes are set again
+        target = (ctx.reader, ctx.spectrum_id)
         selected = ctx.traces.traces[0]
         drift = selected.drift
-        # the results by identity: compared as values, two Results compare their arrays (and
-        # fail) when the results were read again with the switch on (owner, 2026-11-08)
         if not (self._target is not None and self._target[0] is target[0]
                 and self._target[1] == target[1]):
             self._target = target
             self.preview, self.failure, self._previewed, self._summed = None, None, None, None
             self.alignment, self._aligned_key, self._aligning = None, None, None
+            self._scan_times = ctx.traces.scan_times
+            self._drift_bins = (None if ctx.traces.drift is None
+                                else np.asarray(ctx.traces.drift.drift, dtype=float))
             window, drift_range = selected.window, drift
             self._word_scope(ctx)
-            saved = self._saved_row(ctx)
+            saved, problem = self._saved_row(ctx)
+            if problem:  # a table that does not read: said, not passed over (F-9)
+                self.message.emit(f"the elution-window table was not read: {problem}; the "
+                                  "window the results hold is shown")
             if saved is not None:
                 window, drift_range = saved[0], saved[1] or drift
                 whose = ("this charge state (ion) has a window of its own"
@@ -279,6 +337,7 @@ class WindowEditor(QObject):
                 self.scope.setCurrentIndex(self.scope.findData("peptide"))
             self._has_drift = drift is not None
             self._drift_shown = drift_range
+            self._window, self._drift = None, None  # set afresh for this spectrum
             self._set_boxes(window, drift_range)
             self._show_controls(True, drift=self._has_drift)
             self._save_state(ctx)
@@ -300,29 +359,47 @@ class WindowEditor(QObject):
         set_choice_tips(self.scope, scope_tips(has_fragments(ctx.reader)))
 
     def _set_boxes(self, window, drift) -> None:
-        boxes = [(self.start, window[0]), (self.end, window[1])]
+        """Set the window (minutes; snapped to the ion's scans) and, when given, the drift
+        range (ms; widened to the file's drift bins), and show them in the boxes."""
+        self._window = snap_window(window, self._scan_times)
+        boxes = [(self.start, self._window[0]), (self.end, self._window[1])]
         if drift is not None:
-            boxes += [(self.drift_start, drift[0]), (self.drift_end, drift[1])]
+            self._drift = widen_drift(drift, self._drift_bins)
+            boxes += [(self.drift_start, self._drift[0]), (self.drift_end, self._drift[1])]
         for box, value in boxes:
             box.blockSignals(True)
             box.setValue(float(value))
             box.blockSignals(False)
 
     def window(self) -> tuple[float, float]:
-        return self.start.value(), self.end.value()
+        """The window being edited (minutes): the scans' own times, not the boxes' rounded
+        values."""
+        if self._window is None:
+            return self.start.value(), self.end.value()
+        return self._window
 
     def drift(self) -> tuple[float, float] | None:
         if not self._has_drift:
             return None
-        return self.drift_start.value(), self.drift_end.value()
+        if self._drift is None:
+            return self.drift_start.value(), self.drift_end.value()
+        return self._drift
 
     def _changed(self) -> None:
-        if self.active:
-            self._timer.start()
+        """A box was edited (typed, stepped): snapped, then previewed once left alone."""
+        if not self.active:
+            return
+        self._set_boxes((self.start.value(), self.end.value()),
+                        (self.drift_start.value(), self.drift_end.value())
+                        if self._has_drift else None)
+        self._timer.start()
 
     def _spanned(self, x0: float, y0: float, x1: float, y1: float) -> None:
-        """A drag across the trace (the window) or the drift profile (the drift range)."""
-        fig = self.panel.view.figure
+        """A drag across the trace (the window) or the drift profile (the drift range): mapped
+        with the figure whose picture is on screen (a new figure's axes, set before its
+        picture is drawn, gave a drag the wrong places: audit of 2026-11-15, F-19)."""
+        view = self.panel.view
+        fig = getattr(view, "shown_figure", view.figure)
         if not self.active or fig is None:
             return
         for ax in fig.axes:
@@ -362,10 +439,11 @@ class WindowEditor(QObject):
         generation = self._generation
         self.draw()
         reader, results, sid, data_id = ctx.reader, ctx.results, ctx.spectrum_id, ctx.data_id
+        with_profile = ctx.traces.drift is not None  # the drift panel follows the window
 
         def work():  # summed and picked: drawn at once (a fraction of a second)
-            return preview(results, reader.spectrum(sid, data_id, window, drift=drift),
-                           fit=False)
+            summed = reader.summed(sid, data_id, window, drift=drift, profile=with_profile)
+            return preview(results, summed.spectrum, fit=False, profile=summed.profile)
 
         def done(picked) -> None:
             self.preview, self._summed = picked, key
@@ -463,8 +541,12 @@ class WindowEditor(QObject):
             return
         self._align(ctx)
         spread = ctx.compare in ("replicates", "everywhere")
-        self.each_file.setEnabled(spread)
         aligned = self._aligned_now(ctx)
+        # the rows view needs other files: none found by the match, the switch would do
+        # nothing (audit of 2026-11-15, F-17)
+        none_found = (self.alignment is None and self._aligned_key is not None
+                      and self._aligned_key[:2] == (ctx.spectrum_id, ctx.compare))
+        self.each_file.setEnabled(spread and not none_found)
         shown, failure = self.preview, self.failure
         self.notes.setText(preview_text(shown))
         notes = preview_notes(shown)  # how this preview differs from a run, on hover
@@ -486,20 +568,30 @@ class WindowEditor(QObject):
 
     def _project(self, ctx: TraceContext) -> Path | None:
         """The project file, when the results came from one of a scan format (else None:
-        nothing can be saved)."""
+        nothing can be saved). Loaded once per project file as long as it is unchanged on
+        disk (audit of 2026-11-15, F-12: three loads per spectrum shown)."""
+        from .window_edit import _signature
+
         path = ctx.results_path
         if path is None or Path(path).suffix != ".toml":
             return None
+        sig = _signature(Path(path))
+        kept = self._project_cache
+        if kept is not None and kept[0] == path and kept[1] == sig and sig is not None:
+            return kept[2]
         from ..config import load_project
 
+        project: Path | None = Path(path)
         try:
             inp = load_project(path, analysis_only=True).input
         except Exception as exc:  # noqa: BLE001 (the project file does not load: say so)
             log.info("window editing: %s (%s)", path, exc)
-            return None
-        if inp is None or inp.format not in ("mzml", "thermo"):
-            return None
-        return Path(path)
+            project = None
+        else:
+            if inp is None or inp.format not in ("mzml", "thermo"):
+                project = None
+        self._project_cache = (path, sig, project)
+        return project
 
     def _key(self, ctx: TraceContext) -> tuple[str, str, str] | None:
         """The spectrum's row in the table: its sample, file name, and ion (as its id names
@@ -528,17 +620,31 @@ class WindowEditor(QObject):
                      for t in ctx.reader.targets)
         return name, ions, shared
 
-    def _saved_row(self, ctx: TraceContext):
+    def _saved_row(self, ctx: TraceContext) -> tuple:
+        """The table's window for the spectrum shown (:func:`hxex.gui.window_edit
+        .saved_window`, or None) and, when the table does not read, the reader's words."""
         from .window_edit import saved_window
 
         project, key = self._project(ctx), self._key(ctx)
         if project is None or key is None:
-            return None
+            return None, None
         try:
-            return saved_window(project, key, self._peptide(ctx)[0])
-        except Exception as exc:  # noqa: BLE001 (a table that does not read: not shown)
+            return saved_window(project, key, self._peptide(ctx)[0]), None
+        except Exception as exc:  # noqa: BLE001 (a table that does not read: said)
             log.info("window editing: %s", exc)
-            return None
+            return None, str(exc)
+
+    def _after_save(self, _path: str) -> None:
+        """A save or an Undo wrote the table: what the table now gives this spectrum is the
+        baseline the next save compares the drift range with, and Save's state follows the
+        project file (audit of 2026-11-15, D-13)."""
+        ctx = self.context()
+        if ctx is None or not ctx.traces.traces:
+            return
+        saved, _problem = self._saved_row(ctx)
+        own = ctx.traces.traces[0].drift
+        self._drift_shown = (saved[1] or own) if saved is not None else own
+        self._save_state(ctx)
 
     def _save_state(self, ctx: TraceContext) -> None:
         if self._project(ctx) is None:
@@ -569,15 +675,28 @@ class WindowEditor(QObject):
         ctx = self.context()
         if ctx is None:
             return
+        if self.failure is not None:  # nothing is coming (audit of 2026-11-15, F-15)
+            self.message.emit(f"not saved: {self.failure}")
+            return
+        boxes_drift = self.drift()  # read once, here (F-7: a worker read the boxes later)
         if self.preview is None or self._summed != (ctx.spectrum_id, self.window(),
-                                                    self.drift()):
+                                                    boxes_drift):
             self.message.emit("wait for the new window's spectrum, then save")
             return
         project, key = self._project(ctx), self._key(ctx)
-        if project is None or key is None:
+        if project is None:  # it loaded when the results were opened (Save was enabled)
+            self.message.emit("not saved: the project file does not load any more (or no "
+                              "longer reads mzML or Thermo raw files)")
+            return
+        if key is None:
             return
         chosen = None
-        if not table_path(project)[1]:  # the first save: where the table goes (owner)
+        try:
+            named = table_path(project)[1]
+        except Exception as exc:  # noqa: BLE001 (a project file that stopped loading: D-10)
+            self.message.emit(f"not saved: {exc}")
+            return
+        if not named:  # the first save: where the table goes (owner)
             from .table_choice import ask_table
 
             chosen = ask_table(self.panel, project, "input.rt_elution_windows", DEFAULT_NAME,
@@ -589,10 +708,13 @@ class WindowEditor(QObject):
         level = self.scope.currentData()
         whole = level != "ion"
         peptide, siblings, shared = self._peptide(ctx)
-        drift = self.drift()
-        if whole and drift is not None and self._drift_shown is not None and all(
+        drift = boxes_drift
+        # not changed since the table or the run gave it: the row's drift range stays as it
+        # is, at every level (D open question 3: a level-1 save no longer pins the reader's
+        # own drift choice)
+        if drift is not None and self._drift_shown is not None and all(
                 abs(a - b) < 5e-4 for a, b in zip(drift, self._drift_shown, strict=True)):
-            drift = None  # not changed: the ion's drift range stays as it is
+            drift = None
         samples = samples_reading(ctx.reader, ctx.spectrum_id, ctx.data_id,
                                   siblings if whole else (key[2],), peptide)
         window = (spectrum.rt_start, spectrum.rt_end)
@@ -639,19 +761,25 @@ class WindowEditor(QObject):
             return
         results = ctx.results
         ready = self.alignment if self._aligned_key == (ctx.spectrum_id, level,
-                                                         self.drift()) else None
+                                                         boxes_drift) else None
+        reader, sid, data_id = ctx.reader, ctx.spectrum_id, ctx.data_id
 
         def work():
-            return plan_spread(ctx.reader, results, ctx.spectrum_id, ctx.data_id, window,
-                               peptide=peptide, ion=key[2], ions=siblings, level=level,
-                               drift=self.drift())  # the species chosen in drift time
+            return plan_spread(reader, results, sid, data_id, window, peptide=peptide,
+                               ion=key[2], ions=siblings, level=level,
+                               drift=boxes_drift)  # the species chosen in drift time
 
         def done(plans) -> None:
+            self._saving = None
             self.panel.set_task(None)
             self.save.setEnabled(True)
             places = [(sample, p.file) for p in plans if p.window is not None
                       for sample in p.samples]
-            own = own_windows(project, peptide, siblings, places)
+            try:
+                own = own_windows(project, peptide, siblings, places)
+            except Exception as exc:  # noqa: BLE001 (the table or project changed: D-10)
+                self.message.emit(f"not saved: {exc}")
+                return
             kept: list[str] = []
             files = sorted({f for _s, f in own})
             answer = "replace"
@@ -665,6 +793,7 @@ class WindowEditor(QObject):
             write(plans, kept, keep_own=answer == "keep")
 
         def failed(message: str) -> None:
+            self._saving = None
             self.panel.set_task(None)
             self.save.setEnabled(True)
             self.message.emit(f"not saved: {message}")
@@ -674,6 +803,7 @@ class WindowEditor(QObject):
             return
         self.panel.set_task("Matching the other files' traces…")
         self.save.setEnabled(False)
+        self._saving = sid
         self._spread_task.submit(work, done, failed)
 
     def _replace_or_keep(self, files: list[str]) -> str | None:

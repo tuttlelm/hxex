@@ -293,22 +293,38 @@ tab says so.
 To change a spectrum's window, switch on **Edit window** in the tab's bar. The window's start
 and end appear as boxes (minutes), with the drift range (milliseconds) for ion-mobility files.
 Type new times, or drag across the trace (or across the drift profile) to set them: while the
-switch is on, dragging sets the window instead of moving the figure. The new window is hatched
+switch is on, dragging sets the window instead of moving the figure. A window is a set of
+scans, so the boxes hold the first and last scan's own times: a time you type or drag to goes
+to the nearest scan, the arrows step scan by scan, and an unchanged window is previewed and
+saved over exactly the scans the results hold. A drift range you type widens to the file's
+drift bins (never inwards). The new window is hatched
 on the trace, and under it the spectrum as the results hold it ("now") is drawn beside the
 spectrum summed over the new window, each with its fit, its K, and its deuteration. The new
 spectrum is made from the raw file (the results hold each spectrum only as summed over its own
 window), so the file has to be where the project's `data_root` says; the first time a file is
-opened this takes a few seconds, afterwards a fraction of one. The new spectrum shows as soon
+opened this takes a few seconds, afterwards a fraction of one. If the file there is not the
+one the run read (another conversion, say), the figure says so in red. The new spectrum shows
+as soon
 as it is read; its fit follows within a second (every K is started both from the run's fit of
 the spectrum and from the new spectrum itself, and keeps the better of the two, so it takes only
 a few steps; a window moved away from another species therefore does not leave the fit on that
 species' peaks). The line under the figure says which of the two is
-under way. **Fits at each K** draws the new window's
-spectrum at every K the run tried. This is a preview: it uses the run's settings and noise
+under way. Both spectra are drawn at the K in effect for the spectrum now (your review K if
+you set one, else the run's, which a rerun keeps); when the fit's own criterion would choose
+another K for the new window, its title says so. For ion-mobility files the drift panel
+shows the drift profile of the scans the new window sums. **Fits at each K** draws the new
+window's spectrum at every K it was fitted at (K = 2 is not fitted for a spectrum with at most
+one deuteron, nor through the per-scan cut). A fragment ion of a file the run fitted through
+the instrument's per-scan cut is previewed through the cut as well. This is a preview: it
+uses the run's settings and noise
 curve, but not its bootstrap, population test, or controls, and nothing in the results
 changes. Now and then the run's own fit, which tries more starting points, settles on another
 K than the preview did. The line above the figure says it is a preview; hover over it to
 see how this preview differs from a run (for example, K chosen without the population test).
+A review decision on the spectrum (a status, a K, a note) keeps the window you are editing
+and its preview; selecting another spectrum drops them. A window far from the trace (typed,
+or saved earlier) is pointed to at the edge of the trace instead of shrinking the trace to
+show it.
 
 While you edit with **Show elution traces for** on 3 or 4 (the replicates or every file of this
 sample), the
@@ -317,11 +333,13 @@ same trace match a save at that level uses (below; within the drift range in the
 scaled to this trace's height, so the peaks line up under the new window when the match worked.
 A file whose trace did not match is drawn dashed, where it is. **Each file's window** draws one
 row per file instead, each on its own clock: the scans its spectrum sums now (shaded), the new
-window shifted into it (hatched), and its shift; this file is the top row, and dragging across
+window shifted into it (hatched), and its shift; a file whose trace could not be read (its
+file missing, say) gets a row saying why; this file is the top row, and dragging across
 that row sets the window. It shows, file by file, what saving at that level would write, and
 whether a file's present window sits on the peak at all. The files are matched once for the
 spectrum and the drift range (about half a second per file); moving the window does not match
-them again, and a save at that level uses the same match. The traces drawn are always the ones
+them again, and a save at that level uses the same match. When the match finds no other file
+of the ion, the switch is greyed out. The traces drawn are always the ones
 the run summed, each at its own drift range: a new drift range in the boxes is matched again
 and may move the other files by their new shifts, but it does not change any trace, and the
 files keep their places until the new match is ready.
@@ -367,7 +385,11 @@ window is saved for every one of them, since it is one injection;
 the message after saving names the samples. On ion-mobility files a changed drift range is
 always kept for this charge state (or ion) only, also when you save for the whole peptide
 (drift times differ between charge states), and is not shifted in other files (drift times
-hold between injections); the message says so.
+hold between injections); the message says so. A drift range you did not change is not
+written at any level, so a save that only moved the retention window leaves the drift range
+as the run (or the table) had it. A save at the last two choices matches the other files in
+the background; if you select another spectrum before it is done, it is dropped and the
+status bar says so.
 
 When the project file names no table yet, the first save asks
 where it goes, suggesting `rt_elution_windows.csv` beside the project file (with the project
@@ -377,7 +399,8 @@ already, the window says so, and which other project file uses it, and adds to i
 say yes. The table is then named in the project file (`[input] rt_elution_windows`); saving
 again for the same peptide or ion and file changes its row. Your peptide table is never changed. When you open a spectrum whose peptide
 or ion already has a saved window in that file, the boxes show it and the choice is set to
-match. **Undo** puts the table (and the project file, after the first save) back as it was
+match; when the table cannot be read (a row edited by hand that the project refuses), the
+status bar says why and the boxes show the window the results hold. **Undo** puts the table (and the project file, after the first save) back as it was
 before the last save; it covers the saves made while these results are shown, and opening
 other results leaves the earlier saves as they are. Saving needs the results opened from
 their project file, and the table opens in **Tables** like the others. The saved windows are used when you run the project again with overwrite enabled: **Run** on

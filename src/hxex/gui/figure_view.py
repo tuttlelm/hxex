@@ -134,6 +134,11 @@ class FigureView(QWidget):
         # mouse handlers a plain QEvent (no button())
         self.installEventFilter(self)
 
+    @property
+    def shown_figure(self) -> Figure | None:
+        """The figure whose picture is on screen: here the figure set (drawn at once)."""
+        return self.figure
+
     def set_figure(self, fig: Figure, svg: bytes | None = None,
                    marks: list[Mark] | None = None) -> None:
         """Show ``fig`` (``svg`` and ``marks`` when already drawn, as by a worker thread)."""
@@ -363,6 +368,12 @@ class RasterView(FigureView):
         self._again.setSingleShot(True)
         self._again.setInterval(REDRAW_AFTER_MS)
         self._again.timeout.connect(self._render)
+
+    @property
+    def shown_figure(self) -> Figure | None:
+        """The figure whose picture is on screen: the one before, until this figure's picture
+        has come (a drag across the view is mapped with it: audit of 2026-11-15, F-19)."""
+        return self._image_for
 
     def set_figure(self, fig: Figure, svg: bytes | None = None,
                    marks: list[Mark] | None = None) -> None:

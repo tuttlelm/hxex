@@ -173,8 +173,18 @@ def test_another_window_names_its_scans_and_sums_them(lc):
     assert narrow.intensity.sum() < spectra.spectrum(i)[1].sum()
     with pytest.raises(ValueError, match="no scan"):
         reader.spectrum(sid, data_id, (2.0, 2.1))  # after the run's last scan (1 min)
-    with pytest.raises(ValueError, match="after its start"):
+    with pytest.raises(ValueError, match="before its start"):
         reader.spectrum(sid, data_id, (end, start))
+    # one scan is a window (the boxes snap to scans: start and end may be the same scan)
+    one = reader.spectrum(sid, data_id, (start, start))
+    assert one.rt_start == one.rt_end == pytest.approx(start) and "/scan" in one.spectrum_id
+    assert "-" not in one.spectrum_id.split("/scan")[-1]
+    # the ion's every scan in the file, for the editor's boxes to snap to (F-1)
+    traces = reader.traces([sid], data_id)
+    times = traces.scan_times
+    assert times is not None and np.all(np.diff(times) > 0)
+    assert times.min() < start and times.max() > end  # the whole file, not the span drawn
+    assert np.isclose(times, start).any() and np.isclose(times, end).any()
 
 
 def test_the_peptides_other_ions_in_the_run(tmp_path):
@@ -269,8 +279,14 @@ def test_the_time_axis_is_this_files_whatever_is_read_with_it(lc):
     a, b = alone.traces[0].window
     pad = max(MARGIN, b - a)
     assert limits[0] == pytest.approx((a - pad, b + pad))
-    wide = plot_retention(alone, edit=(a - 3 * pad, b)).axes[0].get_xlim()
-    assert wide == pytest.approx((a - 3 * pad, b + pad))
+    # a window being edited beyond the trace's own span does not widen it either (audit of
+    # 2026-11-15, F-11: a window at 200 min drew the trace as a sliver): it is marked
+    ax = plot_retention(alone, edit=(a - 3 * pad, b - 2 * pad)).axes[0]
+    assert ax.get_xlim() == pytest.approx(limits[0])
+    assert any(t.get_gid() == "edited_outside" for t in ax.texts)
+    ax = plot_retention(alone, edit=(a - 3 * pad, b)).axes[0]  # reaching into the trace
+    assert ax.get_xlim() == pytest.approx(limits[0])
+    assert not any(t.get_gid() == "edited_outside" for t in ax.texts)
 
 
 def test_a_match_moves_the_runs_traces_and_changes_none(lc):
@@ -318,3 +334,125 @@ def test_a_trace_read_stops_when_its_cancel_hook_says_so(lc):
         reader.ion_traces(sid, 0, [(s, 0) for s in _ids(spectra, "un2.mzML")], (0.0, 10.0),
                           cancel=lambda: True)
     assert reader.traces([sid], 0, cancel=lambda: False).traces  # not stopped: read
+
+
+def test_a_file_that_is_not_the_one_the_run_read_is_said(lc, tmp_path):
+    """The trace reader opens whatever is at the path; a file replaced by another conversion
+    (its size or an indexed mzML's own checksum differs from the record) is read all the same,
+    with a note in the traces (audit of 2026-11-15, F-14)."""
+    spectra, _ = lc
+    source = spectra.source
+    sid, data_id = spectra.spectrum_id[0], int(spectra.data_id[0])
+    assert TraceReader(source).traces([sid], data_id).note is None
+    run_i = TraceReader(source).locate(sid, data_id)[0]
+    files = list(source["files"])
+    files[run_i] = {**files[run_i], "size": files[run_i]["size"] + 1}
+    other = {**source, "files": files}
+    reader = TraceReader(other)
+    got = reader.traces([sid], data_id)
+    assert got.traces and "is not the file the run read (its size differs)" in got.note
+    assert reader.changed_file(run_i) == got.note
+    # a checksum the file carries at its end (an indexed mzML's) is compared when the size is
+    # the same; a record without one leaves the file unquestioned
+    files[run_i] = {**source["files"][run_i], "algorithm": "mzml-sha1", "checksum": "0" * 40}
+    got = TraceReader({**source, "files": files}).traces([sid], data_id)
+    assert got.note is None or "checksum" in got.note  # no tail checksum in this file: unknown
+    files[run_i] = {k: v for k, v in source["files"][run_i].items() if k != "size"}
+    assert TraceReader({**source, "files": files}).traces([sid], data_id).note is None
+
+
+def test_a_closed_reader_refuses_to_read(lc):
+    """A read queued on a reader whose files were closed (other results shown) reopened them,
+    and nothing closed them again (audit of 2026-11-15, F-18)."""
+    spectra, _ = lc
+    reader = TraceReader(spectra.source)
+    sid, data_id = spectra.spectrum_id[0], int(spectra.data_id[0])
+    assert reader.traces([sid], data_id).traces
+    reader.close()
+    assert not reader._open
+    with pytest.raises(ValueError, match="closed"):
+        reader.traces([sid], data_id)
+    with pytest.raises(ValueError, match="closed"):
+        reader.spectrum(sid, data_id, (spectra.rt_start[0], spectra.rt_end[0]))
+    assert not reader._open
+
+
+def test_the_drift_profile_of_a_new_window(tmp_path):
+    """``summed(..., profile=True)`` gives the drift profile of the scans the new window sums
+    (the editor's drift panel follows the window being edited: audit of 2026-11-15, F open
+    question 1); without ion mobility bins there is none."""
+    lc = [{"time": 1.0 + 0.05 * k, "filter": "Full ms"} for k in range(7)]
+    peptide = {5.1: 0.02, 5.2: 0.4, 5.3: 1.0, 5.4: 0.5, 5.5: 0.05}
+    un = write_mzml(tmp_path / "un.mzML", _drifting(lc, [(1, 1e5, peptide)]), indexed=True)
+    spectra = read_mzml([MzmlRun(un, "WT", role="undeut")],
+                        [MzmlTarget(ENTRY, rt_window=(63.0, 69.0))], project="p")
+    sid = spectra.spectrum_id[0]
+    drift = (float(spectra.drift_start[0]), float(spectra.drift_end[0]))
+    reader = TraceReader(spectra.source)
+    whole = reader.summed(sid, 0, (spectra.rt_start[0], spectra.rt_end[0]), drift=drift,
+                          profile=True)
+    assert whole.profile is not None and whole.profile.range == pytest.approx(drift)
+    run = reader.traces([sid], 0, drift_ranges={sid: drift}).drift
+    np.testing.assert_allclose(whole.profile.drift, run.drift)
+    np.testing.assert_allclose(whole.profile.intensity, run.intensity)
+    part = reader.summed(sid, 0, (spectra.rt_start[0], spectra.rt_start[0] + 0.06), drift=drift,
+                         profile=True)
+    assert part.profile.intensity.sum() < whole.profile.intensity.sum()
+    assert reader.summed(sid, 0, (spectra.rt_start[0], spectra.rt_end[0])).profile is None
+    plain = write_mzml(tmp_path / "plain.mzML", lc_run(1))
+    flat = read_mzml([MzmlRun(plain, "S", role="undeut")], [MzmlTarget(_entry("VDQIIMAK"))],
+                     project="p")
+    reader = TraceReader(flat.source)
+    got = reader.summed(flat.spectrum_id[0], int(flat.data_id[0]),
+                        (flat.rt_start[0], flat.rt_end[0]), profile=True)
+    assert got.profile is None and got.spectrum.scans is None
+
+
+def test_a_fragment_of_a_file_fitted_through_the_cut_keeps_the_scans_record(tmp_path):
+    """A fragment ion of a reduced-profile file that records its scans' noise is fitted
+    through the instrument's per-scan cut ([input.scans] scan_cut "auto"); summed again over a
+    window it carries the same scans' record as the run gave it, so the preview is fitted as
+    the run was (audit of 2026-11-15, F-3). The parent (MS1) carries none."""
+    from hxex.fragments import fragment_targets
+    from hxex.io.mzml import MzmlConfig
+    from test_mzml import _array, fragment_lc_run
+    from test_thermo import _reduced, _with_analyser
+
+    frags = fragment_targets(ENTRY, "c:2-4:1", activation="ETD", rt_window=(10.0, 60.0))
+    targets = [MzmlTarget(ENTRY, rt_window=(10.0, 60.0)), *frags]
+    path = write_mzml(tmp_path / "frag.mzML", _reduced(fragment_lc_run(frags, other=None)))
+    noise = (_array(np.linspace(100, 2000, 7), "MS:1002743", name="sampled noise m/z array")
+             + _array(np.linspace(10, 100, 7), "MS:1002744",
+                      name="sampled noise intensity array")
+             + _array(np.zeros(7), "MS:1002745", name="sampled noise baseline array"))
+    path.write_text(path.read_text().replace("</binaryDataArrayList>",
+                                             noise + "</binaryDataArrayList>"))
+    _with_analyser(path, "MS:1000484", "orbitrap")
+    spectra = read_mzml([MzmlRun(path=str(path), sample="S", time=60.0)], targets,
+                        project="p", config=MzmlConfig(find_fragment_peak=True))
+    assert spectra.source["scan_cut"]["files"] == ["frag.mzML"]
+    reader = TraceReader(spectra.source)
+    kinds = ["ion_type" in m for m in spectra.modification]
+    frag, parent = kinds.index(True), kinds.index(False)
+    for i in (frag, parent):
+        sid, data_id = spectra.spectrum_id[i], int(spectra.data_id[i])
+        same = reader.spectrum(sid, data_id, (spectra.rt_start[i], spectra.rt_end[i]))
+        assert same.spectrum_id == sid
+        record = spectra.scans[i]
+        if i == parent:
+            assert record is None and same.scans is None
+            continue
+        assert record is not None and same.scans is not None
+        np.testing.assert_allclose(same.scans.weights, record.weights)
+        np.testing.assert_allclose(same.scans.noise_mz, record.noise_mz)
+        np.testing.assert_allclose(same.scans.noise, record.noise)
+        # fewer scans: the record follows them (their shares sum to one)
+        part = reader.spectrum(sid, data_id, (spectra.rt_start[i], spectra.rt_end[i] - 0.02))
+        assert len(part.scans.weights) < len(record.weights)
+        assert part.scans.weights.sum() == pytest.approx(1.0)
+    # the same file read without the cut: no record
+    off = read_mzml([MzmlRun(path=str(path), sample="S", time=60.0)], targets, project="p",
+                    config=MzmlConfig(find_fragment_peak=True, scan_cut=False))
+    reader = TraceReader(off.source)
+    assert reader.spectrum(off.spectrum_id[frag], int(off.data_id[frag]),
+                           (off.rt_start[frag], off.rt_end[frag])).scans is None

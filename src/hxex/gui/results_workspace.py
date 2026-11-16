@@ -707,6 +707,18 @@ class ResultsWorkspace(QWidget):
             return
         self._trace_for = (results, sid)
         shown = self._shown_traces
+        if shown is not None and shown[1] == sid and shown[0] is not results \
+                and _same_record(shown[0], results):
+            # the same spectrum in new Results of the same read record (a review decision, a
+            # note): its traces hold, and the editor keeps the window being edited and its
+            # preview (audit of 2026-11-15, F-2: a decision threw the typed window away);
+            # drawn again, as the K in effect may have changed
+            self._shown_traces = (results, *shown[1:])
+            if self.window_editor is not None and self.window_editor.active:
+                self.window_editor.update()
+            else:
+                self._draw_plain_trace()
+            return
         if shown is None or shown[0] is not results or shown[1] != sid:
             # another spectrum: the one before is forgotten, and the editor's work for it
             # dropped, so nothing draws it again while this one's trace is read (the same
@@ -1918,6 +1930,15 @@ def _series_names(series: list) -> list[str]:
 def _counts(c: dict) -> list[str]:
     return [str(c["n_spectra"]), str(c["n_flagged"] or ""), str(c["n_rejected"] or ""),
             str(c["n_left_out"] or ""), str(c["n_multi"] or "")]
+
+
+def _same_record(a, b) -> bool:
+    """Whether two ``Results`` were read from the same scan files (one read record object:
+    a review decision keeps it; results read again from disk have a new one)."""
+    try:
+        return a.settings.spectra_source is b.settings.spectra_source
+    except AttributeError:
+        return False
 
 
 def _left_out_or_none(results, config) -> list[str] | None:

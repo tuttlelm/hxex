@@ -36,14 +36,19 @@ from .mzml import (
     _MZML,
     SCAN_READERS,
     MzmlConfig,
+    MzmlError,
     MzmlRun,
     MzmlTarget,
+    _channel,
     _gated_kind,
+    _ladder_trace,
     _run_file_name,
+    _scan_record,
     _target_label,
     sum_centroid,
     sum_mobility_bins,
     sum_profile,
+    target_applies,
     target_scans,
 )
 
@@ -100,8 +105,9 @@ class RetentionTraces:
     """The traces of one spectrum's series in its sample (:func:`retention_traces`): the peptide
     ion's ``label``, one :class:`Trace` per run (the selected first), the selected spectrum's
     :class:`DriftProfile` (None without ion mobility bins), a ``note`` saying why there is
-    nothing to draw (no traces) or what is missing, and ``ions``: the peptide's other ions in
-    the selected run (:class:`IonTrace`; empty unless asked for)."""
+    nothing to draw (no traces) or what is missing (a file not found, or not the file the run
+    read), and ``ions``: the peptide's other ions in the selected run (:class:`IonTrace`; empty
+    unless asked for)."""
 
     label: str
     traces: list[Trace]
@@ -110,6 +116,19 @@ class RetentionTraces:
     ions: list[IonTrace] = field(default_factory=list)
     others_label: str = "the sample's other files"  # the traces behind, as the legend names them
     ions_label: str = "this peptide's other ions in this file"
+    # the times (minutes, sorted) of every scan of the ion in the selected run's whole file: a
+    # window is a set of scans, so the window editor's boxes snap to them (None: not read)
+    scan_times: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class Summed:
+    """A spectrum summed again over another window (:meth:`TraceReader.summed`) and, when
+    asked for, the :class:`DriftProfile` of the scans it summed (None: not asked for, or the
+    scans have no ion mobility bins)."""
+
+    spectrum: Spectrum
+    profile: DriftProfile | None = None
 
 
 def readable(source: Mapping | None) -> bool:
@@ -156,6 +175,8 @@ class TraceReader:
 
             _thermo_api(thermo_dir)
         self._open: dict[int, object] = {}
+        self._changed: dict[int, str | None] = {}  # per run opened: not the file the run read
+        self._closed = False  # closed: nothing is read any more (audit of 2026-11-15, F-18)
         # one read at a time in the whole process, whichever reader asks: two threads reading
         # Thermo raw files through .NET at once locked the window for good (2026-11-09)
         self._lock = _READS
@@ -174,10 +195,13 @@ class TraceReader:
         return p
 
     def _file(self, run_i: int):
+        if self._closed:  # a read queued on a reader whose files were closed would open them
+            raise ValueError("the trace reader was closed (other results are shown)")
         if run_i not in self._open:
             path = self.path(run_i)
             if not path.is_file():
                 raise FileNotFoundError(f"{path} not found")
+            self._changed[run_i] = self._identity_note(run_i, path)
             if self.source.get("reader") == "thermo":
                 from .thermo import _format
                 self._open[run_i] = _format(self.thermo_dir).open(path)
@@ -185,8 +209,36 @@ class TraceReader:
                 self._open[run_i] = _MZML.open(path)
         return self._open[run_i]
 
+    def _identity_note(self, run_i: int, path: Path) -> str | None:
+        """Whether ``path`` is the file the run read (the record's ``files`` entry): its size,
+        and the checksum an indexed mzML file carries at its end (cheap to read); a SHA-256 of
+        the whole file is not computed here (seconds on a large raw file at every first open).
+        A file that differs is still read: the note says so (audit of 2026-11-15, F-14)."""
+        known = (self.source.get("files") or [None] * len(self.runs))[run_i] or {}
+        if not known.get("size"):
+            return None
+        why = None
+        try:
+            if path.stat().st_size != int(known["size"]):
+                why = "its size differs"
+            elif known.get("algorithm") == "mzml-sha1":
+                if _tail_checksum(path) != str(known.get("checksum") or "").lower():
+                    why = "its checksum differs"
+        except OSError:
+            return None
+        if why is None:
+            return None
+        return (f"{path.name} is not the file the run read ({why}): its trace and the preview "
+                "may not match the results")
+
+    def changed_file(self, run_i: int) -> str | None:
+        """The note of :meth:`_identity_note` for a run whose file was opened (None: the file
+        the run read, or not opened yet)."""
+        return self._changed.get(run_i)
+
     def close(self) -> None:
         with self._lock:
+            self._closed = True
             for f in self._open.values():
                 f.close()
             self._open.clear()
@@ -271,6 +323,13 @@ class TraceReader:
         if selected_run not in scanned:
             note = "; ".join(missing) or "the spectrum's scans are not in its file"
             return RetentionTraces(label, [], note=note)
+        missing += [n for r in scanned if (n := self._changed.get(r))]
+        # every scan of the ion in the selected run's whole file (the editor's boxes snap to
+        # them; audit of 2026-11-15, F-1)
+        sel_table = scanned[selected_run][2]
+        every = target_scans(sel_table, self.runs[selected_run],
+                             replace(target, rt_window=None), self.config)
+        scan_times = np.sort(np.asarray(sel_table.time[every], dtype=float)) / 60.0
         starts = [w[0] for *_, w in scanned.values()]
         ends = [w[1] for *_, w in scanned.values()]
         width = max(b - a for a, b in zip(starts, ends, strict=True))
@@ -313,7 +372,7 @@ class TraceReader:
                 if found_profile is not None:
                     profile = DriftProfile(found_profile[0], found_profile[1], drift)
         note = "; ".join(missing) if missing else None
-        return RetentionTraces(label, traces, profile, note)
+        return RetentionTraces(label, traces, profile, note, scan_times=scan_times)
 
 
     def ion_traces(self, spectrum_id: str, data_id: int, others: Sequence[tuple[str, int]],
@@ -398,13 +457,38 @@ class TraceReader:
         ``window`` (minutes, the acquisition clock; the scans inside it, ends included) and,
         when given, over the ``drift`` range (ms) of scans with ion mobility bins: the scans
         summed as the reader sums them (:func:`hxex.io.mzml.read_mzml`), within the record's m/z
-        window, with the file's m/z offset taken out. Its id names the new scans. Raises
+        window, with the file's m/z offset taken out, and, for a fragment ion of a file the run
+        fitted through the instrument's per-scan cut (the record's ``scan_cut``), with the
+        scans' record the run gave its spectra (``Spectrum.scans``; audit of 2026-11-15, F-3).
+        Its id names the new scans. Raises
         ValueError when the spectrum cannot be summed again (a kinetics run, no scan in the
         window, an id that names no run) and FileNotFoundError when its file is not found."""
-        with self._lock:
-            return self._spectrum(spectrum_id, data_id, window, drift)
+        return self.summed(spectrum_id, data_id, window, drift=drift).spectrum
 
-    def _spectrum(self, spectrum_id, data_id, window, drift) -> Spectrum:
+    def summed(self, spectrum_id: str, data_id: int, window: tuple[float, float], *,
+               drift: tuple[float, float] | None = None, profile: bool = False) -> Summed:
+        """:meth:`spectrum`, with the drift profile of the scans summed when ``profile`` is
+        asked for (:class:`Summed`; the window editor's drift panel follows the window being
+        edited)."""
+        with self._lock:
+            return self._spectrum(spectrum_id, data_id, window, drift, profile)
+
+    def _cut_members(self, run_i: int, t_i: int) -> list[int] | None:
+        """The targets of the channel of fragment target ``t_i`` in run ``run_i`` (itself
+        among them) when the run fitted that file's fragments through the per-scan cut; None
+        when it did not, or the target is no fragment ion."""
+        target = self.targets[t_i]
+        if not ("fragment" in dict(target.entry.extra) and target.ms_level >= 2):
+            return None
+        cut = (self.source.get("scan_cut") or {}).get("files") or []
+        if _run_file_name(self.runs[run_i].path) not in cut:
+            return None
+        run, key = self.runs[run_i], _channel(target)
+        return [j for j, t in enumerate(self.targets)
+                if "fragment" in dict(t.entry.extra) and t.ms_level >= 2 and _channel(t) == key
+                and target_applies(t, run)]
+
+    def _spectrum(self, spectrum_id, data_id, window, drift, profile=False) -> Summed:
         where = self.locate(spectrum_id, data_id)
         if where is None:
             raise ValueError("the spectrum's scans are not named in its id (read by an older "
@@ -414,8 +498,8 @@ class TraceReader:
         if not run.fixed:
             raise ValueError("a kinetics run's spectra are not read by retention windows")
         start, end = (float(v) for v in window)
-        if not start < end:
-            raise ValueError(f"the window's end ({end:g} min) must be after its start "
+        if start > end:  # one scan (start = end) is a window
+            raise ValueError(f"the window's end ({end:g} min) must not be before its start "
                              f"({start:g} min)")
         t_i = self.of_series[int(data_id)]
         target = self.targets[t_i]
@@ -427,7 +511,9 @@ class TraceReader:
         if not len(rows):
             raise ValueError(f"no scan of the peptide ion between {start:.3f} and {end:.3f} min")
         lo, hi = self.windows[t_i]
-        by_index = f.read_scans(table.index[rows], [(lo, hi)], drift=drift is not None)
+        members = self._cut_members(run_i, t_i)
+        windows = [(lo, hi)] + [tuple(self.windows[j]) for j in (members or []) if j != t_i]
+        by_index = f.read_scans(table.index[rows], windows, drift=drift is not None or profile)
         scans = [by_index[int(table.index[r])] for r in rows]
         parts, gated = [], False
         for s in scans:  # as hxex.io.mzml._summed sums them
@@ -459,15 +545,59 @@ class TraceReader:
         rt = float(np.average(times, weights=weight) if weight.sum() > 0 else times.mean())
         resolutions = np.array([s.resolution for s in scans], dtype=float)
         resolutions = resolutions[np.isfinite(resolutions)]
-        return Spectrum(
+        rp = float(np.median(resolutions)) if len(resolutions) else None
+        r_mz = float(getattr(f, "resolving_power_mz", np.nan))
+        record = None
+        if members is not None:  # as hxex.io.mzml._scan_records weighs the channel's scans
+            preds, halves = [], []
+            for j in members:
+                e = self.targets[j].entry
+                pred = np.asarray(plan_bins(e.peptide, e.charge, modification=e.modification,
+                                            config=self.picker, registry=self.registry).pred_mz,
+                                  dtype=float)
+                preds.append(pred)
+                halves.append(np.broadcast_to(np.asarray(self.picker.half_width(
+                    pred, e.charge, resolving_power=rp, resolving_power_mz=r_mz), dtype=float),
+                    pred.shape))
+            trace = _ladder_trace(scans, np.concatenate(preds), np.concatenate(halves))
+            try:
+                record = _scan_record(f, table, rows, np.arange(len(rows)), trace, (lo, hi),
+                                      {}, by_index)
+            except MzmlError as exc:
+                raise ValueError("the new window's spectrum cannot be fitted through the "
+                                 f"per-scan cut as the run's was: {exc}") from exc
+        found_profile = None
+        if profile:
+            e = target.entry
+            plan = plan_bins(e.peptide, e.charge, modification=e.modification,
+                             config=self.picker, registry=self.registry)
+            factor = 1.0 + self.offsets[run_i] * 1e-6
+            peaks = isotope_peaks(plan) * factor
+            half_peaks = self.picker.half_width(peaks, e.charge, resolving_power=rp,
+                                                resolving_power_mz=r_mz)
+            got = scan_profile(scans, peaks, half_peaks)
+            if got is not None:
+                found_profile = DriftProfile(got[0], got[1], drift if gated else None)
+        spectrum = Spectrum(
             mz, y, replace(target.entry, sample=run.sample), run.spectrum_time, run.rep,
             data_id=int(data_id), label=f"{_run_file_name(run.path)} {scan_text}",
             spectrum_id=new_id, rt=rt / 60.0,
-            resolving_power=float(np.median(resolutions)) if len(resolutions) else np.nan,
-            resolving_power_mz=float(getattr(f, "resolving_power_mz", np.nan)),
+            resolving_power=rp if rp is not None else np.nan,
+            resolving_power_mz=r_mz,
             role=run.role, rt_start=float(times.min()) / 60.0, rt_end=float(times.max()) / 60.0,
             drift_start=drift[0] if gated else np.nan, drift_end=drift[1] if gated else np.nan,
-            mz_calibration_ppm=offset if offset else np.nan)
+            mz_calibration_ppm=offset if offset else np.nan, scans=record)
+        return Summed(spectrum, found_profile)
+
+
+def _tail_checksum(path: Path) -> str | None:
+    """The checksum an indexed mzML file carries at its end (``<fileChecksum>``, as
+    :func:`hxex.io.identity.file_identity` reads it); None when it has none."""
+    size = path.stat().st_size
+    with path.open("rb") as fh:
+        fh.seek(max(0, size - 4096))
+        m = re.search(rb"<fileChecksum>\s*([0-9a-fA-F]{40})\s*</fileChecksum>", fh.read())
+    return m.group(1).decode().lower() if m else None
 
 
 def _at_bins(scan, pred: np.ndarray, half: np.ndarray,

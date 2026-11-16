@@ -4,18 +4,29 @@ the boxes, a drag across the trace, the preview beside the spectrum, Save to the
 table and Undo. Runs offscreen."""
 import os
 
+import numpy as np
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from hxex.gui.results_workspace import ResultsWorkspace  # noqa: E402
-from test_window_edit import _read, _results, project  # noqa: E402, F401
+from test_window_edit import PEPTIDE, RT, N, _read, _results, project  # noqa: E402, F401
 
 
 def _titles(panel):
     fig = panel.view.figure
     return [] if fig is None else [ax.get_title() for ax in fig.axes]
+
+
+def _pictured(panel) -> bool:
+    """Whether the figure set is the one whose picture is on screen (a drag is mapped with
+    the pictured figure: F-19)."""
+    return not panel.drawing and getattr(panel.view, "ready", True)
+
+
+def _scan_times(w):
+    return w._shown_traces[3].scan_times
 
 
 def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypatch):  # noqa: F811
@@ -46,7 +57,15 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypat
     assert editor.drift() is None  # no ion mobility here
     qtbot.waitUntil(lambda: any(t.startswith("new window") for t in _titles(panel))
                     and not panel.drawing, timeout=30000)
-    # a drag across the trace sets the window (figure fractions, as the view gives them)
+    # the unchanged window is previewed over the same scans: the boxes hold the scans' own
+    # times, whatever their decimals show (audit of 2026-11-15, F-1)
+    qtbot.waitUntil(lambda: editor.preview is not None, timeout=30000)
+    assert editor.preview.spectrum.spectrum_id == w._shown_traces[1]
+    times = _scan_times(w)
+    assert editor.start.decimals() == 4 and np.isclose(times, editor.window()[0]).any()
+    # a drag across the trace sets the window (figure fractions, as the view gives them),
+    # mapped with the figure whose picture is on screen
+    qtbot.waitUntil(lambda: _pictured(panel), timeout=30000)
     fig = panel.view.figure
     ax = next(a for a in fig.axes if a.get_xlabel().startswith("retention time"))
     start, end = selected.window[0] + 0.02, selected.window[1] - 0.01
@@ -54,7 +73,14 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypat
     (x0, y0), (x1, y1) = (to_fig.transform(ax.transData.transform((t, 0.0)))
                           for t in (start, end))
     panel.spanned.emit(x0, y0 + 0.01, x1, y1 + 0.01)
-    assert editor.window() == pytest.approx((start, end), abs=2e-3)
+    assert editor.window() == pytest.approx((start, end), abs=3e-3)  # the nearest scans
+    assert all(np.isclose(times, v).any() for v in editor.window())
+    # the arrows step scan by scan, never back onto the same scan
+    at = editor.window()[0]
+    editor.start.stepBy(1)
+    assert editor.window()[0] == pytest.approx(times[np.searchsorted(times, at) + 1])
+    editor.start.stepBy(-1)
+    assert editor.window()[0] == pytest.approx(at)
     # the raw file is read, then the spectrum fitted: said on the status line with the busy
     # bar, through the redraws in between (owner, 2026-11-08)
     assert panel._task == "Reading the new window's scans…" and not panel.busy.isHidden()
@@ -221,7 +247,8 @@ def test_the_window_is_edited_again_after_the_results_are_read_again(qtbot, proj
     show_elution(second)
     qtbot.waitUntil(lambda: w.window_editor._previewed is not None
                     and w.window_editor._target is not None  # None while the trace is read
-                    and w.window_editor._target[0] is second and not panel.drawing,
+                    and w.window_editor._target[0] is w._reader()  # the new record's reader
+                    and w._shown_traces[0] is second and not panel.drawing,
                     timeout=60000)
     assert any(t.startswith("new window") for t in _titles(panel))
 
@@ -268,6 +295,10 @@ def test_the_replicates_are_aligned_while_editing_and_each_file_is_a_row(qtbot, 
     editor.each_file.setChecked(True)
     qtbot.waitUntil(lambda: not panel.drawing and len(panel.view.figure.axes) == 2,
                     timeout=30000)
+    # the picture drawn before the patches' transforms are read: the matplotlib view draws
+    # the picture at the view's dpi in its worker (the figure's dpi changed meanwhile), which
+    # failed the lowest-versions CI job of 5731ad2 once
+    qtbot.waitUntil(lambda: _pictured(panel), timeout=30000)
     first, second = panel.view.figure.axes
     assert first.get_label() == "this file"
     hatched = [p for p in second.patches if p.get_gid() == "edited"]
@@ -287,17 +318,18 @@ def test_the_replicates_are_aligned_while_editing_and_each_file_is_a_row(qtbot, 
     assert editor._aligned_now(ctx) is None
     editor._aligned_key = key
     # a drag across the first row sets the window; across another row it does not
+    qtbot.waitUntil(lambda: _pictured(panel), timeout=30000)
     fig = panel.view.figure
     to_fig = fig.transFigure.inverted()
     start, end = window[0] + 0.02, window[1] - 0.01
     (x0, y0), (x1, y1) = (to_fig.transform(first.transData.transform((t, 0.0)))
                           for t in (start, end))
     panel.spanned.emit(x0, y0 + 0.01, x1, y1 + 0.01)
-    assert editor.window() == pytest.approx((start, end), abs=2e-3)
+    assert editor.window() == pytest.approx((start, end), abs=3e-3)
     (x0, y0), (x1, y1) = (to_fig.transform(second.transData.transform((t, 0.0)))
                           for t in (start - 0.01, end - 0.01))
     panel.spanned.emit(x0, y0 + 0.01, x1, y1 + 0.01)
-    assert editor.window() == pytest.approx((start, end), abs=2e-3)
+    assert editor.window() == pytest.approx((start, end), abs=3e-3)
     # view 2, this peptide's other ions: no other file, so no rows
     w.compare.setCurrentIndex(w.compare.findData("ions"))
     qtbot.waitUntil(lambda: not panel.drawing and not editor.each_file.isEnabled(),
@@ -355,8 +387,7 @@ def test_another_spectrum_never_draws_the_one_before(qtbot, project, monkeypatch
     show = panel.show_figure
     monkeypatch.setattr(panel, "show_figure", lambda fig, *a, **k: (
         drawn.append(getattr(fig, "hxex_spectrum", None)), show(fig, *a, **k))[1])
-    start, end = editor.window()
-    editor.start.setValue(start + 0.01 * (end - start))  # a new window: read in the background
+    editor.start.stepBy(1)  # a new window (one scan later): read in the background
     qtbot.waitUntil(lambda: editor._task.running, timeout=10000)
     # the new spectrum's trace is read slowly (as from large scan files): the previous
     # spectrum's preview is ready first
@@ -523,4 +554,241 @@ def test_a_save_for_the_peptide_asks_before_replacing_this_files_charge_states(
     ions = [r["ion"] for r in rows if r["ion"] and r["rt_start"]]
     assert len(ions) == 1  # the edited charge state gave its window up, the other kept its own
     assert any(not r["ion"] and r["peptide"] == peptide for r in rows)  # the peptide's row
+    editor.edit.setChecked(False)
+
+
+# --- the audit of 2026-11-15, fix Session 4 ---------------------------------------------------
+
+
+def _run_project(tmp_path):
+    """The two-file project of test_window_edit, run with hxex run (a bundle the window opens
+    through its project file)."""
+    from hxex.cli import main
+    from test_cli import FAST_RUN
+    from test_mzml import write_mzml
+    from test_retention_search import lc_run
+
+    write_mzml(tmp_path / "un1.mzML", lc_run(1))
+    write_mzml(tmp_path / "un2.mzML", lc_run(2, shift=6.0))
+    (tmp_path / "peptides.csv").write_text(
+        "Peptide,start_seq,end_seq,charge,rt_start,rt_end,note\n"
+        f"{PEPTIDE},1,{N},2,{RT - 4 / 60:.4f},{RT + 4 / 60:.4f},kept\n")
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n\n[input]\nformat = "mzml"\npeptides = "peptides.csv"\n'
+                    '\n[[input.runs]]\npath = "un1.mzML"\nsample = "S"\nrole = "undeut"\n'
+                    '\n[[input.runs]]\npath = "un2.mzML"\nsample = "S"\nrole = "undeut"\n'
+                    '\n[output]\nbundle = "out"\nfigures = false\n' + FAST_RUN)
+    assert main(["-q", "run", str(path)]) == 0
+    return path
+
+
+def _show_elution(qtbot, page, which=1):
+    series = page.tree.topLevelItem(0).child(0)
+    page.tree.expandItem(series)
+    page.tree.setCurrentItem(series.child(0).child(which))
+    tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
+    panel = page.panel("elution")
+    page.figures.setCurrentIndex(tabs.index("elution"))
+    qtbot.waitUntil(lambda: page._shown_traces is not None and not panel.drawing
+                    and len(page._shown_traces[3].traces) == 2, timeout=30000)
+    return panel
+
+
+def test_a_review_decision_keeps_the_window_being_edited(qtbot, tmp_path, monkeypatch):
+    """A decision (status, K, or a note) on the spectrum being edited gives new Results; the
+    typed window and its preview stay, and the trace is not read again (F-2: the editor took
+    the new Results for another spectrum and threw the editing away)."""
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QMessageBox
+
+    from hxex.gui.window import MainWindow
+
+    path = _run_project(tmp_path)
+    window = MainWindow(settings=QSettings(str(tmp_path / "g.ini"), QSettings.Format.IniFormat))
+    window.ask_to_save = lambda: QMessageBox.StandardButton.Discard
+    qtbot.addWidget(window)
+    window.open_asking(path)
+    qtbot.waitUntil(lambda: not window.loading and window.results_path is not None,
+                    timeout=60000)
+    page = window.results_page
+    panel = _show_elution(qtbot, page)
+    editor = page.window_editor
+    editor.edit.setChecked(True)
+    qtbot.waitUntil(lambda: editor._previewed is not None and not panel.drawing, timeout=60000)
+    editor.start.stepBy(2)  # typed: two scans later
+    typed = editor.window()
+    qtbot.waitUntil(lambda: editor._previewed is not None and editor._previewed[1] == typed
+                    and not panel.drawing, timeout=60000)
+    shown = editor.preview
+    before = page.results
+    reader = page._reader()
+    reads = []
+    monkeypatch.setattr(reader, "traces", lambda *a, **k: (reads.append(a), None)[1])
+    assert page.review.decide(status="accepted", note="a note about the window")
+    qtbot.waitUntil(lambda: page.results is not before and page._shown_traces[0] is page.results
+                    and not panel.drawing, timeout=30000)
+    assert editor.window() == typed and editor.preview is shown  # kept, not read again
+    assert editor._previewed[1] == typed and not reads
+    assert page._shown_traces[1] == page._selection[1][3].spectrum_id
+    # results read again from disk are another record: the boxes are set afresh
+    window.close()
+
+
+def test_a_save_still_matching_is_dropped_when_another_spectrum_is_selected(
+        qtbot, project, monkeypatch):  # noqa: F811
+    """A save at level 3 reads the drift range once, at the click, and a save still matching
+    the other files when another spectrum is selected is dropped and said, instead of asking
+    its question under the new spectrum (F-7, D-11, F-16)."""
+    import threading
+
+    from hxex.gui import window_edit
+
+    spectra = _read(project)
+    results = _results(spectra)
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, project)
+    w.compare.setCurrentIndex(w.compare.findData("ion"))  # view 1: nothing matched beforehand
+    series = w.tree.topLevelItem(0).child(0)
+    w.tree.expandItem(series)
+    w.tree.setCurrentItem(series.child(0).child(1))
+    tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
+    panel = w.panel("elution")
+    w.figures.setCurrentIndex(tabs.index("elution"))
+    qtbot.waitUntil(lambda: w._shown_traces is not None and not panel.drawing, timeout=30000)
+    editor = w.window_editor
+    editor.edit.setChecked(True)
+    qtbot.waitUntil(lambda: editor._previewed is not None and not panel.drawing, timeout=60000)
+    gate, original = threading.Event(), window_edit.plan_spread
+    monkeypatch.setattr(window_edit, "plan_spread",
+                        lambda *a, **k: (gate.wait(30), original(*a, **k))[1])
+    messages = []
+    editor.message.connect(messages.append)
+    editor.scope.setCurrentIndex(editor.scope.findData("replicates"))
+    editor.save.click()
+    assert editor._saving == w._shown_traces[1] and not editor.save.isEnabled()
+    w.tree.setCurrentItem(series.child(0).child(0))  # another spectrum while matching
+    assert editor._saving is None and editor.save.isEnabled()
+    assert messages and messages[-1].startswith("not saved: another spectrum was selected")
+    gate.set()
+    qtbot.wait(1500)
+    assert not (project.parent / "rt_elution_windows.csv").exists()
+    editor.edit.setChecked(False)
+
+
+def test_a_table_that_does_not_read_is_said_when_the_boxes_are_set(qtbot, project):  # noqa: F811
+    """An elution-window table the project cannot read (two rows for one key, a hand edit)
+    is said on the status bar when the boxes are set, not passed over in silence (F-9)."""
+    spectra = _read(project)
+    results = _results(spectra)
+    sid = next(s for s in spectra.spectrum_id if "/un2.mzML/" in s)
+    ion = sid.split("/")[2]
+    (project.parent / "rt_elution_windows.csv").write_text(
+        "sample,file,peptide,ion,rt_start,rt_end\n"
+        f"S,un2.mzML,,{ion},0.6000,0.6600\nS,un2.mzML,,{ion},0.6100,0.6700\n")
+    project.write_text(project.read_text().replace(
+        'peptides = "peptides.csv"', 'peptides = "peptides.csv"\n'
+                                    'rt_elution_windows = "rt_elution_windows.csv"'))
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, project)
+    panel = _show_elution(qtbot, w)
+    editor = w.window_editor
+    messages = []
+    editor.message.connect(messages.append)
+    editor.edit.setChecked(True)
+    assert any(m.startswith("the elution-window table was not read:") for m in messages)
+    assert editor.window() == pytest.approx(w._shown_traces[3].traces[0].window, abs=1e-6)
+    qtbot.waitUntil(lambda: editor._previewed is not None and not panel.drawing, timeout=60000)
+    editor.edit.setChecked(False)
+
+
+def test_a_failed_read_is_given_when_saving(qtbot, project):  # noqa: F811
+    """When the new window's spectrum could not be made (no signal), Save gives that failure
+    instead of saying to wait for it (F-15)."""
+    spectra = _read(project)
+    results = _results(spectra)
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, project)
+    panel = _show_elution(qtbot, w)
+    editor = w.window_editor
+    editor.edit.setChecked(True)
+    qtbot.waitUntil(lambda: editor._previewed is not None and not panel.drawing, timeout=60000)
+    times = _scan_times(w)
+    editor._set_boxes((times[-1], times[-1]), None)  # the file's last scan: no peptide there
+    editor.refresh()
+    qtbot.waitUntil(lambda: editor.failure is not None and not panel.drawing, timeout=60000)
+    assert "no signal" in editor.failure
+    messages = []
+    editor.message.connect(messages.append)
+    editor.save.click()
+    assert messages[-1] == f"not saved: {editor.failure}"
+    editor.edit.setChecked(False)
+
+
+def test_each_files_window_is_off_when_no_other_file_has_the_ion(qtbot, tmp_path):
+    """With traces 3 or 4 and no other file of the ion, Each file's window did nothing; it is
+    disabled once the match found no file (F-17)."""
+    from test_mzml import write_mzml
+    from test_retention_search import lc_run
+
+    write_mzml(tmp_path / "un1.mzML", lc_run(1))
+    (tmp_path / "peptides.csv").write_text(
+        "Peptide,start_seq,end_seq,charge,rt_start,rt_end\n"
+        f"VDQIIMAK,1,8,2,{RT - 4 / 60:.4f},{RT + 4 / 60:.4f}\n")
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n\n[input]\nformat = "mzml"\npeptides = "peptides.csv"\n'
+                    '\n[[input.runs]]\npath = "un1.mzML"\nsample = "S"\nrole = "undeut"\n')
+    results = _results(_read(path))
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, path)
+    series = w.tree.topLevelItem(0).child(0)
+    w.tree.expandItem(series)
+    w.tree.setCurrentItem(series.child(0).child(0))
+    tabs = [w.figures.tabText(i) for i in range(w.figures.count())]
+    panel = w.panel("elution")
+    w.figures.setCurrentIndex(tabs.index("elution"))
+    qtbot.waitUntil(lambda: w._shown_traces is not None and not panel.drawing, timeout=30000)
+    editor = w.window_editor
+    assert w.compare.currentData() == "replicates"
+    editor.edit.setChecked(True)
+    qtbot.waitUntil(lambda: editor._aligned_key is not None and not panel.drawing,
+                    timeout=30000)
+    assert editor.alignment is None and not editor.each_file.isEnabled()
+    qtbot.waitUntil(lambda: editor._previewed is not None and not panel.drawing, timeout=60000)
+    editor.edit.setChecked(False)
+
+
+def test_the_project_file_is_loaded_once_for_the_spectra_shown(qtbot, project, monkeypatch):  # noqa: F811
+    """Each spectrum shown with Edit window on loaded the project file three times and read
+    the whole table (F-12); now the file is loaded once and kept while unchanged."""
+    import hxex.config as config
+    from hxex.gui.window_edit import forget_cached
+
+    forget_cached()
+    spectra = _read(project)
+    results = _results(spectra)
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, project)
+    panel = _show_elution(qtbot, w)
+    editor = w.window_editor
+    editor.edit.setChecked(True)
+    qtbot.waitUntil(lambda: editor._previewed is not None and not panel.drawing, timeout=60000)
+    loads = []
+    load = config.load_project
+    monkeypatch.setattr(config, "load_project", lambda *a, **k: (loads.append(a), load(*a, **k))[1])
+    series = w.tree.topLevelItem(0).child(0)
+    w.tree.setCurrentItem(series.child(0).child(0))  # the other replicate
+    qtbot.waitUntil(lambda: w._shown_traces is not None and w._shown_traces[1].count("un1")
+                    and editor._previewed is not None and not panel.drawing, timeout=60000)
+    assert loads == []
+    # the project file broken after the results opened: Save says so, no traceback (D-10)
+    project.write_text("not = [toml\n")
+    messages = []
+    editor.message.connect(messages.append)
+    editor.save.click()
+    assert messages and messages[-1].startswith("not saved:")
     editor.edit.setChecked(False)
