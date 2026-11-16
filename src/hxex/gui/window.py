@@ -419,6 +419,8 @@ class MainWindow(QMainWindow):
             group.addAction(action)
             draw.addAction(action)
 
+        self._appearance_menu(view)
+
         helpmenu = self.menuBar().addMenu("&Help")
         guide = QAction("User guide", self)
         guide.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(GUIDE_URL)))
@@ -441,6 +443,39 @@ class MainWindow(QMainWindow):
         box.setStandardButtons(QMessageBox.StandardButton.Ok)
         box.setStyleSheet("QLabel#qt_msgbox_label { min-width: 300px; }")  # the text, not wrapped
         return box
+
+    def _appearance_menu(self, view) -> None:
+        """View > Appearance: the widget style (hxex.gui.appearance; a light or dark palette
+        is a start-up choice, ``hxex gui --dark`` / ``--light``)."""
+        from . import appearance
+
+        menu = view.addMenu("Appearance")
+        menu.setToolTipsVisible(True)
+        menu.addSection("Style")
+        self._style_group = QActionGroup(self)
+        current = appearance.current_style()
+        choices = [(appearance.SYSTEM, f"System default ({appearance.default_style()})")]
+        choices += [(name, name) for name in appearance.styles()]
+        for name, text in choices:
+            action = QAction(text, self, checkable=True)
+            action.setData(name)
+            action.setChecked(name.lower() == current.lower())
+            action.setToolTip(tip("the widget style Qt chose at start" if name == appearance.SYSTEM
+                                  else f"Qt's {name} widget style; remembered, "
+                                       "applied at the next start too"))
+            action.triggered.connect(lambda checked=False, n=name: self.set_style(n))
+            self._style_group.addAction(action)
+            menu.addAction(action)
+
+    def set_style(self, name: str) -> None:
+        """Use the widget style ``name`` (``system`` = Qt's choice at start; remembered)."""
+        from . import appearance
+
+        if appearance.apply_style(name):
+            self.settings.setValue("style", name)
+        current = appearance.current_style().lower()
+        for action in self._style_group.actions():  # the mark follows what was applied
+            action.setChecked(str(action.data()).lower() == current)
 
     def set_render(self, render: str) -> None:
         """Draw the figures with Qt's SVG renderer or with matplotlib (remembered)."""

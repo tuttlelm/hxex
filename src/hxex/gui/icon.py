@@ -65,8 +65,12 @@ def logo_icon(dark: bool | None = None) -> QIcon:
     return icon
 
 
-def follow_scheme(apply) -> None:
-    """Call ``apply(icon)`` now and whenever the desktop's colour scheme changes."""
+def follow_scheme(apply, dark: bool | None = None) -> None:
+    """Call ``apply(icon)`` now and whenever the desktop's colour scheme changes; ``dark``
+    given: that version once, whatever the desktop."""
+    if dark is not None:
+        apply(logo_icon(dark))
+        return
     apply(logo_icon())
     QGuiApplication.styleHints().colorSchemeChanged.connect(
         lambda scheme: apply(logo_icon(scheme == Qt.ColorScheme.Dark)))

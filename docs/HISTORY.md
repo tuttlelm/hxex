@@ -10318,3 +10318,29 @@ CSVs or mzML if wanted.
     a lowest-versions environment). hxex itself never calls it, and events through the
     window's application-wide filter do not trigger it, so only the test was affected; the
     helper now finds the menu among the menu bar's children.
+
+394. **View > Appearance (the widget style) and `hxex gui --dark` / `--light`.** The owner,
+    opening the window on Windows for the first time, preferred the look Linux shows (Qt's
+    Fusion style, chosen there because no desktop-theme plugin is installed). Qt's styles are
+    not tied to the operating system as such: Fusion and the old flat "Windows" style are
+    compiled into Qt and exist everywhere, while the native-looking ones are plugins present
+    only on their own system (`windows11` and `windowsvista` on Windows, `macOS` on a Mac).
+    The new `hxex.gui.appearance` lists what the running Qt offers (`QStyleFactory.keys()`)
+    under **View > Appearance**, with "System default" for the style Qt chose at start; the
+    choice is remembered in the window's settings (`style`) and applied by `hxex gui` before
+    the window is made; a remembered style this Qt lacks (a settings file from another system)
+    is logged and the default kept. A colour-scheme switch in the same menu (Qt 6.8's
+    `QStyleHints.setColorScheme`) was built and dropped the same day: on this GNOME desktop
+    Qt's portal platform theme ignores it outright (the GTK theme, `QT_QPA_PLATFORMTHEME=gtk3`,
+    honours it), where it works "Dark" differs from a dark desktop's own palette, and
+    switching back to light did not restore the window (widgets polished under the dark
+    palette and widgets with a style sheet, as every one is under the tooltip style sheet,
+    keep parts of it). Instead a light or dark window is a start-up choice: `hxex gui --dark`
+    / `--light` (`hxex-gui` too) set hxex's own palette once before the window is made
+    (`appearance.apply_scheme`; the dark one approved by the owner on the real window, drawn
+    in full by Fusion and only partly by a native style, said in the flag's help), with the
+    logo and the tooltip box following the flag; without a flag the window is light or dark as
+    the desktop's palette is, as before (dark on Windows 11 and macOS dark desktops, and on
+    Linux desktops whose Qt theme reports it). The figures stay as drawn (matplotlib pages on
+    white). Tests: `tests/test_gui_appearance.py`. Guide `gui.md` "Opening it"; `commands.md`
+    regenerated.

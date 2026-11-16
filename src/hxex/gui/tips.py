@@ -104,9 +104,10 @@ def tooltip_style(dark: bool) -> str:
             f"border: 1px solid {border}; padding: {TIP_PADDING}; }}")
 
 
-def style_tooltips(app) -> None:
+def style_tooltips(app, dark: bool | None = None) -> None:
     """Give ``app``'s tooltips :func:`tooltip_style`, now and whenever the desktop's colour
-    scheme changes (added to the application's own style sheet)."""
+    scheme changes (added to the application's own style sheet); ``dark`` given: that one,
+    whatever the desktop (``hxex gui --dark`` / ``--light``)."""
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QGuiApplication
 
@@ -117,6 +118,9 @@ def style_tooltips(app) -> None:
     def apply(dark: bool) -> None:
         app.setStyleSheet((base + "\n" if base else "") + tooltip_style(dark))
 
+    if dark is not None:
+        apply(dark)
+        return
     apply(dark_scheme())
     QGuiApplication.styleHints().colorSchemeChanged.connect(
         lambda scheme: apply(scheme == Qt.ColorScheme.Dark))

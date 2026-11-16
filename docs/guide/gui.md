@@ -61,6 +61,20 @@ afresh, **File > Save session as…** writes the session under a new name (below
 **File > Quit** closes the window, asking about an unsaved session first. **Help > User guide**
 opens this guide, and **Help > About hxex** names the version.
 
+**View > Appearance** chooses the look of the window's widgets. It lists the widget styles
+your Qt offers: **System default** is the one Qt chose when the window opened (the system's
+own look on Windows and macOS), and **Fusion**, Qt's own style, is there on every system; the
+others differ by system. The choice is remembered and used the next time the window opens; a
+style remembered on another system that this one lacks is replaced by the system default,
+with a line in the messages.
+
+The window is light or dark as your desktop is, where the desktop tells Qt so (Windows and
+macOS do; on Linux it depends on the desktop). For the other one, start the window with
+`hxex gui --dark` or `hxex gui --light` (`hxex-gui` takes the same): *hxex* then uses its own
+colours, which the Fusion style draws in full and a system style only partly. The figures are
+the same pages in either case. There is no switch in the menu: switching the colour scheme of
+a running window through Qt proved unreliable (going back did not restore the light look).
+
 ## Settings
 
 The **Project** part of the window shows the project file's settings, one table at a time (the

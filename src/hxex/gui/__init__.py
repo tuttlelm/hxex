@@ -74,12 +74,17 @@ def end_process(code: int, settings=None) -> None:
     os._exit(code)
 
 
-def launch(path: str | Path | None = None, argv: Sequence[str] | None = None) -> int:
-    """Open the window (on ``path`` when given) and return when it is closed."""
+def launch(path: str | Path | None = None, argv: Sequence[str] | None = None,
+           scheme: str | None = None) -> int:
+    """Open the window (on ``path`` when given) and return when it is closed. ``scheme``
+    ``"dark"`` or ``"light"`` sets hxex's own palette instead of the desktop's
+    (hxex.gui.appearance); ``None`` follows the desktop."""
     if not available():
         raise RuntimeError(MISSING)
+    from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 
+    from .appearance import apply_saved, apply_scheme
     from .icon import follow_scheme
     from .tips import style_tooltips
     from .window import MainWindow
@@ -91,9 +96,14 @@ def launch(path: str | Path | None = None, argv: Sequence[str] | None = None) ->
 
     collection().take_over()  # garbage collected between events only (gui.tasks, HISTORY 365)
     app.setOrganizationName("hxex")
-    follow_scheme(app.setWindowIcon)  # the logo for a light or dark desktop
-    style_tooltips(app)  # roomier, cream tooltip boxes
-    window = MainWindow()
+    settings = QSettings("hxex", "hxex-gui")
+    apply_saved(settings)  # the remembered widget style (View > Appearance)
+    if scheme is not None:  # --dark / --light: hxex's palette, once, before the window
+        apply_scheme(scheme)
+    dark = None if scheme is None else scheme == "dark"
+    follow_scheme(app.setWindowIcon, dark)  # the logo for a light or dark desktop
+    style_tooltips(app, dark)  # roomier, cream (or dark grey) tooltip boxes
+    window = MainWindow(settings)
     window.show()
     if path is not None:
         path = Path(path)
@@ -108,6 +118,16 @@ def launch(path: str | Path | None = None, argv: Sequence[str] | None = None) ->
     return code
 
 
+def add_scheme_arguments(parser) -> None:
+    """``--dark`` and ``--light`` (``args.scheme``: "dark", "light" or None) on a parser."""
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--dark", dest="scheme", action="store_const", const="dark",
+                       help="a dark window whatever the desktop is (hxex's own colours; the "
+                            "Fusion style draws them in full, View > Appearance)")
+    group.add_argument("--light", dest="scheme", action="store_const", const="light",
+                       help="a light window whatever the desktop is")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """``hxex-gui [PATH]``: the window without the command line's other commands."""
     import argparse
@@ -115,10 +135,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hxex-gui", description="hxex's window.")
     parser.add_argument("path", nargs="?", metavar="PATH",
                         help="a GUI session (.hxexgui), a project file, or a results bundle")
+    add_scheme_arguments(parser)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     try:
-        return launch(args.path)
+        return launch(args.path, scheme=args.scheme)
     except RuntimeError as exc:
         log.error("%s", exc)
         return 1

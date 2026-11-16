@@ -167,3 +167,5 @@ Open hxex's window (needs the gui extra: pip install "hxex[gui]").
 | Argument | Meaning |
 |---|---|
 | `PATH` | what to open: a GUI session file (.hxexgui), a project file (hxex.toml, with its results), or a results bundle |
+| `--dark` | a dark window whatever the desktop is (hxex's own colours; the Fusion style draws them in full, View > Appearance) |
+| `--light` | a light window whatever the desktop is |

@@ -212,6 +212,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", nargs="?", metavar="PATH",
                    help="what to open: a GUI session file (.hxexgui), a project file "
                         "(hxex.toml, with its results), or a results bundle")
+    from .gui import add_scheme_arguments
+
+    add_scheme_arguments(p)
     return parser
 
 
@@ -2488,7 +2491,7 @@ def cmd_gui(args) -> int:
     if not gui.available():
         log.error("%s", gui.MISSING)
         return EXIT_ERROR
-    return gui.launch(args.path)
+    return gui.launch(args.path, scheme=args.scheme)
 
 
 def cmd_explain(args) -> int:
