@@ -10305,4 +10305,10 @@ CSVs or mzML if wanted.
     List's count says rows for tables other than spectra.csv (Q-41). Not done, as
     decided: the module splits (Q-7 to Q-11), the tree-row record (Q-24), the window fixtures
     in one place (Q-31; left in their files). Q-32 was fixed with A-7. D-2's K case was found
-    done (a K the bundle chose is cleared with `review_K = 0`).
+    done (a K the bundle chose is cleared with `review_K = 0`). CI for the commit failed on
+    two jobs, both tests: the Qt-free subprocess test passed a stripped environment, which
+    broke torch's import on Windows (Winsock needs the system variables; the full environment
+    is passed now), and the elution editor's dropped-save test selected the other spectrum
+    before the pool thread had started the held match, so the replaced job never ran and the
+    ticket it waited for never came (one run in three locally on four cores; it now waits for
+    the match to start).

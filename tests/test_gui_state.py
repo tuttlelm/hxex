@@ -7,6 +7,7 @@ without Qt), the session's reserved fields (Q-21), and a closed window letting i
 from __future__ import annotations
 
 import gc
+import os
 import subprocess
 import sys
 import textwrap
@@ -160,7 +161,10 @@ def test_the_qt_free_modules_work_without_qt(tmp_path):
         else:
             raise SystemExit("PySide6 was imported")
     """)
-    env = {"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin"}
+    # the whole environment, with the source first: a stripped one broke torch's import on
+    # Windows (Winsock needs SYSTEMROOT) and matplotlib's cache without HOME (CI, 2026-11-16)
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(
+        [str(ROOT / "src"), *filter(None, [os.environ.get("PYTHONPATH")])])}
     out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                          env=env, timeout=300)
     assert out.returncode == 0, out.stderr

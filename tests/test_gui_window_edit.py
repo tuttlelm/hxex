@@ -679,15 +679,18 @@ def test_a_save_still_matching_is_dropped_when_another_spectrum_is_selected(
     editor = w.window_editor
     editor.edit.setChecked(True)
     qtbot.waitUntil(lambda: editor._previewed is not None and not panel.drawing, timeout=60000)
-    gate, original = threading.Event(), window_edit.plan_spread
+    gate, started, original = threading.Event(), threading.Event(), window_edit.plan_spread
     monkeypatch.setattr(window_edit, "plan_spread",
-                        lambda *a, **k: (gate.wait(30), original(*a, **k))[1])
+                        lambda *a, **k: (started.set(), gate.wait(30), original(*a, **k))[2])
     messages = []
     editor.message.connect(messages.append)
     editor.scope.setCurrentIndex(editor.scope.findData("replicates"))
     editor.save.click()
     assert editor._saving == w._shown_traces[1] and not editor.save.isEnabled()
     held, sent = editor._spread_task._ticket, _sent(editor._spread_task)
+    # the match must be running when the other spectrum is selected: a job replaced before
+    # its work started never runs (C-12), so nothing would come back to wait for
+    qtbot.waitUntil(started.is_set, timeout=30000)
     w.tree.setCurrentItem(series.child(0).child(0))  # another spectrum while matching
     assert editor._saving is None and editor.save.isEnabled()
     assert messages and messages[-1].startswith("not saved: another spectrum was selected")
