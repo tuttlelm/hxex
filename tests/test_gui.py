@@ -843,9 +843,10 @@ def test_results_still_loading_never_show_under_another_project(qtbot, window, b
     import hxex.report.notebook as notebook
     from hxex.config import template
 
-    real, ended = notebook.load_results, threading.Event()
+    real, started, ended = notebook.load_results, threading.Event(), threading.Event()
 
     def slow(path, **kw):
+        started.set()
         time.sleep(1.0)
         try:
             return real(path, **kw)
@@ -855,6 +856,10 @@ def test_results_still_loading_never_show_under_another_project(qtbot, window, b
     monkeypatch.setattr(notebook, "load_results", slow)
     window.open_path(bundle)
     assert window.loading and window.statusBar().currentMessage().startswith("loading")
+    # the load has begun before the other project opens, so its result arrives late (a load
+    # not yet begun is skipped when it is no longer wanted, and nothing would arrive: that
+    # skip had made this test wait in vain on a slow runner)
+    qtbot.waitUntil(started.is_set, timeout=30000)
     project = tmp_path / "fresh" / "hxex.toml"
     project.parent.mkdir()
     project.write_text(template(), encoding="utf-8")
