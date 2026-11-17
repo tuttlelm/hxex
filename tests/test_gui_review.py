@@ -425,6 +425,39 @@ def test_a_bundle_opened_alone_cannot_be_reviewed(qtbot, window_on):
     assert "File > Open project file" in page.review.message.toolTip()
 
 
+def test_the_title_lines_question_mark_says_where_the_table_is(qtbot, window_on):
+    """A "?" at the right of the panel's title line names the review table and the tab that
+    shows it, or says there is none yet (owner, 2026-11-17)."""
+    window, project, open_ = window_on
+    page = open_(project)
+    review = page.review
+    window.tabs.setCurrentWidget(page)
+    window.resize(1200, 800)
+    window.show()
+    qtbot.waitUntil(lambda: review.heading.y() > 0 and review.width() > 100, timeout=5000)
+    help_ = review.table_help
+    assert help_.text() == "?"
+    assert help_.parent() is review
+    # on the title line, at its right: above the panel's first row, past its middle
+    assert help_.geometry().bottom() <= review.heading.y() + 2
+    # its box ends above the frame's top line (Fusion, as offscreen): it covers no frame
+    from PySide6.QtWidgets import QStyle, QStyleOptionGroupBox
+
+    option = QStyleOptionGroupBox()
+    review.initStyleOption(option)
+    frame = review.style().subControlRect(QStyle.ComplexControl.CC_GroupBox, option,
+                                          QStyle.SubControl.SC_GroupBoxFrame, review)
+    assert help_.geometry().bottom() < frame.top()
+    assert help_.geometry().left() > review.width() // 2
+    assert help_.toolTip() == "No review table saved yet"
+    _, leaf = _first_spectrum(page)
+    page.tree.setCurrentItem(leaf)
+    assert review.decide(status="accepted")
+    help_._refresh()
+    assert "user_review_table.csv" in help_.toolTip()
+    assert "Project → Tables" in help_.toolTip().replace("\n", " ")
+
+
 def test_back_and_forward_step_through_every_spectrum(qtbot, window_on):
     """◀ and ▶ go through the spectra in the tree's order, into the next time point and series
     (owner, 2026-11-03)."""

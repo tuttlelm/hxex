@@ -547,6 +547,9 @@ it; its figures are those of its first series).
 - The line under the tree says how many series it shows of all the results' (under the list,
   how many spectra); the rows of choices above the tree and the list wrap onto more lines when
   you make that side of the window narrow.
+- **?**, at the right of the panel's title line: rest the pointer on it (or click it) to see
+  which file is your review table; the whole table is on the **Project** page's **Tables**
+  tab, where you can see and edit every row.
 - **Flags (N)**, at the end of the Status row: how many different quality flags the selected
   spectra carry (greyed when none). Rest the pointer on it (or click it) to see each flag with
   what it means (with several spectra, how many carry it). `hxex explain NAME` and

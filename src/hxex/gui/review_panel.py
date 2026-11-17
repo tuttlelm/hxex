@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QStyle,
+    QStyleOptionGroupBox,
     QToolButton,
     QToolTip,
     QWidget,
@@ -140,7 +142,47 @@ class ReviewPanel(QGroupBox):
         buttons.addWidget(self.resume)
         buttons.addStretch()
         grid.addLayout(buttons, 5, 0, 1, 2)
+        # where the whole table is: a "?" on the title line, at its right (owner, 2026-11-17)
+        self.table_help = TableHelpButton(self)
         self.show_spectra([], "")
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._place_table_help()
+
+    def _place_table_help(self) -> None:
+        """The "?" at the right end of the title line, its bottom on the frame's top line (where
+        a style draws that line through the title, level with the title): the box must not
+        cover the frame below it (owner, 2026-11-17)."""
+        option = QStyleOptionGroupBox()
+        self.initStyleOption(option)
+        style = self.style()
+        label = style.subControlRect(QStyle.ComplexControl.CC_GroupBox, option,
+                                     QStyle.SubControl.SC_GroupBoxLabel, self)
+        frame = style.subControlRect(QStyle.ComplexControl.CC_GroupBox, option,
+                                     QStyle.SubControl.SC_GroupBoxFrame, self)
+        bottom = frame.top() if frame.top() >= label.bottom() else label.bottom() + 1
+        button = self.table_help
+        metrics = button.fontMetrics()
+        # a small box: the text's height and a little room on each side of the "?"
+        height = max(1, min(metrics.height() + 2, bottom))
+        width = metrics.horizontalAdvance("?") + 10
+        button.setGeometry(self.width() - width - 4, bottom - height, width, height)
+        button.raise_()
+
+    def table_help_text(self) -> str:
+        """Where the whole review table is, for the "?" on the title line."""
+        project = self.project
+        path = None
+        if project is not None:
+            try:
+                path = table_path(project)
+            except (OSError, ValueError):
+                path = None
+        if path is None or not path.exists():
+            return "No review table saved yet"
+        return (f"Find the whole editable review table {path.name} on the Project → Tables "
+                "tab.")
 
     def _level_tips(self, *_) -> None:
         if not self.level.isEnabled():  # the List tab: row by row
@@ -505,6 +547,31 @@ def flag_items(results, rows: list[int]) -> list[tuple[str, int, str]]:
             e = flags.entry(name)
             items.append((name, n, flags.plain(flags.render(e.short)) if e is not None else ""))
     return items
+
+
+class TableHelpButton(QToolButton):
+    """"?" on the review panel's title line: where the whole review table can be seen and
+    edited, said on hover or a click. The text is worked out when it is shown, so a table made
+    by the first decision, or named in the project file since, is named at once."""
+
+    def __init__(self, panel: ReviewPanel):
+        super().__init__(panel)
+        self.panel = panel
+        self.setText("?")
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.clicked.connect(lambda: QToolTip.showText(
+            self.mapToGlobal(self.rect().bottomLeft()), self._refresh(), self))
+        self._refresh()
+
+    def _refresh(self) -> str:
+        text = tip(self.panel.table_help_text())
+        self.setToolTip(text)
+        return text
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ToolTip:
+            self._refresh()
+        return super().event(event)
 
 
 class FlagsButton(QToolButton):
