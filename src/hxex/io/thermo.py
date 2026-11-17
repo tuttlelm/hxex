@@ -134,12 +134,26 @@ def scan_from_info(info: ScanInfo, first: int = 1) -> Scan:
     if ms_level > 1 and info.reactions:
         # a stage is a reaction that is not an additional activation, with those that follow it
         starts = [i for i, r in enumerate(info.reactions) if not r.multiple] or [0]
+        # some instruments (the Orbitrap Ascend: "789.0000@etd50.00 789.0000@hcd25.00", with or
+        # without the filter's "sa") give EThcD's supplemental HCD as a reaction of its own, not
+        # marked as an additional activation: more stages than the scan's order allows. Such a
+        # collisional reaction at the m/z of the one before it is that stage's supplemental
+        # activation (as ThermoRawFileParser writes it).
+        folded: set[int] = set()
+        for i in reversed(starts[1:]):
+            if len(starts) <= ms_level - 1:
+                break
+            r = info.reactions[i]
+            if r.activation in _SUPPLEMENTAL and r.mass == info.reactions[i - 1].mass:
+                starts.remove(i)
+                folded.add(i)
         for n, start in enumerate(starts):
-            stage = info.reactions[start:starts[n + 1] if n + 1 < len(starts) else None]
+            end = starts[n + 1] if n + 1 < len(starts) else len(info.reactions)
+            stage = info.reactions[start:end]
             main = stage[0]
             names = [_ACTIVATION_NAMES.get(main.activation, main.activation.lower())]
-            for r in stage[1:]:
-                if info.supplemental and r.activation in _SUPPLEMENTAL:
+            for k, r in enumerate(stage[1:], start=start + 1):
+                if (info.supplemental or k in folded) and r.activation in _SUPPLEMENTAL:
                     names.append(_SUPPLEMENTAL[r.activation])
                 else:
                     names.append(_ACTIVATION_NAMES.get(r.activation, r.activation.lower()))

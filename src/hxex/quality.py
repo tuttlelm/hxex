@@ -163,8 +163,9 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz"
 # it. 1: every flag up to overlapping_ion and below_noise (HISTORY 309, 314). 2: overlapping_ion
 # scales the other ion by its bins away from the fragment's strong bins (was: all its bins).
 # 3: low_intensity compares the spectra once each injection's brightness is divided out.
-# 4: spectrum_off_mz (a spectrum off its injection's m/z).
-QUALITY_VERSION = 4
+# 4: spectrum_off_mz (a spectrum off its injection's m/z). 5: overlapping_ion compares ions
+# within one time (a kinetics run's other times of an ion read as an overlapping ion).
+QUALITY_VERSION = 5
 
 # low_intensity: an injection's brightness is measured from at least this many of its spectra
 # with replicates (else it is taken as 1), and named in a warning outside these limits.
@@ -843,8 +844,9 @@ def ion_overlaps(data: Measurements, fit: FitResult, source, labels, mz, picker
                  ) -> tuple[np.ndarray, np.ndarray]:
     """Every fragment measurement's overlap with the other ions read from the same scans
     (``overlapping_ion``): the largest share of its picked intensity (all its bins) that one other
-    measurement of its channel (same file, ``labels`` ``'<file> scans...'``, parent, condition,
-    MS level and scan conditions: :func:`hxex.io.mzml._channel`) puts on its bins, and that ion
+    measurement of its channel (same file, ``labels`` ``'<file> scans...'``, same time, parent,
+    condition, MS level and scan conditions: :func:`hxex.io.mzml._channel`) puts on its bins, and
+    that ion
     (``'c-1 13-29 1+'``). The other ion's selected-K curve (read through the per-scan cut where
     it was fitted so) counts at this fragment's bins within the picker's window (``picker``:
     :meth:`~hxex.picking.PickerConfig.half_width`; ``mz``, the bins' m/z of every measurement) or
@@ -868,12 +870,17 @@ def ion_overlaps(data: Measurements, fit: FitResult, source, labels, mz, picker
         return share, other
     targets = mzml_series_targets(source)
     files = [str(label).rsplit(" ", 1)[0] for label in labels]
+    # the measurement's time as well: a run whose scans are each their own time (kinetics) has
+    # one measurement of an ion per time in one file, and an ion's other times are not other
+    # ions (they read as covering all its bins); a file of an LC run has one time
+    times = np.asarray(fit.time, dtype=float)
     recorded = _recorded_resolution(source)
     channels: dict[tuple, list[int]] = {}
     for i in range(m):
         t = targets.get(int(fit.data_id[i]))
         if t is not None and "fragment" in dict(t.entry.extra) and t.ms_level >= 2:
-            channels.setdefault((files[i], _channel(t)), []).append(i)
+            when = round(float(times[i]), 6) if np.isfinite(times[i]) else None
+            channels.setdefault((files[i], when, _channel(t)), []).append(i)
 
     def curve(i):
         k = int(fit.selected_K[i])

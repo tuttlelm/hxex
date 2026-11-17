@@ -1072,6 +1072,7 @@ def test_an_ion_on_a_fragments_bins_flags_it():
     class Fit:
         data_id = np.array([d for d, _ in rows])
         selected_K = np.ones(len(rows), dtype=int)
+        time = np.full(len(rows), 60.0)
         spectrum_id = data.spectrum_id
         fits = {1: SimpleNamespace(A=np.array([[amp.get(d, 1.0)] for d, _ in rows]),
                                    n=np.full((len(rows), 1), 1e-3),
@@ -1127,6 +1128,7 @@ def test_an_ion_inside_a_fragments_reach_flags_it():
     class Fit:
         data_id = np.array(ids)
         selected_K = np.ones(2, dtype=int)
+        time = np.full(2, 60.0)
         spectrum_id = data.spectrum_id
         fits = {1: SimpleNamespace(A=np.array([[100.0], [1000.0]]), n=np.full((2, 1), 1e-3),
                                    p=np.full((2, 1), 0.5), nll=np.zeros(2))}
@@ -1141,6 +1143,50 @@ def test_an_ion_inside_a_fragments_reach_flags_it():
     assert share[0] == pytest.approx(expect) and expect > 0.8
     assert other[0] == "c 11-15 1+"
     assert share[1] == pytest.approx(0.0)  # the dim one's peaks lie off the bright one's bins
+
+
+def test_an_ions_other_times_in_a_kinetics_run_are_not_other_ions():
+    """overlapping_ion in a run whose scans are each their own time (kinetics): the same ion at
+    two times of one file is two measurements of one channel, and was read as an ion lying on
+    all of the other's bins (share 1: every fragment of the private kinetics files flagged,
+    2026-11-17). Ions are compared within one time; another ion at the same time still counts."""
+    from hxex.fit import Measurements
+    from hxex.io.mzml import MzmlTarget
+    from hxex.quality import ion_overlaps
+    from hxex.report.curves import component_curves
+
+    frags = fragment_targets(PARENT, "c:4:1 c:5:1", activation="ETD")
+    targets = [MzmlTarget(PARENT)] + frags
+    source = {"reader": "mzml", "targets": [t.to_dict() for t in targets],
+              "series": [{"data_id": i, "sample": "S", "target": i}
+                         for i in range(len(targets))]}
+    shape = np.array([1.0, 0.5, 0.2])
+    bins = np.arange(8.0)
+    early = component_curves(bins, [1000.0], [1e-3], [0.5], shape)[0]
+    late = np.concatenate([[0.0] * 2, early[:-2]])  # two deuterons more at the later time
+    rows = [(1, 30.0), (1, 60.0)]  # c:4 at two scan times of one kinetics file
+    data = Measurements.from_arrays([bins] * 2, [early, late], [shape] * 2, [5.0, 5.0],
+                                    data_id=[d for d, _ in rows],
+                                    spectrum_id=[f"p:S/k.raw/1-{t}" for _, t in rows])
+
+    class Fit:
+        data_id = np.array([d for d, _ in rows])
+        time = np.array([t for _, t in rows])
+        selected_K = np.ones(2, dtype=int)
+        spectrum_id = data.spectrum_id
+        fits = {1: SimpleNamespace(A=np.full((2, 1), 1000.0), n=np.array([[1e-3], [2.0]]),
+                                   p=np.array([[0.5], [1.0]]), nll=np.zeros(2))}
+
+        def __len__(self):
+            return 2
+
+    labels = np.array(["k.raw scan3", "k.raw scan9"])
+    share, other = ion_overlaps(data, Fit(), source, labels, [500.0 + bins] * 2, PickerConfig())
+    assert share.tolist() == [0.0, 0.0] and other.tolist() == ["", ""]
+    # grouped as before (one time), the later envelope read as an ion on the earlier one's bins
+    Fit.time = np.array([60.0, 60.0])
+    share, other = ion_overlaps(data, Fit(), source, labels, [500.0 + bins] * 2, PickerConfig())
+    assert share[0] > 0.1 and other[0] == "c 11-14 1+"
 
 
 

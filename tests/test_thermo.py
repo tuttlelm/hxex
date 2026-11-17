@@ -58,6 +58,25 @@ def test_scan_values_as_thermorawfileparser_writes_them():
     s = scan_from_info(ScanInfo(3, 2, 0.1, "", False, (ethcd[0], Reaction(777.4, 10.0, 0.0, CID,
                                                                            True))))
     assert s.activation == ("collision-induced dissociation", "electron transfer dissociation")
+    # the Orbitrap Ascend gives EThcD's HCD as a reaction of its own, not marked additional:
+    # still one stage, ETD with supplemental HCD (it was read as HCD alone)
+    ascend = (Reaction(789.0, 10.0, 0.0, ETD, False), Reaction(789.0, 10.0, 0.0, HCD, False))
+    s = scan_from_info(ScanInfo(3, 2, 0.1, "sa", False, ascend, supplemental=True))
+    assert s.activation == ("electron transfer dissociation",
+                            "supplemental beam-type collision-induced dissociation")
+    assert len(s.stages) == 1 and s.precursor_mz == 789.0
+    t = ScanTable.from_scans([s])
+    assert t.preactivation[0] == "" and t.select(activation="EThcD").size == 1
+    # also without the filter's "sa" (a file of the same instrument)
+    s = scan_from_info(ScanInfo(3, 2, 0.1, "", False, ascend))
+    assert s.activation == ("electron transfer dissociation",
+                            "supplemental beam-type collision-induced dissociation")
+    # an MS3 whose stages share the m/z (HCD pre-activation of the same precursor) keeps both
+    same = (Reaction(493.26, 2.0, 0.0, HCD, False), Reaction(493.26, 2.0, 0.0, ETD, False),
+            Reaction(493.26, 2.0, 0.0, HCD, True))
+    s = scan_from_info(ScanInfo(4, 3, 0.1, "sa", False, same, supplemental=True))
+    assert len(s.stages) == 2 and s.activation == (
+        "electron transfer dissociation", "supplemental beam-type collision-induced dissociation")
     # MS3: the last stage made the scan (HCD of the precursor, then ETD of the product)
     ms3 = (Reaction(493.26, 2.0, 0.0, HCD, False), Reaction(600.1, 2.0, 0.0, ETD, False),
            Reaction(600.1, 2.0, 0.0, HCD, True))

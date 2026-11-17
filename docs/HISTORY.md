@@ -10637,3 +10637,34 @@ CSVs or mzML if wanted.
     (PLAN Next steps 17), including the case that started 404, where one replicate's 8 % share
     with p 1.5e-21 stayed at one population while the other two replicates (13 %, 34 %) took
     two. Guide gui.md. Test: `test_the_fits_at_each_k_say_what_the_test_decided`.
+
+406. **EThcD scans of the Orbitrap Ascend read as HCD from Thermo raw files (found
+    2026-11-17 on the private fragment dataset; owner: fix it).** The Ascend writes EThcD as
+    `789.0000@etd50.00 789.0000@hcd25.00` (with or without the filter's `sa`), and Thermo's
+    RawFileReader gives the supplemental HCD as a reaction of its own, not marked as an
+    additional activation of the ETD (`MultipleActivation` false). `scan_from_info` took every
+    such reaction for a stage of its own, so an MS2 scan had two stages, the last one HCD: the
+    scans read as HCD alone, an `activation = "EThcD"` fragment list found none of them, and a
+    project of these files lost its EThcD data (the mzML that ThermoRawFileParser writes from the
+    same files was right). Now, when a scan has more stages than its MS order allows, a
+    collisional reaction at the m/z of the reaction before it is folded into that stage as its
+    supplemental activation (named "supplemental ...", as ThermoRawFileParser writes it). MS3
+    scans whose stages share the precursor m/z (HCD pre-activation) keep both stages, since
+    their count matches the order. Checks: the 14 raw files of that dataset read with
+    activations identical, scan by scan, to their mzML conversions; the targeted Orbitrap
+    dataset's raw files (MS2 and MS3 with pre-activation) and the top-down example read
+    identically before and after. Test: `test_scan_values_as_thermorawfileparser_writes_them`.
+
+407. **`overlapping_ion` compares ions within one time: in a kinetics run every fragment was
+    flagged by its own other times (found 2026-11-17 on the private fragment dataset; owner: fix
+    it).** `quality.ion_overlaps` compared each fragment with the other measurements of its
+    channel in the same file. A file of an LC run has one measurement of an ion, but a run whose
+    scans are each their own time (kinetics) has one per time, so the same ion at another, more
+    deuterated time was read as another ion lying on the fragment's bins: of the fragment
+    spectra of the private fragment dataset's kinetics files, the 8-residue peptide's 13,998 of
+    15,918 were flagged, every one naming its own ion, and the 14-residue peptide's 5,399 of
+    5,675 (4,600 its own ion). The channel now also holds the measurement's time (LC files, one
+    time each, are unchanged). Check (copies of the two bundles, fits kept, flags assessed
+    again): 0 and 568 flagged (none naming its own ion; 28 % of them above their amide count +
+    0.2 vs 2 % of the rest). `QUALITY_VERSION` 5, so that `hxex resume` assesses older bundles'
+    flags again. Test: `test_an_ions_other_times_in_a_kinetics_run_are_not_other_ions`.
