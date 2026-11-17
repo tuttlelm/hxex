@@ -389,9 +389,9 @@ def test_another_spectrum_never_draws_the_one_before(qtbot, project, monkeypatch
     old = w._shown_traces[1]
     # the next preview of this spectrum waits until released: it is still being read when
     # the other spectrum is selected
-    gate, original = threading.Event(), window_edit.preview
-    monkeypatch.setattr(window_edit, "preview",
-                        lambda *a, **k: (gate.wait(30), original(*a, **k))[1])
+    gate, started, original = threading.Event(), threading.Event(), window_edit.preview
+    monkeypatch.setattr(window_edit, "preview", lambda *a, **k: (
+        started.set(), gate.wait(30), original(*a, **k))[2])
     plot = retention.plot_window_edit
 
     def tagged(traces, res, sid, *a, **k):  # each figure knows its spectrum
@@ -405,7 +405,9 @@ def test_another_spectrum_never_draws_the_one_before(qtbot, project, monkeypatch
     monkeypatch.setattr(panel, "show_figure", lambda fig, *a, **k: (
         drawn.append(getattr(fig, "hxex_spectrum", None)), show(fig, *a, **k))[1])
     editor.start.stepBy(1)  # a new window (one scan later): read in the background
-    qtbot.waitUntil(lambda: editor._task.running, timeout=10000)
+    # started, not only asked for: a job replaced before it starts never runs (tasks._Job), and
+    # on a busy pool (macOS CI, py3.12) the new selection came first and nothing was sent back
+    qtbot.waitUntil(started.is_set, timeout=10000)
     held, sent = editor._task._ticket, _sent(editor._task)
     # the new spectrum's trace is read slowly (as from large scan files): the previous
     # spectrum's preview is ready first
