@@ -3,8 +3,6 @@
 Q-41): copying and saving rows, the watched file, the dropdowns' tooltips, the one error colour,
 and the list's count and Find tooltip. Runs offscreen."""
 
-import os
-
 import pytest
 
 pytest.importorskip("PySide6")
@@ -17,6 +15,7 @@ from hxex.gui.data_table import DataPanel
 from hxex.gui.spectra_list import SpectraList
 from hxex.gui.table_copy import block_text, rows_text, save_rows, saved_or_said
 from hxex.gui.watched_file import WatchedFile
+from hxex.project_edit import replace_file
 
 ROWS = [{"sample": "S", "start": 2, "fD": 0.25, "ok": True},
         {"sample": "S", "start": 10, "fD": 652.3412, "ok": False}]
@@ -156,10 +155,11 @@ def test_a_watched_file_is_watched_again_and_paused_while_written(qtbot, tmp_pat
     with pytest.raises(OSError), watched.paused():
         raise OSError("refused")
     assert watched.files() == [str(path)]
-    # replaced (as hxex writes its files): Qt drops it; the report watches it again
+    # replaced (as hxex writes its files, retrying while Windows briefly refuses the
+    # replacement of a file open elsewhere): Qt drops it; the report watches it again
     new = tmp_path / "new.toml"
     new.write_text("a = 3\n", encoding="utf-8")
-    os.replace(new, path)
+    replace_file(new, path)
     watched.watcher.removePaths(watched.files())  # as Qt does for a replaced file
     watched._reported(str(path))
     assert watched.files() == [str(path)] and seen == [str(path)]
