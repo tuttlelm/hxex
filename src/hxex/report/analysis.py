@@ -67,6 +67,7 @@ from ..analysis import (
     left_out_spectra,
     left_out_summary,
     paired_residue_maps,
+    region_composition,
     region_summary,
     residue_map,
     set_average_ks,
@@ -104,6 +105,7 @@ from .protection import (
 from .residues import plot_population_choice, plot_residue_profile
 from .results import mark_provisional, provisional_note
 from .significance import (
+    plot_region_composition,
     plot_region_significance,
     plot_residue_significance,
     plot_residue_significance_k2,
@@ -488,7 +490,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     counts_raw = None
     k1_raw = None
     pop_cmp = counts_d = None
-    choices_cmp = shared_choices = k2_positions = reg_cmp = None
+    choices_cmp = shared_choices = k2_positions = reg_cmp = composition = None
     k2_tested = False
     if config.reference:
         ref = ref_name
@@ -580,6 +582,15 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                              "residue_significance_K2 shows where the number of populations "
                              "differs")
                 tables["compare_choices"] = choices_cmp.columns()
+            if ann.regions:  # what each region contains: its residues by class on the maps
+                parts = {"fD": (res_cmp, True)}
+                if k2_tested and k2_positions is not None:
+                    parts.update({"low-D position": (k2_positions.get(1), True),
+                                  "high-D position": (k2_positions.get(2), True)})
+                composition = region_composition(
+                    ann, parts, residues=residues, choices=shared_choices,
+                    population=pop_cmp if k2_tested else None)
+                tables["region_composition"] = composition.columns()
         check_cancel(cancel)
         raw_comparisons = dict(comparisons)  # the forms take them by their own names
         if pooled and 2 in config.ks and gate:  # the forms' K=2 tests need every spectrum
@@ -590,6 +601,10 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             res_cmp = _display(res_cmp, labels, reference)
         if reg_cmp is not None:
             reg_cmp = _display(reg_cmp, labels, reference)
+        if composition is not None:
+            composition = composition.with_samples(
+                [labels.get((str(r), str(s)), label(str(r), str(s))) for r, s in zip(
+                    composition.run, composition.sample, strict=True)], reference)
         if choices_cmp is not None:
             choices_cmp = _display(choices_cmp, labels, reference)
             if shared_choices is not None:
@@ -780,7 +795,30 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                                                  len(in_regions), 2.8)):
                 jobs.append((_page_stem("region_significance", n),
                              lambda in_regions=in_regions, chunk=chunk: plot_region_significance(
-                                 reg_cmp, in_regions, times=chunk, **when)))
+                                 reg_cmp, in_regions, times=chunk, composition=composition,
+                                 **when)))
+        if composition is not None and composition.where(quantity="fD").any():
+            in_regions = [s for s in residue_others
+                          if composition.where(sample=s, quantity="fD").any()]
+            region_times = sorted({float(t) for t in composition.time[composition.where(
+                sample=in_regions, quantity="fD")]})
+            for n, chunk in enumerate(_map_pages(config.page_size, region_times,
+                                                 len(in_regions), 2.8)):
+                jobs.append((_page_stem("region_composition", n),
+                             lambda in_regions=in_regions, chunk=chunk: plot_region_composition(
+                                 composition, in_regions, times=chunk, **when)))
+            k2_parts = ("populations", "low-D position", "high-D position")
+            for s in residue_others:  # one figure per sample, as residue_significance_K2
+                mine = composition.where(sample=s, quantity=list(k2_parts))
+                if not mine.any():
+                    continue
+                shown = [q for q in k2_parts if composition.where(sample=s, quantity=q).any()]
+                k2_times = sorted({float(t) for t in composition.time[mine]})
+                for n, chunk in enumerate(_map_pages(config.page_size, k2_times, len(shown),
+                                                     2.8 + MAP_ROW * len(shown))):
+                    jobs.append((_page_stem(f"region_composition_K2_{s}", n),
+                                 lambda s=s, shown=shown, chunk=chunk: plot_region_composition(
+                                     composition, [s], quantities=shown, times=chunk, **when)))
         with_two = [s for s in residue_others
                     if shared_choices is not None and shared_choices.where(sample=s).any()]
         positions = k2_positions or {}

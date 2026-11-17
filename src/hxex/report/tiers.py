@@ -22,7 +22,16 @@ from ..analysis.residues import TIERS
 from ..io.times import format_time
 from ..spectra import FULLDEUT, UNDEUT
 from . import hover
-from .significance import BLOCK_LINE_WIDTH, BLOCK_OUTLINE, SAMPLE_GAP, _block_patch
+from .significance import (
+    BLOCK_LINE_WIDTH,
+    BLOCK_OUTLINE,
+    SAMPLE_GAP,
+    BorderHandle,
+    BorderHandler,
+    _block_patch,
+    draw_border,
+    information_borders,
+)
 
 # no sign, undecided, two, two localised (the owner's), three, three localised
 TIER_COLOURS = ("#c3c8d0", "#e8b928", "#6b9be6", "#173f86", "#d77fa1", "#8e1f4f")
@@ -53,7 +62,8 @@ def plot_population_tiers(
     one without an amide. ``times``: only those points (a page of a long time course; NaN
     stands for the controls' rows). Each row's residue blocks (the stretches between the
     sample's peptide boundaries, which share their covering peptides and so their tier) are
-    outlined in ``block_outline`` (None: not drawn), as on the significance maps."""
+    outlined in ``block_outline`` (None: not drawn), and its borders of no information marked,
+    as on the significance maps (:func:`hxex.report.significance.information_borders`)."""
     k1 = (residues.K == 1) & (residues.population_tier != "")
     if not k1.any():
         raise ValueError("the residue map has no population tiers (made without the "
@@ -62,7 +72,7 @@ def plot_population_tiers(
         samples = list(dict.fromkeys(str(s) for s in residues.sample[k1]))
     code_of = {name: j for j, name in enumerate(TIERS)}
     n = int(length if length is not None else residues.residue[k1].max())
-    rows, labels, first_of_sample, outlines, table = [], [], [], [], []
+    rows, labels, first_of_sample, outlines, table, borders = [], [], [], [], [], []
     three_columns = residues.test_strength_3 is not None
     for s in samples:
         here = k1 & (residues.sample == s)
@@ -83,6 +93,7 @@ def plot_population_tiers(
             sel &= (np.isnan(residues.time) if t is None else residues.time == t)
             line = np.full(n, np.nan)
             blocks = set()
+            covered = sel & np.isfinite(residues.block_start) & ~residues.no_amide
             point = _point_label(np.nan if t is None else t, role, time_scale)
             for i in np.flatnonzero(sel):
                 r = int(residues.residue[i])
@@ -103,6 +114,9 @@ def plot_population_tiers(
             labels.append(f"{s}  {point}")
             first_of_sample.append(j == 0)
             outlines.append(sorted(blocks))
+            borders.append([x for x in information_borders(residues.residue[covered],
+                                                            residues.linked_next[covered])
+                            if 0.5 <= x <= n + 0.5])
     # a true gap between samples rather than a white line over the boundary, which would hide
     # the outlines' edges (HISTORY 207): row k spans edges[k] to edges[k] + 1
     grid, top, edges = [], [], [0.0]
@@ -129,6 +143,9 @@ def plot_population_tiers(
                                        edgecolor=block_outline, lw=BLOCK_LINE_WIDTH, zorder=3,
                                        clip_on=False,  # the edges on the plot's border too
                                        gid=f"block:{labels[k]}:{b0}-{b1}"))
+    for k, xs in enumerate(borders):
+        for x in xs:
+            draw_border(ax, x, top[k], 1.0, gid=f"border:{labels[k]}:{x:g}")
     ax.set_yticks(np.asarray(top) + 0.5)
     ax.set_yticklabels(labels, fontsize=7)
     ax.tick_params(axis="y", length=2)
@@ -143,8 +160,10 @@ def plot_population_tiers(
     handles.append(Patch(facecolor="white", edgecolor="0.6", label="uncovered or no amide"))
     if block_outline is not None:
         handles.append(_block_patch(block_outline))
+    if any(borders):
+        handles.append(BorderHandle())
     fig.legend(handles=handles, frameon=False, loc="lower center", ncol=3 if three else 5,
-               fontsize=7)
+               fontsize=7, handler_map={BorderHandle: BorderHandler()})
     ax.set_title("Population test by residue: strong = combined p of the covering peptides "
                  "below 0.01; agreement = share of their weight with the populations "
                  "(undeuterated rows should show none)", fontsize=8, loc="left")

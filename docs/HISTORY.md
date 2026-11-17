@@ -10500,3 +10500,72 @@ CSVs or mzML if wanted.
     gui.md (Results), fragment-residues.md. Tests:
     `test_the_windows_fragment_page_draws_left_out_spectra_apart`,
     `test_a_fragment_series_has_its_parents_fragments_tab`.
+
+401. **The residue maps mark the borders of no information (owner, 2026-11-17).** The owner
+    noted that the maps drew a proline and a place no peptide carries information across in
+    the same way (a white gap), although they mean different things: a proline a peptide spans
+    still joins its neighbours, while a junction no peptide spans means what happens on one side
+    says nothing about the other. Prolines stay white; a resistor symbol (the owner's choice,
+    after a zig-zag through the rows and boxed prolines were tried and dropped) on a small white
+    box inside the residue's cell marks each border: on the junction between two covered
+    residues no peptide joins, or on the first and last residue of a stretch no peptide covers
+    (on the residue when it is one). Only inside the covered sequence: the ends are not marked.
+    Line weight 0.4 pt (owner: half of the first 0.8); the legend shows the symbol on its side.
+    - `hxex.report.significance.information_borders` (from the covered residues and
+      `ResidueMap.linked_next`, which already joined the lines of the residue plots);
+      `ResidueComparison.linked_next` carries it from the map the comparison was made from and,
+      through `judged_on_shared`, from the shared peptides, as the blocks are; not written to
+      `compare_residues.csv` (`residues.csv` has it). Drawn on `residue_significance`,
+      `residue_significance_K2` (every section, empty rows included; the populations section
+      from the K = 1 comparison, as its outlines) and `population_tiers` (each sample's own
+      peptides).
+    - Check: the benchmark per-bin bundle with eight peptides left out by `[[review.exclude]]`
+      to make two breaks (none of its residues is uncovered): borders at 90 and 118/122 as made,
+      and one
+      the prototype (which read the controls' coverage) missed. The real benchmark has borders
+      too: at 1 min no peptide of the reference (E) spans 90|91, so every sample's comparison at
+      1 min has one there; at 4 s the peptides B and E both measured meet at 33|34 and none spans it
+      (those two were drawn as ordinary block edges before).
+    Private record: `hxex_private/analysis_examples/residue_gate/region_k2/zigzag` (README,
+    prototype, before and after pages).
+
+402. **What each region contains: region composition maps, and a triangle on the region
+    map (owner, 2026-11-17).** Owner's question: can the region analysis go to K > 1 as the
+    residue level does? First evaluated (scratch): a K = 2 region test on region averages of
+    the low-D and high-D positions and the low-D share (residues where both samples keep two,
+    at least half the region, mean of differences and errors, the share's threshold the
+    harmonic mean of the residues', the peptide gate). On the noise simulation it made no false
+    decision once gated (ungated 4-8 % on the share with the V0 fit) and found the true share
+    shift in 60-69 at 4-5 of 6 times; on the benchmark every region-time it called was also
+    different at K = 1. The owner then asked what the region maps should answer: (1) does this
+    region contain differences and what are they, or (2) let the residue data find the
+    regions. (2) evaluated on the simulation: runs of residues with two populations recover
+    every true two-state region with no false run in the unchanged samples, edges a few
+    residues off (peptide blocks); runs of significant differences inherit the residue map's
+    false decisions (2-7 false runs per arm in the null sample) and merge neighbouring regions.
+    Owner: skip (2). (1) built, as a composition of the residue decisions already made (no new
+    test), and the K = 2 region-average test not built.
+    - `hxex.analysis.region_composition` / `RegionComposition`, `region_composition.csv`: per
+      region, sample, time and quantity (`fD`; at K = 2 `populations`, and with a bootstrap at
+      K = 2 `low-D position`, `high-D position`), the residues with an amide by class
+      (`significance_classes`, moved from the report to `hxex.analysis.compare`),
+      `not_two_in_both` in the positions (as the K = 2 map leaves them white), `not_compared`,
+      `blocks_significant`. `populations` follows the K = 2 map's populations section: two in
+      the sample only, in the reference only, one in both, and where both keep two the share's
+      classes (`two_in_both` without a bootstrap at K = 2).
+    - `region_composition` and `region_composition_K2_<sample>` (`plot_region_composition`):
+      each cell a bar split by class in proportion, red on the left, blue on the right, the
+      K = 2 figure in the sections of `residue_significance_K2` (owner: a separate count
+      section first, then merged into one populations section, its textures marking where the
+      samples keep a different number of populations). One white legend entry: "not
+      comparable" (owner), at K = 2 "one population in both, or not comparable".
+    - `region_significance` kept (owner: a simple high-level look; its averages are correct).
+      On the benchmark, 26 of 112 region-times are not significant on average although
+      significant residues lie inside (A against E at 1 min, a 25-residue region: 10 residues less
+      D, average -0.017; B at 4 s, a 9-residue region: 3 more and 3 less). A yellow corner triangle (the K = 2 map's mark,
+      "decided differently at a finer level") now marks those cells. Only that case: an average
+      significant with no significant residue inside needs one residue to clear the error test
+      and another the threshold (the region's z cannot exceed the best residue's); none on the
+      benchmark, and a peptide backs it.
+    Private record: `hxex_private/analysis_examples/residue_gate/region_k2` (README: the K = 2
+    region test, composition prototype, segments evaluation).

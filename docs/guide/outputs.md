@@ -450,6 +450,7 @@ may be](inputs.md#what-each-peptide-may-be)).
 | `populations.csv` | per residue and labelling time (the controls take no part): the K=1 and the two K=2 values, whether two populations are kept and, if not, why |
 | `regions.csv` | per region and labelling time (the controls take no part): fD over the region's residues |
 | `compare_regions.csv` | with regions and a reference: per region and time, whether each sample differs from the reference there: `delta` (the mean of its residues' own differences), `delta_shared` and `delta_shared_se` (the difference and error the test used), `z`, `significant`, `peptide_support`, `region_test_only`, `n_residues` and `coverage` (the region's residues compared), and `delta_crit` (see *Reading the region significance map* below) |
+| `region_composition.csv` | with regions and a reference: per region, time and `quantity` (`fD`; at K = 2 `populations`, and with a bootstrap at K = 2 `low-D position` and `high-D position`), the region's residues with an amide (`residues`) and how many fall in each class of the residue significance maps (`more_D_over_4x` ... `less_D_over_4x`, `not_tested`, `not_two_in_both`, `not_compared`; for `populations` also `two_in_sample_only`, `two_in_reference_only`, `one_in_both`, and where both keep two the share's classes, or `two_in_both` without a bootstrap at K = 2), and `blocks_significant` (the residue blocks the significant ones lie in; see *Reading the region composition maps* below) |
 
 **Comparisons** (with a `reference`)
 
@@ -723,6 +724,14 @@ same value, so a block coloured as one tells you only that the difference lies s
 A long block means a call that cannot be placed more finely; narrow blocks place it nearly to the
 residue. The blocks come from the pair of samples in that row, so they can differ between rows.
 
+A small resistor symbol on a white box marks each border of no information: a place no peptide
+carries information across, because no peptide measured in both samples spans the junction
+between two residues, or none covers a stretch of residues (the symbol then sits on the first and
+last residue of that stretch, or on the one residue). What happens on one side of it says
+nothing about the other. A white proline has no symbol when a peptide spans it: the residues on
+either side are still measured together. The ends of the protein are not marked. The borders
+come from the same peptides as the outlines, so they can differ between rows too.
+
 `residue_significance_K2_<sample>` does the same at K = 2 for one sample against the
 reference (a figure per sample: all of them on one page are too much to read), in up to three
 sections. The first,
@@ -774,6 +783,28 @@ but no significant peptide lying mostly inside the region confirms it (`region_t
 "significance not confirmed at peptide level", the dots' colour giving the direction); cross-hatched where none of the region's residues could be
 compared. A region is not called different just because one residue in it is: tried on simulated
 data, that rule called about a third of the regions next to a real change different.
+
+An average can hide what happens inside a region: a few strongly different residues in a long
+region, or residues that moved in opposite directions. A yellow triangle in a cell's corner marks
+a region whose average is not significant although some of its residues are. The region is
+still not called different; the triangle tells you to look at what it contains.
+
+**Reading the region composition maps.** `region_composition` shows what each region contains:
+one row per sample and time, one column per region, each cell a bar split into the region's
+residues by their colour on the residue significance map, in proportion. Red (more deuterium
+than the reference, darkest first) is on the left, then red dots (more deuterium, not confirmed
+at peptide level), grey (not significant), blue dots, blue (less deuterium, darkest last),
+cross-hatching (not tested), and white (not comparable: a residue not covered in one of the
+samples). Nothing new is tested: each residue keeps the decision its map shows. A long
+region with a thin red slice has a few significantly different residues inside an unchanged
+whole. Remember that neighbouring residues often share all their peptides, so they are not
+independent: `blocks_significant` in `region_composition.csv` counts the residue blocks the
+significant residues lie in. `region_composition_K2_<sample>` does the same at K = 2, in the
+sections of `residue_significance_K2`. In *populations*, the textures mark the residues where
+only the sample or only the reference keeps two populations, white where both keep one; where
+both keep two, the colours of the difference in the low-D population's share (with a bootstrap
+at K = 2; without one, grey). The two position sections follow, with a bootstrap at K = 2;
+white there means not comparable (not two populations in both).
 
 ## The settings used
 

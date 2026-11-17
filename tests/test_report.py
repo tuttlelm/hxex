@@ -1670,7 +1670,10 @@ def test_the_significance_legend_never_meets_the_axis_labels(rows, columns):
         Patch(color="grey", label=f"an entry with a long name {j}") for j in range(9)]
     section = ("", [f"S {j} min" for j in range(rows)], [True] + [False] * (rows - 1),
                [np.zeros(n) for _ in range(rows)], [{} for _ in range(rows)],
-               [[] for _ in range(rows)])
+               [[] for _ in range(rows)],
+               # a border of no information on residue maps: the legend gains an entry
+               [[5.0]] + [[] for _ in range(rows - 1)] if columns is None
+               else [[] for _ in range(rows)])
     fig = _draw([section], n, legend, "a title", columns=columns)
     canvas = FigureCanvasAgg(fig)
     canvas.draw()

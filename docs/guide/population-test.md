@@ -86,6 +86,9 @@ Each row outlines the residue blocks of that sample's peptides at that point: th
 between neighbouring peptide ends, which the peptides cannot divide. Every residue of a block
 has the same covering peptides, so the same tier: a long stretch of one colour can be several
 blocks, and "localised" means localised to a block, not to a single residue.
+A small resistor symbol marks each border of no information in that sample's peptides: a
+junction no peptide spans, or the edges of a stretch no peptide covers (as on the significance
+maps, see [Outputs](outputs.md)).
 
 The tiers also decide what the residue plots show (`choice_<sample>_<time>`,
 `populations.csv`, and the comparisons between samples): two populations wherever the tier is

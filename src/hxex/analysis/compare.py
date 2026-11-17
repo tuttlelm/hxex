@@ -812,7 +812,11 @@ class ResidueComparison:
     residue test passed without that support (then not ``significant``); ``None`` otherwise.
     ``block_start`` and ``block_end``: the block of the sample's residue map the residue lies in
     (:class:`ResidueMap`; with :func:`judged_on_shared`, the block of the shared peptides the
-    test used); NaN where unknown, ``None`` for a population comparison. ``positions``: for a
+    test used); NaN where unknown, ``None`` for a population comparison. ``linked_next``: one
+    peptide of the same map measures both the residue and the next residue with an amide
+    (:attr:`ResidueMap.linked_next`; with :func:`judged_on_shared`, of the shared peptides),
+    so the maps can mark where no information passes; ``None`` for a population comparison;
+    not written to the table (``residues.csv`` has it). ``positions``: for a
     population comparison, ``'shared'`` where the difference was judged on the K=2 positions
     averaged over both samples (no position differs there) and ``'own'`` where each side kept
     its own (:func:`compare_populations`); ``None`` for an fD comparison."""
@@ -848,6 +852,7 @@ class ResidueComparison:
     block_start: np.ndarray | None = None
     block_end: np.ndarray | None = None
     positions: np.ndarray | None = None
+    linked_next: np.ndarray | None = None
 
     def __post_init__(self):  # built without them: no fallback, one run
         if self.threshold is None:
@@ -864,7 +869,7 @@ class ResidueComparison:
         """The table's columns; ``threshold`` is written as ``delta_crit``."""
         out = {"run": self.run, **{f.name: getattr(self, f.name) for f in fields(self)
                                    if f.name not in _SCALAR_FIELDS
-                                   and f.name not in ("run", "threshold")
+                                   and f.name not in ("run", "threshold", "linked_next")
                                    and getattr(self, f.name) is not None}}
         out["delta_crit"] = self.threshold
         return out
@@ -939,7 +944,7 @@ def _residue_rows(value: dict, reference: tuple[str, str], alpha: float, delta_c
                      "control_fallback_reference": rfb, "control_fallback": fb,
                      "threshold": threshold})
         if block:
-            rows[-1]["block_start"], rows[-1]["block_end"] = block
+            rows[-1]["block_start"], rows[-1]["block_end"], rows[-1]["linked_next"] = block
         if two is not None:
             rows[-1]["two_reference"] = two.get((*reference, time, res), False)
             rows[-1]["two"] = two.get((run, sample, time, res), False)
@@ -952,7 +957,7 @@ def _residue_comparison(rows, with_choice: bool, reference: tuple[str, str], **s
              and f.name not in ("delta_shared", "delta_shared_se",  # judged_on_shared's
                                 "peptide_support", "residue_test_only")  # and the gate's
              and (with_choice or f.name not in ("two_reference", "two"))
-             and (not rows or f.name not in ("block_start", "block_end")
+             and (not rows or f.name not in ("block_start", "block_end", "linked_next")
                   or "block_start" in rows[0])
              and (f.name != "positions" or (rows and "positions" in rows[0]))]
     scalars.update(reference=reference[1], reference_run=reference[0])
@@ -962,6 +967,8 @@ def _residue_comparison(rows, with_choice: bool, reference: tuple[str, str], **s
     cols["run"] = cols["run"].astype(object)
     if "positions" in cols:
         cols["positions"] = cols["positions"].astype(object)
+    if "linked_next" in cols:
+        cols["linked_next"] = cols["linked_next"].astype(bool)
     return ResidueComparison(**cols, **scalars)
 
 
@@ -1059,6 +1066,7 @@ def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
     z, sig = np.full(n, np.nan), np.zeros(n, dtype=bool)
     d_shared, se_shared = np.full(n, np.nan), np.full(n, np.nan)
     blocks = np.full((n, 2), np.nan)
+    linked = np.zeros(n, dtype=bool)
     positions = (None if shared is None or shared.positions is None
                  else np.full(n, "", dtype=object))
     threshold = np.asarray(own.threshold, dtype=float).copy()
@@ -1075,6 +1083,8 @@ def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
                 positions[i] = shared.positions[j]
             if shared.block_start is not None:
                 blocks[i] = shared.block_start[j], shared.block_end[j]
+            if shared.linked_next is not None:
+                linked[i] = shared.linked_next[j]
     lost = int(np.sum(np.isnan(d_shared)))
     if lost:
         log.info("%d of %d residue differences (%s) not tested: no peptide measured in both "
@@ -1084,7 +1094,9 @@ def judged_on_shared(own: ResidueComparison, shared: ResidueComparison | None
                    delta_shared_se=se_shared,
                    positions=positions if positions is not None else own.positions,
                    block_start=blocks[:, 0] if with_blocks else own.block_start,
-                   block_end=blocks[:, 1] if with_blocks else own.block_end)
+                   block_end=blocks[:, 1] if with_blocks else own.block_end,
+                   linked_next=(linked if shared is not None and shared.linked_next is not None
+                                else own.linked_next))
 
 
 def _covers(peptides: PeptideComparison, nterm_subtract: int, registry) -> list[np.ndarray]:
@@ -1172,12 +1184,12 @@ def compare_residues(
     residues = residues.time_points()
     sel = (residues.K == K) & (residues.rank == rank)
     value = {(str(u), str(s), float(t), int(r)): (float(v), float(e), bool(fb), float(b0),
-                                                  float(b1))
-             for u, s, t, r, v, e, fb, b0, b1 in zip(
+                                                  float(b1), bool(ln))
+             for u, s, t, r, v, e, fb, b0, b1, ln in zip(
                  residues.run[sel], residues.sample[sel], residues.time[sel],
                  residues.residue[sel], residues.fD[sel], residues.fD_se[sel],
                  residues.control_fallback[sel], residues.block_start[sel],
-                 residues.block_end[sel], strict=True)}
+                 residues.block_end[sel], residues.linked_next[sel], strict=True)}
     try:
         reference = resolve_sample([k[0] for k in value], [k[1] for k in value], reference,
                                    "reference sample")
@@ -1490,6 +1502,36 @@ class RegionComparison:
         return keep
 
 
+STEPS = (2.0, 4.0)  # the size steps, in multiples of the threshold: 1-2, 2-4, above 4
+
+
+def significance_classes(comparison: ResidueComparison, *, more_d_positive: bool = True
+                         ) -> np.ndarray:
+    """Each row's class: 0 not significant, 1-3 less deuterium than the reference and 4-6 more
+    (by the shared difference over the threshold: below 2, 2 to 4, above 4), -1 not tested
+    (no peptide measured in both samples covers the residue: ``delta_shared`` NaN), -2 and -3
+    the residue test only (``residue_test_only``: no significant peptide confirms it), more and
+    less deuterium than the reference. Without
+    ``delta_shared`` (a comparison not judged on shared peptides) the row's own ``delta``.
+    ``more_d_positive``: a positive difference means more deuterium (an fD); False for the
+    low-D population's share, where more of it means less deuterium."""
+    shared = comparison.delta_shared if comparison.delta_shared is not None else comparison.delta
+    shared = np.asarray(shared, dtype=float)
+    threshold = np.asarray(comparison.threshold, dtype=float)
+    out = np.zeros(len(comparison), dtype=np.int64)
+    out[np.isnan(shared)] = -1
+    sig = np.asarray(comparison.significant, dtype=bool) & np.isfinite(shared)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = np.abs(shared) / np.where(threshold > 0, threshold, np.nan)
+    step = 1 + (ratio >= STEPS[0]).astype(int) + (ratio >= STEPS[1]).astype(int)
+    more = (shared > 0) if more_d_positive else (shared < 0)
+    out[sig] = np.where(more[sig], 3 + step[sig], step[sig])
+    if comparison.residue_test_only is not None:
+        only = np.asarray(comparison.residue_test_only, dtype=bool) & np.isfinite(shared)
+        out[only] = np.where(more[only], -2, -3)
+    return out
+
+
 def compare_regions(
     comparison: ResidueComparison,
     regions: Sequence[Region] | Annotations,
@@ -1608,6 +1650,199 @@ def region_summary(
     cols = {name: np.array([r[name] for r in rows]) for name in names}
     cols["run"] = cols["run"].astype(object)
     return RegionTable(**cols, K=K, rank=rank)
+
+
+# what a region contains (owner, 2026-11-17): its residues with an amide by class on the
+# significance maps, in the order the maps' legends give them (more D on the left)
+CLASS_COLUMNS = ("more_D_over_4x", "more_D_2_4x", "more_D_1_2x", "more_D_not_confirmed",
+                 "not_significant", "less_D_not_confirmed", "less_D_1_2x", "less_D_2_4x",
+                 "less_D_over_4x", "not_tested", "not_two_in_both", "not_compared")
+# the number of populations (from the one-or-two choice made on the shared peptides)
+POPULATION_COLUMNS = ("two_in_sample_only", "two_in_reference_only", "two_in_both",
+                      "one_in_both")
+_CLASS_OF_CODE = {6: "more_D_over_4x", 5: "more_D_2_4x", 4: "more_D_1_2x",
+                  -2: "more_D_not_confirmed", 0: "not_significant", -3: "less_D_not_confirmed",
+                  1: "less_D_1_2x", 2: "less_D_2_4x", 3: "less_D_over_4x", -1: "not_tested"}
+SIGNIFICANT_CLASSES = ("more_D_over_4x", "more_D_2_4x", "more_D_1_2x", "less_D_1_2x",
+                       "less_D_2_4x", "less_D_over_4x")
+
+
+@dataclass(frozen=True)
+class RegionComposition:
+    """What each region contains (:func:`region_composition`): one row per run, sample (not the
+    reference), time, ``quantity`` and region, with ``residues`` (the region's residues with an
+    amide in either sample), the number of them in each class of the significance maps
+    (:data:`CLASS_COLUMNS`; for ``quantity`` ``'populations'``, also
+    :data:`POPULATION_COLUMNS`, the share's classes counting the residues where both keep two)
+    and ``blocks_significant`` (the
+    residue blocks the significant ones lie in: blocks, not residues, are what the peptides
+    tell apart; NaN for the population share, whose comparison has no blocks of its own). The
+    reference is ``(reference_run, reference)``."""
+
+    columns_: dict
+    reference: str = ""
+    reference_run: str = ""
+
+    def __len__(self) -> int:
+        return len(self.columns_["sample"])
+
+    def __getattr__(self, name):
+        try:
+            return self.__dict__["columns_"][name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def columns(self) -> dict[str, np.ndarray]:
+        return dict(self.columns_)
+
+    def where(self, *, sample=None, time=None, run=None, quantity=None) -> np.ndarray:
+        keep = np.ones(len(self), dtype=bool)
+        for name, value in (("run", run), ("sample", sample), ("time", time),
+                            ("quantity", quantity)):
+            if value is not None:
+                values = value if isinstance(value, (list, tuple, np.ndarray)) else [value]
+                keep &= np.isin(self.columns_[name], values)
+        return keep
+
+    def with_samples(self, shown: np.ndarray, reference: str | None = None):
+        """A copy with ``sample`` replaced (display labels for the figures)."""
+        cols = dict(self.columns_, sample=np.asarray(shown, dtype=object))
+        return RegionComposition(cols, reference if reference is not None else self.reference,
+                                 self.reference_run)
+
+
+def _amides(residues, regions) -> dict[tuple[str, str], set[int]]:
+    """``(run, sample)`` -> the residues with an amide its residue map knows (time points)."""
+    out: dict[tuple[str, str], set[int]] = {}
+    if residues is None:
+        return out
+    keep = ~np.asarray(residues.no_amide, dtype=bool)
+    for u, s, r in zip(residues.run[keep], residues.sample[keep], residues.residue[keep],
+                       strict=True):
+        out.setdefault((str(u), str(s)), set()).add(int(r))
+    return out
+
+
+def region_composition(
+    regions: Sequence[Region] | Annotations,
+    comparisons: Mapping[str, tuple[ResidueComparison | None, bool]],
+    *,
+    residues=None,
+    choices=None,
+    population: ResidueComparison | None = None,
+) -> RegionComposition:
+    """What each region contains (owner, 2026-11-17): for every residue comparison of
+    ``comparisons`` (quantity name -> (comparison, whether a positive difference means more
+    deuterium), as the significance maps draw them: judged on shared peptides and gated), per
+    run, sample, time and region, the region's residues with an amide by class
+    (:func:`significance_classes`; :data:`CLASS_COLUMNS`), ``not_compared`` those without a row
+    (uncovered in either sample). With ``choices`` (:func:`hxex.analysis.compare_choices` on the
+    shared peptides), a K = 2 quantity (the comparison's ``K`` above 1: the two positions)
+    counts the residues that do not keep two populations in both as ``not_two_in_both``, as the
+    K = 2 map leaves them white, and a ``'populations'`` quantity follows the K = 2 map's
+    populations section: where only the sample or only the reference keeps two, where both
+    keep one (:data:`POPULATION_COLUMNS`), and where both keep two the class of the difference
+    in the low-D population's share (``population``, :func:`compare_populations` judged on
+    shared peptides and gated; given only with a bootstrap at K = 2: without it those residues
+    are ``two_in_both``). ``residues``: the residue map the comparisons were made from, for the
+    residues with an amide (without it, the residues with a row)."""
+    regions = regions.regions if isinstance(regions, Annotations) else tuple(regions)
+    if not regions:
+        raise ValueError("no regions given")
+    amides = _amides(residues, regions)
+    both_two = {}
+    if choices is not None:
+        both_two = {(str(u), str(s), float(t), int(r)): bool(a and b) for u, s, t, r, a, b in zip(
+            choices.run, choices.sample, choices.time, choices.residue, choices.two_reference,
+            choices.two, strict=True)}
+    rows: list[dict] = []
+    reference = ("", "")
+
+    def add(run, sample, time, quantity, region, counts, residue_set, blocks):
+        row = {"run": run, "sample": sample, "time": time, "quantity": quantity,
+               "region": region.name, "start": region.start, "end": region.end,
+               "residues": float(len(residue_set))}
+        row.update({c: np.nan for c in (*CLASS_COLUMNS, *POPULATION_COLUMNS)})
+        row.update({c: float(v) for c, v in counts.items()})
+        row["blocks_significant"] = float(blocks) if blocks is not None else np.nan
+        rows.append(row)
+
+    def residue_set(run, sample, region, present):
+        known = amides.get((run, sample), set()) | amides.get(reference, set())
+        inside = {r for r in known if region.start <= r <= region.end}
+        return inside | {int(r) for r in present if region.start <= r <= region.end}
+
+    for quantity, (comparison, more_d_positive) in comparisons.items():
+        if comparison is None or not len(comparison):
+            continue
+        reference = (comparison.reference_run, comparison.reference)
+        classes = significance_classes(comparison, more_d_positive=more_d_positive)
+        k2 = comparison.K > 1 or comparison.quantity == "population"
+        starts = (np.asarray(comparison.block_start, dtype=float)
+                  if comparison.block_start is not None else None)  # a share's: unknown
+        for run, sample, time in sorted({(str(u), str(s), float(t)) for u, s, t in zip(
+                comparison.run, comparison.sample, comparison.time, strict=True)}):
+            here = np.flatnonzero((comparison.run == run) & (comparison.sample == sample)
+                                  & (comparison.time == time))
+            res = np.asarray(comparison.residue)[here].astype(int)
+            for region in regions:
+                inside = (res >= region.start) & (res <= region.end)
+                found = residue_set(run, sample, region, res[inside])
+                counts = dict.fromkeys(CLASS_COLUMNS, 0)
+                sig_blocks = set()
+                for i, r in zip(here[inside], res[inside], strict=True):
+                    if k2 and choices is not None and not both_two.get(
+                            (run, sample, time, int(r)), False):
+                        counts["not_two_in_both"] += 1
+                        continue
+                    name = _CLASS_OF_CODE[int(classes[i])]
+                    counts[name] += 1
+                    if (name in SIGNIFICANT_CLASSES and starts is not None
+                            and np.isfinite(starts[i])):
+                        sig_blocks.add(starts[i])
+                counts["not_compared"] = len(found) - sum(counts.values())
+                if not k2:
+                    counts.pop("not_two_in_both")
+                add(run, sample, time, quantity, region, counts, found,
+                    len(sig_blocks) if starts is not None else None)
+    if choices is not None and len(choices):
+        reference = (choices.reference_run, choices.reference)
+        share = {}
+        if population is not None and len(population):
+            codes = significance_classes(population, more_d_positive=False)
+            share = {(str(u), str(s_), float(t), int(r)): _CLASS_OF_CODE[int(c)]
+                     for u, s_, t, r, c in zip(population.run, population.sample,
+                                               population.time, population.residue, codes,
+                                               strict=True)}
+        for run, sample, time in sorted({(str(u), str(s_), float(t)) for u, s_, t in zip(
+                choices.run, choices.sample, choices.time, strict=True)}):
+            here = np.flatnonzero((choices.run == run) & (choices.sample == sample)
+                                  & (choices.time == time))
+            res = np.asarray(choices.residue)[here].astype(int)
+            two_ref = np.asarray(choices.two_reference, dtype=bool)[here]
+            two = np.asarray(choices.two, dtype=bool)[here]
+            for region in regions:
+                inside = (res >= region.start) & (res <= region.end)
+                found = residue_set(run, sample, region, res[inside])
+                counts = {"two_in_sample_only": int(np.sum(inside & two & ~two_ref)),
+                          "two_in_reference_only": int(np.sum(inside & two_ref & ~two)),
+                          "one_in_both": int(np.sum(inside & ~two & ~two_ref))}
+                both = res[inside & two & two_ref]
+                if population is None:
+                    counts["two_in_both"] = len(both)
+                else:
+                    counts.update(dict.fromkeys(_CLASS_OF_CODE.values(), 0))
+                    for r in both:
+                        # no share row: grey on the K = 2 map (two in both, not significant)
+                        counts[share.get((run, sample, time, int(r)), "not_significant")] += 1
+                counts["not_compared"] = len(found) - sum(counts.values())
+                add(run, sample, time, "populations", region, counts, found, None)
+    names = ("run", "sample", "time", "quantity", "region", "start", "end", "residues",
+             *CLASS_COLUMNS, *POPULATION_COLUMNS, "blocks_significant")
+    cols = {n: np.array([r[n] for r in rows], dtype=object if n in (
+        "run", "sample", "quantity", "region") else None) for n in names} if rows else {
+        n: np.array([]) for n in names}
+    return RegionComposition(cols, reference[1], reference[0])
 
 
 SEQUENCE_COLUMNS = ("run", "sample", "start", "end", "group", "time", "peptide_reference",

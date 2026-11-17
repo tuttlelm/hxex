@@ -2739,6 +2739,72 @@ def test_residue_blocks_are_kept_and_outlined():
     assert not any((p.get_gid() or "").startswith("block:") for p in plain.axes[0].patches)
 
 
+def test_information_borders_mark_where_no_peptide_carries_information():
+    """A border of no information (owner, 2026-11-17): between neighbouring covered residues no
+    peptide joins, on the junction when they touch, on the residue between them, or on the
+    first and last residue of a longer gap; a proline a peptide spans is not one, nor are the
+    ends of the sequence."""
+    from hxex.report.significance import information_borders
+
+    assert information_borders([2, 3, 4, 6, 7], [True, True, True, True, False]) == []
+    assert information_borders([3, 4, 5, 6], [True, False, True, False]) == [4.5]
+    assert information_borders([3, 4, 6, 7], [True, False, True, False]) == [5.0]
+    assert information_borders([7, 3, 4, 9], [False, True, False, False]) == [5.0, 6.0, 8.0]
+    assert information_borders([4, 9], [False, False]) == [5.0, 8.0]
+    assert information_borders([5], [False]) == []
+
+
+def test_the_maps_mark_the_borders_of_no_information():
+    """The significance and tier maps draw a resistor symbol on each border of no information,
+    from the peptides the comparison was judged on (``linked_next``, carried from the shared
+    maps, kept out of the table), and the legend names it; a proline a peptide spans has none."""
+    import dataclasses
+
+    from hxex.analysis import (
+        compare_residues,
+        concat_tables,
+        judged_on_shared,
+        paired_residue_maps,
+    )
+    from hxex.report import plot_residue_significance
+    from hxex.report.tiers import plot_population_tiers
+
+    # MAKLPGSTVEDRWQAFKLT: AKLPGS measures 3-7 across the proline at 5; residue 8 (TVED's first)
+    # is uncovered; TVED and DRWQ meet at 11|12; residue 15 (AFKLT's first) is uncovered
+    rows = []
+    for sample, shift in (("R", 0.0), ("V", 0.2)):
+        rows += [(sample, "AKLPGS", 2, 4.0, 0.3 + shift, 0.01),
+                 (sample, "TVED", 8, 4.0, 0.4 + shift, 0.01),
+                 (sample, "DRWQ", 11, 4.0, 0.5 + shift, 0.01),
+                 (sample, "AFKLT", 15, 4.0, 0.6 + shift, 0.01)]
+    up = table(rows)
+    rm = residue_map(up, sequences=SEQUENCE)
+    pairs = paired_residue_maps(up, "R", sequences=SEQUENCE)
+    rc = judged_on_shared(compare_residues(rm, "R", delta_crit=0.1),
+                          concat_tables([compare_residues(m, "R", delta_crit=0.1)
+                                         for m in pairs.values()]))
+    assert rc.linked_next is not None and "linked_next" not in rc.columns()
+    fig = plot_residue_significance(rc)
+    gids = sorted(line.get_gid() for line in fig.axes[0].lines
+                  if (line.get_gid() or "").startswith("border:"))
+    assert gids == ["border:V  4 s:11.5", "border:V  4 s:15", "border:V  4 s:8"]
+    assert any("no information" in t.get_text() for t in fig.legends[0].get_texts())
+    # without the linked flags (a comparison made by hand): no borders, no legend entry
+    bare = plot_residue_significance(dataclasses.replace(rc, linked_next=None))
+    assert not any((line.get_gid() or "").startswith("border:") for line in bare.axes[0].lines)
+    assert not any("no information" in t.get_text() for t in bare.legends[0].get_texts())
+    # the tier map, from each sample's own residue map
+    k1 = rm.K == 1
+    tiers = dataclasses.replace(
+        rm, population_tier=np.where(k1 & ~rm.no_amide & rm.covered, "no sign", ""),
+        **{name: np.zeros(len(rm)) for name in ("test_strength_2", "test_agreement_2",
+                                                "test_strength_3", "test_agreement_3")})
+    fig = plot_population_tiers(tiers)
+    gids = {line.get_gid() for line in fig.axes[0].lines
+            if (line.get_gid() or "").startswith("border:")}
+    assert gids == {f"border:{s}  4 s:{x}" for s in ("R", "V") for x in ("8", "11.5", "15")}
+
+
 def test_k2_map_marks_where_the_own_peptides_decide_differently():
     """The K = 2 map decides one or two on the shared peptides; a yellow triangle marks the
     residues each sample's own peptides decide differently (HISTORY 207)."""
@@ -2808,6 +2874,94 @@ def test_regions_are_compared_from_their_residues_with_the_same_gate():
     assert [t.get_text() for t in fig.axes[0].get_xticklabels()] == [
         "N (2-6)", "wide (2-11)", "C (7-11)", "far (15-19)"]
     assert any((p.get_gid() or "").startswith("xxxx:") for p in fig.axes[0].patches)
+
+
+def test_what_each_region_contains():
+    """region_composition (owner, 2026-11-17): a region's residues by their class on the
+    significance maps, no new test; at K = 2 the residues not two in both apart, and the number
+    of populations; the region map marks an average that hides significant residues with the
+    yellow triangle, and the composition map draws each class's share of the cell."""
+    import dataclasses
+
+    from hxex.analysis import (
+        ChoiceComparison,
+        PeptideComparison,
+        Region,
+        ResidueComparison,
+        compare_regions,
+        region_composition,
+    )
+    from hxex.report import plot_region_composition, plot_region_significance
+
+    res = np.arange(2, 12)
+    n = len(res)
+    delta = np.where(res <= 6, 0.3, 0.02)  # 3x the threshold on 2-6
+    rc = ResidueComparison(
+        sample=np.array(["V"] * n), time=np.full(n, 4.0), residue=res,
+        value_reference=np.full(n, 0.3), value_reference_se=np.full(n, 0.01),
+        value=0.3 + delta, value_se=np.full(n, 0.01), delta=delta, delta_se=np.full(n, 0.02),
+        z=delta / 0.02, significant=delta > 0.1, reference="R", delta_crit=0.1,
+        delta_shared=np.where(res == 11, np.nan, delta), delta_shared_se=np.full(n, 0.02),
+        block_start=np.where(res <= 4, 2.0, 5.0), block_end=np.where(res <= 4, 4.0, 11.0))
+    regions = [Region("N", 2, 6), Region("mix", 5, 11)]
+    comp = region_composition(regions, {"fD": (rc, True)})
+    row = {r: i for i, r in enumerate(comp.region)}
+    assert comp.more_D_2_4x[row["N"]] == 5 and comp.blocks_significant[row["N"]] == 2
+    assert comp.more_D_2_4x[row["mix"]] == 2 and comp.not_significant[row["mix"]] == 4
+    assert comp.not_tested[row["mix"]] == 1 and comp.residues[row["mix"]] == 7
+    assert np.isnan(comp.two_in_both[row["N"]])  # no populations here
+    # at K = 2: residues not two in both are counted apart
+    choices = ChoiceComparison(
+        run=np.array([""] * n, dtype=object), sample=np.array(["V"] * n),
+        time=np.full(n, 4.0), residue=res, two_reference=res <= 8, two=res <= 6,
+        reason_reference=np.array([""] * n), reason=np.array([""] * n),
+        agree=(res <= 8) == (res <= 6), reference="R")
+    low = dataclasses.replace(rc, K=2)
+    k2 = region_composition(regions, {"low-D position": (low, True)}, choices=choices)
+    pos = k2.where(quantity="low-D position") & (k2.region == "mix")
+    assert k2.more_D_2_4x[pos][0] == 2 and k2.not_two_in_both[pos][0] == 5
+    pops = k2.where(quantity="populations") & (k2.region == "mix")
+    assert (k2.two_in_both[pops][0], k2.two_in_reference_only[pops][0],
+            k2.one_in_both[pops][0]) == (2, 2, 3)
+    # with the share compared (a bootstrap at K = 2): its classes where both keep two
+    share = dataclasses.replace(rc, K=2, quantity="population",
+                                delta_shared=-np.asarray(rc.delta_shared))  # less low-D: more D
+    tested = region_composition(regions, {}, choices=choices, population=share)
+    pops = tested.where(quantity="populations") & (tested.region == "mix")
+    assert tested.more_D_2_4x[pops][0] == 2 and np.isnan(tested.two_in_both[pops][0])
+    assert tested.two_in_reference_only[pops][0] == 2
+    # the region map: "mix" is not significant on average (mean 0.1), its residues 5-6 are
+    pc = PeptideComparison(
+        sample=np.array(["V"]), peptide=np.array(["AKLPG"]), modification=np.array([""]),
+        start=np.array([2]), end=np.array([6]), time=np.array([4.0]),
+        value_reference=np.array([0.3]), value_reference_se=np.array([0.01]),
+        value=np.array([0.6]), value_se=np.array([0.01]), delta=np.array([0.3]),
+        delta_se=np.array([0.01]), t=np.array([20.0]), p=np.array([0.001]),
+        n_reference=np.array([3]), n=np.array([3]), significant=np.array([True]),
+        reference="R", delta_crit=0.1)
+    cmp = compare_regions(rc, regions, pc, nterm_subtract=1)
+    assert not cmp.significant[list(cmp.region).index("mix")]
+    fig = plot_region_significance(cmp, composition=comp)
+    marked = [p.get_gid() for p in fig.axes[0].patches if (p.get_gid() or "").startswith(
+        "differs:")]
+    assert len(marked) == 1 and any("residues inside" in t.get_text()
+                                    for t in fig.legends[0].get_texts())
+    plain = plot_region_significance(cmp)
+    assert not any((p.get_gid() or "").startswith("differs:") for p in plain.axes[0].patches)
+    # the composition map: a share of the cell per class
+    fig = plot_region_composition(comp)
+    widths = {p.get_gid(): p.get_width() for p in fig.axes[0].patches if p.get_gid()}
+    assert widths["more_D_2_4x:V  4 s:mix"] == pytest.approx(0.84 * 2 / 7)
+    assert widths["not_significant:V  4 s:mix"] == pytest.approx(0.84 * 4 / 7)
+    assert "region:V  4 s:N" in widths
+    fig = plot_region_composition(k2, quantities=("populations", "low-D position"))
+    texts = [t.get_text() for t in fig.axes[0].texts]
+    assert "populations" in texts and "low-D position" in texts  # no share without a bootstrap
+    gids = {p.get_gid() for p in fig.axes[0].patches if p.get_gid()}
+    assert "\\\\\\\\:V  4 s:mix" not in gids  # the hatches are named by their column
+    assert "two_in_reference_only:V  4 s:mix" in gids
+    labels = [t.get_text() for t in fig.legends[0].get_texts()]
+    assert labels.count("one population in both, or not comparable") == 1
 
 
 def test_two_populations_far_apart_take_their_average_from_k2():

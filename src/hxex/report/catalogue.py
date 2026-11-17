@@ -327,9 +327,29 @@ KINDS: tuple[FigureKind, ...] = (
     FigureKind(
         "region_significance", "Region significance map", ANALYSE,
         ("region_significance", "region_significance_{page}"),
-        "which regions differ significantly from the reference: one row per sample and time, "
-        "one column per region", _ANALYSIS_PAGE, (_REFERENCE, _REGIONS),
+        "which regions differ significantly from the reference on average: one row per sample "
+        "and time, one column per region; a yellow corner triangle where the average is not "
+        "significant but residues inside are", _ANALYSIS_PAGE, (_REFERENCE, _REGIONS),
         changed_by=("[analysis] alpha", "[[analysis.regions]]", "[analysis] page_size")),
+    FigureKind(
+        "region_composition", "Region composition", ANALYSE,
+        ("region_composition", "region_composition_{page}"),
+        "what each region contains: one row per sample and time, one column per region, each "
+        "cell its residues by class on the residue significance map, in proportion",
+        _ANALYSIS_PAGE, (_REFERENCE, _REGIONS),
+        data="where a residue could be compared",
+        changed_by=("[analysis] alpha", "[[analysis.regions]]", "[analysis] page_size")),
+    FigureKind(
+        "region_composition_K2", "Region composition at K=2", ANALYSE,
+        ("region_composition_K2_{sample}",),
+        "one figure per sample: what each region contains at K=2, in the sections of the "
+        "residue significance map at K=2 (populations: where only one side has two, and with "
+        "a bootstrap at K=2 the share's differences where both do; the two positions)",
+        _ANALYSIS_PAGE, (_REFERENCE, _REGIONS, _K2),
+        data="where a sample has two populations; the share and position sections need a "
+             "bootstrap at K=2 ([run.bootstrap] ks)",
+        changed_by=("[analysis] populations", "[analysis.choice]", "[[analysis.regions]]",
+                    "[analysis] page_size")),
     FigureKind(
         "butterfly", "Butterfly plot", ANALYSE, ("butterfly_{sample}",),
         "the reference above, the sample below, a line per time, the differences underneath "
@@ -389,7 +409,8 @@ _POOLED = ("pooled_coverage", "pooled_forms", "head_to_head")
 _ON_RESIDUES = ("redundancy_resolution", "residues_all", "choice", "profile",
                 "population_tiers", "overlay_residues", "overlay_populations", "woods",
                 "woods_K2", "residue_significance", "residue_significance_K2",
-                "region_significance", "regions")
+                "region_significance", "region_composition", "region_composition_K2",
+                "regions")
 _PROTEIN = ("for the samples whose peptides make one protein (two of them overlap and they "
             "agree on the residues they share; [analysis] residue_level), not for pooled "
             "samples with candidates (their forms have figures of their own)")

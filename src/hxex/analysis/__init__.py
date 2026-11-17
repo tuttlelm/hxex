@@ -24,6 +24,7 @@ from .compare import (
     PopulationCountComparison,
     Region,
     RegionComparison,
+    RegionComposition,
     RegionTable,
     ResidueComparison,
     Site,
@@ -36,6 +37,7 @@ from .compare import (
     gated_by_peptides,
     judged_on_shared,
     paired_residue_maps,
+    region_composition,
     region_summary,
 )
 from .fragments import (
@@ -159,6 +161,7 @@ __all__ = [
     "PopulationCountComparison",
     "Region",
     "RegionComparison",
+    "RegionComposition",
     "RegionTable",
     "ResidueComparison",
     "Site",
@@ -166,6 +169,7 @@ __all__ = [
     "compare_population_counts",
     "compare_populations",
     "compare_regions",
+    "region_composition",
     "compare_residues",
     "concat_tables",
     "gated_by_peptides",
