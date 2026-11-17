@@ -10458,3 +10458,45 @@ CSVs or mzML if wanted.
       list (strength in the undeuterated controls, agreement after a run) is possible.
     Private record: `hxex_private/analysis_examples/{bradykinin_backexchange,signal_accounting}`
     (READMEs).
+
+400. **Every fragment of a ladder on one panel (owner, 2026-11-17, from their own figure of
+    the scrambling standards' gentle and harsh c-1 ladders).** `hxex analyse` draws
+    `fragments_<parent>_<condition>_<ion>_z<charge>` (`fragment_traces_figure`, figure kind
+    `fragment_traces`): one panel per parent and precursor charge, condition (gentle, harsh;
+    in a merged sample one per run and condition, named `<run>_<condition>`), ion type and
+    fragment charge, with every fragment of that series as a line of deuterium against time,
+    light to dark from the shortest to the longest (viridis; the targeted protein data's ladders
+    reach 20 and more fragments, beyond ten distinct colours), a pale +-1 se band where the
+    points have errors (item 105's rule), markers on a trace of 30 points or fewer. Time is
+    linear for a kinetics run (every scan its own time, told by the read record:
+    `io.mzml.kinetics_spectra`) and logarithmic otherwise; the undeuterated control (time 0) is
+    not drawn, as in the ladder figure. Replicates at one time are averaged as there
+    (`fragment_trace`). Needs no rate fits. Each line carries its points as rows of the window's
+    data tab (the first fragment figure with a data table). Owner's choices: one figure per
+    condition (not side by side), bands, linear time for kinetics runs, sequential colours,
+    fragments only (MS1 charge states not now). Checked on the private scrambling-standard
+    example (four figures, linear time, the owner's figure reproduced) and the private
+    targeted dataset (72 figures, log time, bands). Guide fragment-residues.md "Every fragment
+    on one panel", figures.md. Tests: `test_every_fragment_of_a_series_on_one_panel`,
+    `test_the_fragment_traces_of_a_kinetics_run_have_linear_time`.
+    Every fragment figure's title now names the parent's residue range, as its file name does
+    (owner: "the figure should carry the information"): the ladder's rows ("S 11-18 (Z3)  ETD
+    M_z1"), the closure's panels, the residue rates (range and sequence) and the new traces.
+    The same panels in the window (owner: "the best user look at what data should be
+    considered for actual ladder type analysis"; my recommendation, agreed): a **fragments**
+    tab in Results at every level, for results with fragment ions. It shows every fragment of
+    the selection's parent at its precursor charge (`fragment_traces_page`: a row per ion type
+    and fragment charge, a column per condition), the selected fragment thicker with its legend
+    name bold; a peptide read at MS1 or a precursor ion shows its own fragments. Spectra the
+    review rejected or the analysis excludes stay on the page as a faded dashed line without a
+    band (owner's choice, after the grey outlines of left-out points elsewhere), from
+    `fragment_uptake_with_left_out` (the analysis's `fragment_uptake` is unchanged). A click on
+    a fragment's legend name selects its series (gid `series:<data_id>`; the lines cannot be
+    told apart by a click, as the window finds what was clicked by its box). The table is made
+    once per results (0.2 s for the targeted dataset's 16,791 fragment spectra) in the drawing
+    thread; a review decision makes new results and so a new page. The Analysis list now puts
+    the traces first in its fragment part, and `hxex analyse` writes them before the ladders.
+    Checked offscreen on both private fragment examples (tab, page, legend click). Guide
+    gui.md (Results), fragment-residues.md. Tests:
+    `test_the_windows_fragment_page_draws_left_out_spectra_apart`,
+    `test_a_fragment_series_has_its_parents_fragments_tab`.

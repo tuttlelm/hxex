@@ -169,12 +169,26 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     merge label in ``sample`` with ``merged`` True, so that the runs of one sample (two
     activations, say) are drawn side by side in its figures, as series ``(run, condition)``,
     and never pooled (each run has an exchange clock of its own)."""
-    from ..fragments import fragment_amides
-    from ..io.mzml import mzml_series_targets
     from .runs import RunSet
 
     if isinstance(results, RunSet):
         return _runset_uptake(results, exclude_flagged)
+    return _uptake(results, exclude_flagged, False)[0]
+
+
+def fragment_uptake_with_left_out(results) -> tuple[FragmentUptake, np.ndarray]:
+    """:func:`fragment_uptake` of one run with the spectra the review rejected and those the
+    analysis excludes kept in, and why each row is left out of the fragment analysis
+    (``'rejected'``, ``'excluded'``; '' for a row it keeps): the window draws the left-out
+    rows apart (owner, 2026-11-17)."""
+    return _uptake(results, False, True)
+
+
+def _uptake(results, exclude_flagged: bool, keep_left_out: bool):
+    """:func:`fragment_uptake` of one run, and why each row is left out (all '' unless
+    ``keep_left_out``)."""
+    from ..fragments import fragment_amides
+    from ..io.mzml import mzml_series_targets
 
     settings = results.settings
     source = settings.spectra_source if settings is not None else None
@@ -189,10 +203,13 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     rules = picker.amide_rules if picker is not None else chem.DEFAULT_AMIDE_RULES
     index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
     keep = np.ones(len(fit), dtype=bool)
-    if results.review is not None:
-        keep &= results.review.status_of(fit) != "rejected"
+    why = np.full(len(fit), "", dtype=object)
     if getattr(results, "excluded_times", ()) or getattr(results, "excluded_series", ()):
-        keep &= ~results.excluded  # left out of the analysis (exclude_times, other branch)
+        why[results.excluded] = "excluded"  # left out of the analysis (exclude_times, ...)
+    if results.review is not None:
+        why[results.review.status_of(fit) == "rejected"] = "rejected"
+    if not keep_left_out:
+        keep &= why == ""
     keep &= np.asarray(fit.role, dtype=str) != FULLDEUT
     flagged = (np.asarray(results.quality.flagged, dtype=bool) if results.quality is not None
                else np.zeros(len(fit), dtype=bool))
@@ -205,6 +222,7 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     amides: dict[tuple, int] = {}
     rows: dict[str, list] = {f.name: [] for f in fields(FragmentUptake)
                              if f.name not in ("nterm_subtract", "amide_rules", "run", "merged")}
+    reasons: list[str] = []
     skipped = 0
     for i in np.flatnonzero(keep):
         target = targets.get(int(fit.data_id[i]))
@@ -237,6 +255,7 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
         }
         for name, value in values.items():
             rows[name].append(value)
+        reasons.append(str(why[i]))
     if skipped:
         log.info("fragment_uptake: %d spectra of series that are not fragments left out", skipped)
     kinds = {"parent_start": np.int64, "parent_charge": np.int64, "length": np.int64,
@@ -244,7 +263,7 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
              "mean": float, "mean_se": float, "n_amides": np.int64, "flagged": bool}
     return FragmentUptake(
         **{name: np.array(values, dtype=kinds.get(name, str)) for name, values in rows.items()},
-        nterm_subtract=int(nterm), amide_rules=rules)
+        nterm_subtract=int(nterm), amide_rules=rules), np.array(reasons, dtype=object)
 
 
 def _runset_uptake(runs, exclude_flagged: bool) -> FragmentUptake:

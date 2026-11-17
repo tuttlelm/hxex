@@ -350,6 +350,15 @@ KINDS: tuple[FigureKind, ...] = (
         "protection-factors.md", (_PROTECTION, _REFERENCE),
         changed_by=("[analysis.labelling]", "[analysis] alpha")),
     FigureKind(
+        "fragment_traces", "Fragment traces", ANALYSE,
+        ("fragments_{parent}_{condition}_{ion}_z{charge}",),
+        "every fragment of one ion series in one condition on one panel: deuterium against "
+        "time, a line per fragment length (±1 se band); a kinetics run's time on a linear "
+        "axis, other runs' on a log axis. The first look at which fragments a ladder should "
+        "use (also the Results tab's fragments page)",
+        "fragment-residues.md", (_FRAGMENTS,),
+        changed_by=("[analysis.fragments]",)),
+    FigureKind(
         "ladder", "Fragment ladder", ANALYSE, ("ladder_{parent}_{ion}_z{charge}",),
         "the precursor, then for every ladder step the two fragments and their difference "
         "(with its fit when [analysis.fragments] fit_rates is true); a long ladder goes on "

@@ -268,7 +268,7 @@ def test_ladder_figure_has_a_row_per_step():
     steps = ladder_steps(PARENT, "c", [1, 2, 4, 5, 6, 7])
     assert len(axes) == 2 * (len(steps) + 1)
     titles = [ax.get_title() for ax in axes[::2]]
-    assert titles[0] == "S (Z3)  ETD M_z1"
+    assert titles[0] == "S 11-18 (Z3)  ETD M_z1"  # every title names the parent
     assert titles[1].endswith("G(S)-12") and titles[3].endswith("GSHP(L)-15")
     rate_labels = [t.get_text() for t in axes[2 * 4 + 1].get_legend().get_texts()]
     assert rate_labels[0].startswith("Δ G, rate: 4.00e-03")  # residue 16 (V), exact data
@@ -285,7 +285,7 @@ def test_ladder_figure_has_a_row_per_step():
     second = ladder_kinetics_figure(u, "c", labels={"gentle": "G"}, min_time=10.0,
                                     steps_shown=pages[1], note=f"page 2 of {len(pages)}")
     page_titles = [ax.get_title() for ax in second.axes[::2]]
-    assert page_titles[0] == f"S (Z3)  ETD M_z1  (page 2 of {len(pages)})"
+    assert page_titles[0] == f"S 11-18 (Z3)  ETD M_z1  (page 2 of {len(pages)})"
     assert page_titles[1:] == titles[3:5] and len(second.axes) == 6
     # traces of one's own in the right column, alone
     seen = []
@@ -313,6 +313,110 @@ def test_ladder_figure_has_a_row_per_step():
         both.sample[: len(both) // 2] = "T"
         ladder_kinetics_figure(both, "c")
     assert chem.ion_terminus("c") == "N"
+
+
+def test_every_fragment_of_a_series_on_one_panel():
+    """One condition's fragments of one ion series on one panel, light (shortest) to dark
+    (longest), each with a +-1 se band and its points as data-table rows (owner, 2026-11-17)."""
+    from matplotlib.colors import to_rgb
+
+    from hxex.gui.figures import figure_rows
+    from hxex.report import fragment_traces_figure
+
+    u = synthetic(conditions=("gentle", "harsh"))
+    fig = fragment_traces_figure(u, "c", condition="gentle", labels={"gentle": "G"})
+    (ax,) = fig.axes
+    assert ax.get_title() == "S 11-18 (Z3)  G  ETD c_z1"  # the parent's range, as named
+    assert ax.get_xscale() == "log"
+    names = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert names == [f"c_{n}_z1" for n in (1, 2, 4, 5, 6, 7)]
+    light = [sum(to_rgb(line.get_color())) for line in ax.lines]
+    assert light == sorted(light, reverse=True)  # shortest lightest
+    assert len(ax.collections) == len(ax.lines)  # a band each (the points have errors)
+    assert all(line.get_marker() in ("None", None, "") for line in ax.lines)  # 120 points
+    few = u.select(np.isin(u.time, TIMES[:10]))
+    marked = fragment_traces_figure(few, "c", condition="gentle").axes[0].lines
+    assert all(line.get_marker() == "o" for line in marked)  # a time course's few points
+    first = ax.lines[0]
+    assert np.allclose(first.get_xdata(), [t for t in TIMES if t > 0])
+    assert np.allclose(first.get_ydata(), fragment_trace(u, "c:1", condition="gentle").mean)
+    columns, rows = figure_rows(fig)
+    assert {"fragment", "length", "time", "mean", "mean_se", "condition"} <= set(columns)
+    assert len(rows) == 6 * len(TIMES) and rows[0]["condition"] == "G"
+    # a kinetics run's on a linear time axis; the condition must be chosen
+    assert fragment_traces_figure(u, "z", condition="harsh",
+                                  scale="linear").axes[0].get_xscale() == "linear"
+    with pytest.raises(ValueError, match="choose one condition"):
+        fragment_traces_figure(u, "c")
+    with pytest.raises(ValueError, match="no y fragments"):
+        fragment_traces_figure(u, "y", condition="gentle")
+
+
+def test_the_fragment_traces_of_a_kinetics_run_have_linear_time():
+    """hxex analyse draws a kinetics run's traces (every scan its own time) on a linear axis:
+    the run is told by its read record."""
+    from hxex.analysis import FragmentAnalysis
+    from hxex.report.fragments import _kinetics_rows, fragment_outputs
+
+    run = stub_run()
+    u = fragment_uptake(run)
+    assert not _kinetics_rows(run, u).any()  # no runs recorded: not kinetics
+    run.settings.spectra_source["runs"] = [{"sample": "S", "path": "f", "time": None,
+                                            "role": None}]
+    assert _kinetics_rows(run, u).all()
+    _, jobs = fragment_outputs(run, FragmentAnalysis(min_time=10.0))
+    traces = {name: draw for name, draw in jobs if name.startswith("fragments_")}
+    assert sorted(traces) == sorted(f"fragments_S_11-18_z3_{c}_{ion}_z1"
+                                    for c in ("gentle", "harsh") for ion in ("c", "z"))
+    assert traces["fragments_S_11-18_z3_gentle_c_z1"]().axes[0].get_xscale() == "linear"
+
+
+def test_the_windows_fragment_page_draws_left_out_spectra_apart():
+    """The Results tab's page (owner, 2026-11-17): every fragment of the parent, a row per ion
+    type and charge, a column per condition; the spectra the review rejected stay in, as a
+    faded dashed line without a band, the analysis's own table leaves them out; the selected
+    fragment is thicker and named in bold; a name's gid is its series."""
+    from hxex.analysis import fragment_uptake_with_left_out
+    from hxex.gui.figures import figure_rows
+    from hxex.report.fragments import SERIES_GID, fragment_traces_page
+
+    run = stub_run()
+    u0 = fragment_uptake(run)
+    gone = u0.where(fragment="c:5", condition="gentle")
+    rejected = set(u0.spectrum_id[gone].tolist())
+    status = np.array(["rejected" if str(i) in rejected else "unreviewed"
+                       for i in run.fit.spectrum_id], dtype=object)
+    run.review = SimpleNamespace(status_of=lambda fit: status)
+    errors = SimpleNamespace(mean_se=np.full((len(status), 1), 0.02))
+    run.bootstrap_for = lambda i, k: errors  # every point with an error: a band each
+    assert not fragment_uptake(run).where(fragment="c:5", condition="gentle").any()
+    u, why = fragment_uptake_with_left_out(run)
+    assert len(u) == len(u0) and len(why) == len(u)
+    assert set(why[u.where(fragment="c:5", condition="gentle")]) == {"rejected"}
+    assert set(why[~u.where(fragment="c:5", condition="gentle")]) == {""}
+
+    fig = fragment_traces_page(u, left_out=why, highlight="c:6", labels={"gentle": "G"})
+    axes = np.array(fig.axes).reshape(2, 2)  # c and z rows, gentle and harsh columns
+    assert [ax.get_title() for ax in axes[:, 0]] == ["S 11-18 (Z3)  G  ETD c_z1",
+                                                     "S 11-18 (Z3)  G  ETD z_z1"]
+    gentle_c = axes[0, 0]
+    dashed = [line for line in gentle_c.lines if line.get_linestyle() == "--"]
+    assert len(dashed) == 1 and dashed[0].get_alpha() < 1  # c:5, faded
+    assert len(gentle_c.collections) == len(gentle_c.lines) - 1  # no band for it
+    texts = gentle_c.get_legend().get_texts()
+    assert [t.get_text() for t in texts] == [f"c_{n}_z1" for n in (1, 2, 4, 5, 6, 7)]
+    bold = [t.get_text() for t in texts if t.get_fontweight() == "bold"]
+    assert bold == ["c_6_z1"]
+    widths = {line.get_label(): line.get_linewidth() for line in gentle_c.lines}
+    assert widths["c_6_z1"] > widths["c_7_z1"]
+    ids = u.data_id[u.where(fragment="c:1", condition="gentle")]
+    assert texts[0].get_gid() == f"{SERIES_GID}{int(ids[0])}"
+    assert not any(line.get_linestyle() == "--" for line in axes[0, 1].lines)  # harsh kept
+    _, rows = figure_rows(fig)
+    out = [r for r in rows if r["left_out"]]
+    assert out and {r["fragment"] for r in out} == {"c:5"} and {r["left_out"] for r in out} == {
+        "rejected"}
+    assert all(np.isnan(r["mean_se"]) for r in out)
 
 
 def test_closure_of_complementary_ions():
@@ -535,6 +639,8 @@ def test_write_analysis_of_a_fragment_run(tmp_path):
         "fragment_uptake.csv", "ladder_rates.csv", "ladder_residues.csv", "closure.csv",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
         "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png",
+        *(f"fragments_S_11-18_z3_{c}_{ion}_z1.png" for c in ("gentle", "harsh")
+          for ion in ("c", "z")),
         "analysis_settings_used.toml"])  # the stub has no run settings to copy
     assert all(p.stat().st_size > 0 for p in written)
     # without the fragment outputs a fragment-only run has nothing else to write
@@ -542,7 +648,7 @@ def test_write_analysis_of_a_fragment_run(tmp_path):
 
     u = fragment_uptake(run)
     fig = closure_figure(u, "c", "z", precursor_charge=None, tolerance=0.1, min_time=10.0)
-    assert [ax.get_title() for ax in fig.axes] == ["S (Z3)  gentle", "S (Z3)  harsh"]
+    assert [ax.get_title() for ax in fig.axes] == ["S 11-18 (Z3)  gentle", "S 11-18 (Z3)  harsh"]
     # the stub's precursor ion is read at charge 1, so give it as the precursor's charge
     fig = closure_figure(u, "c", "z", precursor_charge=1)
     pts = fig.axes[0].collections
@@ -571,7 +677,7 @@ def test_intrinsic_rates_in_the_fragment_outputs(tmp_path):
     written = write_analysis(run, cfg, tmp_path)
     header = (tmp_path / "ladder_rates.csv").read_text().splitlines()[0]
     assert header.endswith("kint,protection,log10_protection,log10_protection_se,merged")
-    assert len(written) == 9  # 4 tables, 4 figures, the settings used
+    assert len(written) == 13  # 4 tables, 8 figures (4 of them traces), the settings
     # without the opt-in the same conditions change nothing
     off = AnalysisConfig(format="png", fragments=FragmentAnalysis(
         min_time=10.0, exchange={"S": cond}, fit_rates=True))
@@ -704,6 +810,9 @@ def test_fragment_outputs_of_several_runs(tmp_path):
         "fragment_uptake.csv", "ladder_rates.csv", "ladder_residues.csv", "closure.csv",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
         "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png",
+        # a merged sample's traces: one figure per run and condition, named by both
+        *(f"fragments_S_11-18_z3_{r}_gentle_{ion}_z1.png" for r in ("etd", "ethcd")
+          for ion in ("c", "z")),
         "analysis_settings_used.toml"])  # the stub has no run settings to copy
     for name in ("fragment_uptake", "ladder_rates", "ladder_residues", "closure"):
         head = (tmp_path / "merged" / f"{name}.csv").read_text().splitlines()[0]
@@ -912,7 +1021,9 @@ def test_the_ladder_rate_fits_are_opt_in(tmp_path, monkeypatch):
     assert names == sorted([
         "fragment_uptake.csv", "closure.csv",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
-        "closure_S_11-18_z3_c+z.png", "analysis_settings_used.toml"])
+        "closure_S_11-18_z3_c+z.png", "analysis_settings_used.toml",
+        *(f"fragments_S_11-18_z3_{c}_{ion}_z1.png" for c in ("gentle", "harsh")
+          for ion in ("c", "z"))])
 
 
 def test_an_ion_on_a_fragments_bins_flags_it():

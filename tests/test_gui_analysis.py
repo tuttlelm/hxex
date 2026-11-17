@@ -270,9 +270,9 @@ def test_the_analysis_list_puts_the_fragment_figures_apart():
                                      "Peptides (MS1): compared with the reference S",
                                      "Fragment ions (MS2/MS3)"]
     names = [[p.kind.name for p in h[2]] for h in heads]
-    assert names[2] == ["ladder", "closure", "residue_rates"]
+    assert names[2] == ["fragment_traces", "ladder", "closure", "residue_rates"]
     assert "coverage" in names[0] and "woods" in names[1]
-    assert not {"ladder", "closure"} & set(names[0] + names[1])
+    assert not {"ladder", "fragment_traces", "closure"} & set(names[0] + names[1])
     assert analysis_sections(kinds, False, "S", "S")[2][2] == []
 
 

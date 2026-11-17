@@ -49,7 +49,12 @@ from .figures import (
     series_kinds,
     write_figures,
 )
-from .fragments import closure_figure, ladder_kinetics_figure, residue_rates_figure
+from .fragments import (
+    closure_figure,
+    fragment_traces_figure,
+    ladder_kinetics_figure,
+    residue_rates_figure,
+)
 from .notebook import load_results, show_series
 from .overview import (
     controls_overview_data,
@@ -101,6 +106,7 @@ from .tiers import TIER_COLOURS, plot_population_tiers
 
 __all__ = [
     "closure_figure",
+    "fragment_traces_figure",
     "protection_difference_figure",
     "protection_figure",
     "ladder_kinetics_figure",

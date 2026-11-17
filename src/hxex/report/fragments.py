@@ -63,6 +63,12 @@ _SPLIT_COLOURS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple"
 _SPLIT_MARKERS = ["o", "s", "^", "D", "v", "P", "X"]
 
 
+def _span(start: int, parent: str) -> str:
+    """The parent's residue range, ``11-18``, as the figures' file names give it: every figure
+    names the parent it shows (owner, 2026-11-17)."""
+    return f"{start}-{start + len(chem.parse_sequence(parent)) - 1}"
+
+
 def _title_residues(residues: Sequence[str], first: int, last: int, side: str) -> str:
     """The parent's sequence up to (N-terminal ions) or from (C-terminal ions) the residues
     ``first``..``last`` (1-based), which are bracketed."""
@@ -132,7 +138,8 @@ def ladder_kinetics_figure(
     if steps_shown is not None:
         steps = steps[steps_shown[0]:steps_shown[1]]
     activation = ", ".join(sorted(set(table.activation[series].tolist()))) or ion_type
-    head = f"{shown} (Z{pz})  {activation} {ion_type}_z{charge}"
+    named = f"{shown} {_span(int(table.parent_start[0]), parent)} (Z{pz})"
+    head = f"{named}  {activation} {ion_type}_z{charge}"
     pre_z = charge if precursor_charge is None else precursor_charge
 
     fig = Figure(figsize=(2 * panel[0], panel[1] * (len(steps) + 1)), layout="constrained")
@@ -146,7 +153,7 @@ def ladder_kinetics_figure(
 
     # the precursor ions
     left, right = axes[0]
-    left.set_title(f"{shown} (Z{pz})  {activation} M_z{pre_z}" + (f"  ({note})" if note else ""),
+    left.set_title(f"{named}  {activation} M_z{pre_z}" + (f"  ({note})" if note else ""),
                    fontsize=9)
     for j, cond in enumerate(conditions):
         colours = _PAIR_COLOURS[j % len(_PAIR_COLOURS)]
@@ -298,6 +305,230 @@ def _legend(ax) -> None:
         ax.legend(fontsize=6, loc="upper right", frameon=True, markerscale=1.2)
 
 
+# --- every fragment of a ladder on one panel ---------------------------------------------------
+
+TRACES_PANEL = (5.6, 3.4)  # inches: the panel and its legend
+_FEW_POINTS = 30  # a trace with this many points or fewer is drawn with markers too
+_TRACE_COLOURS = "viridis_r"  # shortest fragment light, longest dark
+SERIES_GID = "series:"  # a legend name's gid: the fragment's series (``series:<data_id>``)
+
+
+def _trace_panel(ax, table: FragmentUptake, shown: str, pair: tuple[str, str], name: str,
+                 ion_type: str, charge: int, *, left_out: np.ndarray | None = None,
+                 highlight: str | None = None) -> int:
+    """Every ``ion_type`` fragment at ``charge`` of the series ``pair`` (run, condition) of
+    ``table`` (one parent, after time 0) on ``ax``; ``shown`` is the sample's display name,
+    ``name`` the series'.
+    ``left_out`` (why each row of ``table`` is left out, '' for kept) draws those rows as a
+    faded dashed line without a band (owner, 2026-11-17: as the grey outlines of left-out
+    points elsewhere); ``highlight`` (a fragment, ``c-1:4``) is drawn thicker. Each legend
+    name's gid is ``series:<data_id>`` (the window selects that series on a click). The number
+    of fragments drawn."""
+    from matplotlib import colormaps
+
+    from . import hover
+
+    rows = (table.where(ion_type=ion_type, charge=charge, condition=pair[1])
+            & (np.asarray(table.run) == pair[0]))
+    left = (np.zeros(len(table), dtype=bool) if left_out is None
+            else np.asarray(left_out).astype(str) != "")
+    lengths = sorted(set(table.length[rows].tolist()))
+    if not lengths:
+        return 0
+    cmap = colormaps[_TRACE_COLOURS]
+    colours = (cmap(np.linspace(0.15, 1.0, len(lengths))) if len(lengths) > 1
+               else [cmap(0.6)])
+    kept, gone = table.select(~left), table.select(left)
+    reasons = np.asarray(left_out, dtype=object)[left] if left_out is not None else None
+    ids = []
+    for length, colour in zip(lengths, colours, strict=True):
+        fragment = f"{ion_type}:{length}"
+        mine = rows & (table.fragment == fragment)
+        ids.append(int(table.data_id[mine][0]))
+        label = f"{ion_type}_{length}_z{charge}"
+        wide = 2.8 if fragment == highlight else 1.4
+        base = {"sample": shown, "condition": name, "parent": str(table.parent[0]),
+                "parent_charge": int(table.parent_charge[0]), "fragment": fragment,
+                "ion_type": ion_type, "length": int(length), "charge": int(charge)}
+        tr = fragment_trace(kept, fragment, run=pair[0], condition=pair[1], charge=charge)
+        if len(tr):
+            known = np.isfinite(tr.mean_se)
+            if known.any():
+                ax.fill_between(tr.time, tr.mean - tr.mean_se, tr.mean + tr.mean_se,
+                                where=known, color=colour, alpha=0.2, lw=0)
+            (line,) = ax.plot(tr.time, tr.mean, color=colour, lw=wide, label=label,
+                              marker="o" if len(tr) <= _FEW_POINTS else None, ms=3)
+            hover.set_rows(line, [{**base, "time": float(t), "mean": float(m),
+                                   "mean_se": float(e), "left_out": ""}
+                                  for t, m, e in zip(tr.time, tr.mean, tr.mean_se, strict=True)])
+        off = fragment_trace(gone, fragment, run=pair[0], condition=pair[1], charge=charge)
+        if len(off):
+            why = reasons[np.flatnonzero((gone.fragment == fragment) & (gone.charge == charge)
+                                         & (gone.condition == pair[1]))]
+            (dashed,) = ax.plot(off.time, off.mean, color=colour, lw=max(1.0, wide - 0.4),
+                                ls="--", alpha=0.45, label=None if len(tr) else label,
+                                marker="o" if len(off) <= _FEW_POINTS else None, ms=3,
+                                mfc="none")
+            hover.set_rows(dashed, [{**base, "time": float(t), "mean": float(m),
+                                     "mean_se": float("nan"),
+                                     "left_out": ", ".join(sorted(set(map(str, why))))}
+                                    for t, m in zip(off.time, off.mean, strict=True)])
+    legend = ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=7,
+                       frameon=False, ncol=2 if len(lengths) > 16 else 1, borderaxespad=0)
+    for text, data_id, length in zip(legend.get_texts(), ids, lengths, strict=True):
+        text.set_gid(f"{SERIES_GID}{data_id}")
+        hover.set_hover(text, f"{ion_type}_{length}_z{charge}: click to show this fragment's "
+                        "series")
+        if f"{ion_type}:{length}" == highlight:
+            text.set_fontweight("bold")
+    ax.grid(True, which="major", alpha=0.4)
+    ax.set_xlabel("Time, sec")
+    ax.set_ylabel("D-content")
+    return len(lengths)
+
+
+def _pick_series(table, labels, condition, series_run):
+    """The one series ``(run, condition)`` of ``table`` that ``condition`` and ``series_run``
+    choose, and its display name."""
+    pairs, names = _series(table, None, labels)
+    if condition is not None:
+        pairs = [p for p in pairs if p[1] == str(condition)]
+    if series_run is not None:
+        pairs = [p for p in pairs if p[0] == str(series_run)]
+    if len(pairs) != 1:
+        what = ", ".join(names[p] for p in pairs) or "none"
+        raise ValueError(f"choose one condition of the parent ({what})")
+    return pairs[0], names[pairs[0]]
+
+
+def _traces_title(shown, table, pz, name, ion_type, charge) -> str:
+    activation = ", ".join(sorted(set(table.activation[table.where(
+        ion_type=ion_type, charge=charge)].tolist()))) or ion_type
+    said = name if activation in name else f"{name}  {activation}"
+    named = f"{shown} {_span(int(table.parent_start[0]), str(table.parent[0]))} (Z{pz})"
+    return f"{named}  {said} {ion_type}_z{charge}"
+
+
+def fragment_traces_figure(
+    uptake: FragmentUptake,
+    ion_type: str,
+    *,
+    charge: int = 1,
+    condition: str | None = None,
+    series_run: str | None = None,
+    sample: str | None = None,
+    parent: str | None = None,
+    parent_charge: int | None = None,
+    run: str | None = None,
+    labels: Mapping[str, str] | None = None,
+    scale: str = "log",
+    panel: tuple[float, float] = TRACES_PANEL,
+) -> Figure:
+    """Every fragment of one ion series on one panel: deuterium against time, a line per
+    fragment (light to dark from the shortest to the longest) with a pale +-1 se band, for one
+    condition (gentle or harsh, say) of one parent at one precursor charge (owner, 2026-11-17,
+    from their own figure of the gentle and harsh scrambling standards). Replicates at one time
+    are averaged as in the ladder figure; the undeuterated control (time 0) is not drawn.
+
+    ``sample``, ``parent``, ``parent_charge`` and ``run`` (the state's run) choose the parent as
+    in :func:`ladder_kinetics_figure`; ``condition`` (and ``series_run``, the run of the series
+    in a merged sample) the series, each needed only when the parent has several. ``labels``
+    names the condition (``{'gentle': 'G'}``). ``scale``: the time axis, ``'log'`` or
+    ``'linear'`` (``hxex analyse`` draws a kinetics run's on a linear axis: every scan has its
+    own time). Each line carries its points as rows of the window's data table."""
+    if scale not in ("linear", "log"):
+        raise ValueError("scale must be 'linear' or 'log'")
+    pick, state, sample, parent, pz = _one(uptake, sample, parent, parent_charge, run)
+    table = uptake.select(pick & (uptake.time > 0))
+    if not len(table):
+        raise ValueError("no fragment spectra after time 0")
+    shown = display_labels(uptake.state_run, uptake.sample)[(state, sample)]
+    pair, name = _pick_series(table, labels, condition, series_run)
+    fig = Figure(figsize=panel, layout="constrained")
+    ax = fig.add_subplot()
+    if not _trace_panel(ax, table, shown, pair, name, ion_type, charge):
+        raise ValueError(f"no {ion_type} fragments at charge {charge} in {name}")
+    ax.set_xscale(scale)
+    ax.set_title(_traces_title(shown, table, pz, name, ion_type, charge), fontsize=9)
+    return fig
+
+
+def fragment_traces_page(
+    uptake: FragmentUptake,
+    *,
+    left_out: np.ndarray | None = None,
+    highlight: str | None = None,
+    sample: str | None = None,
+    parent: str | None = None,
+    parent_charge: int | None = None,
+    run: str | None = None,
+    labels: Mapping[str, str] | None = None,
+    scale: str = "log",
+    panel: tuple[float, float] = TRACES_PANEL,
+) -> Figure:
+    """Every fragment of one parent at one precursor charge, on panels of
+    :func:`fragment_traces_figure`: a row per ion type and fragment charge, a column per
+    condition (the window's first look at which fragments a ladder should use; owner,
+    2026-11-17). ``left_out`` (why each row of ``uptake`` is left out, '' for kept;
+    :func:`hxex.analysis.fragment_uptake_with_left_out`) draws those rows as faded dashed
+    lines; ``highlight`` (a fragment, ``c-1:4``) is drawn thicker, its legend name bold."""
+    from ..analysis.fragments import fragment_ion_types
+
+    if scale not in ("linear", "log"):
+        raise ValueError("scale must be 'linear' or 'log'")
+    pick, state, sample, parent, pz = _one(uptake, sample, parent, parent_charge, run)
+    later = pick & (uptake.time > 0)
+    table = uptake.select(later)
+    if not len(table):
+        raise ValueError("no fragment spectra after time 0")
+    left = None if left_out is None else np.asarray(left_out, dtype=object)[later]
+    shown = display_labels(uptake.state_run, uptake.sample)[(state, sample)]
+    pairs, names = _series(table, None, labels)
+    series = [(ion, int(z)) for ion in fragment_ion_types(table)
+              for z in sorted(set(table.charge[table.ion_type == ion].tolist()))]
+    if not series:
+        raise ValueError("no fragment ions of the parent after time 0")
+    fig = Figure(figsize=(panel[0] * len(pairs), panel[1] * len(series)), layout="constrained")
+    axes = fig.subplots(len(series), len(pairs), squeeze=False)
+    for (ion, z), row in zip(series, axes, strict=True):
+        for pair, ax in zip(pairs, row, strict=True):
+            if _trace_panel(ax, table, shown, pair, names[pair], ion, z, left_out=left,
+                            highlight=highlight):
+                ax.set_xscale(scale)
+                ax.set_title(_traces_title(shown, table, pz, names[pair], ion, z), fontsize=9)
+            else:
+                ax.set_axis_off()
+                ax.text(0.5, 0.5, f"no {ion}_z{z} fragments in {names[pair]}", ha="center",
+                        va="center", transform=ax.transAxes, color="0.4")
+    return fig
+
+
+def _kinetics_rows(results, uptake: FragmentUptake) -> np.ndarray:
+    """Whether each row of ``uptake`` came from a kinetics run (every scan its own time:
+    :func:`hxex.io.mzml.kinetics_spectra`)."""
+    from ..analysis.runs import RunSet
+    from ..io.mzml import kinetics_spectra
+
+    runs = results.runs if isinstance(results, RunSet) else {"": results}
+    out = np.zeros(len(uptake), dtype=bool)
+    for name, run_results in runs.items():
+        rows = (np.asarray(uptake.run) == name) if isinstance(results, RunSet) else (
+            np.ones(len(uptake), dtype=bool))
+        if not rows.any():
+            continue
+        settings = getattr(run_results, "settings", None)
+        source = getattr(settings, "spectra_source", None)
+        out[rows] = kinetics_spectra(source, [str(s) for s in uptake.spectrum_id[rows]])
+    return out
+
+
+def _file_part(text: str) -> str:
+    """``text`` as part of a file name."""
+    import re
+
+    return re.sub(r"[^\w.+-]+", "_", str(text)).strip("_") or "condition"
+
+
 # --- closure and per-residue rates -------------------------------------------------------------
 
 _ION_MARKERS = {"c": "v", "z": "^", "a": "s", "x": "D", "b": "<", "y": ">"}
@@ -412,7 +643,8 @@ def closure_figure(
                     f"{n_ion}_{k} + {c_ion}_{n - k}", 0.8, **style)
             _points(ax, Trace(tr.time[early], tr.mean[early], tr.mean_se[early]), colour,
                     None, 0.25, **style)
-        ax.set_title(f"{shown} (Z{pz})  {names[cond]}", fontsize=9)
+        ax.set_title(f"{shown} {_span(int(table.parent_start[0]), parent)} (Z{pz})  "
+                     f"{names[cond]}", fontsize=9)
         ax.set_xlabel("Time, sec")
         ax.grid(True, which="major", alpha=0.4)
     handles, names = axes[0].get_legend_handles_labels()
@@ -526,7 +758,8 @@ def residue_rates_figure(
     last.set_xlim(start - 0.6, start + len(residues) - 0.4)
     for ax in (top, bottom):
         ax.grid(True, axis="y", alpha=0.4)
-    top.set_title(f"{shown} {parent} (Z{'/'.join(map(str, charges))})  single-residue rates"
+    top.set_title(f"{shown} {_span(start, parent)} {parent} (Z{'/'.join(map(str, charges))})  "
+                  "single-residue rates"
                   + ("  (open: not resolved)" if not rates.resolved[pick].all() else ""),
                   fontsize=9)
     if top.get_legend_handles_labels()[0]:
@@ -550,7 +783,9 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     """The fragment part of an analysis (:class:`hxex.analysis.FragmentAnalysis` ``config``):
     tables (name -> columns) and figures (file stem -> function drawing it), or empty ones when
     the run has no fragment series. Per parent (``<sample>_<range>_z<charge>``):
-    ``ladder_..._<ion>_z<charge>``, ``closure_..._<n ion>+<c ion>`` and ``residue_rates_...``;
+    ``ladder_..._<ion>_z<charge>``, ``fragments_..._<condition>_<ion>_z<charge>`` (every
+    fragment of the series on one panel), ``closure_..._<n ion>+<c ion>`` and
+    ``residue_rates_...``;
     tables ``fragment_uptake``, ``ladder_rates``, ``ladder_residues`` and ``closure``. A parent
     read at several precursor charges has one ``residue_rates_<sample>_<range>`` (no charge)
     for all of them. The rate fits are opt-in (``config.fit_rates``): without them there are
@@ -628,6 +863,7 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     from ..analysis.runs import sample_setting
 
     jobs = []
+    kinetics = _kinetics_rows(results, uptake)  # linear time for their traces
     state_run = uptake.state_run
     shown = display_labels(state_run, uptake.sample)
     first = _parent_starts(uptake)
@@ -646,6 +882,20 @@ def fragment_outputs(results, config, *, quiet: bool = False,
         for ion in ions:
             for z in config.charges:
                 if (rows & uptake.where(ion_type=ion, charge=z) & (uptake.time > 0)).any():
+                    # every fragment of the series on one panel, one figure per condition
+                    # (the first look, before the ladder)
+                    have = rows & uptake.where(ion_type=ion, charge=z) & (uptake.time > 0)
+                    for r, c in sorted({(str(a), str(b)) for a, b in zip(
+                            uptake.run[have], uptake.condition[have], strict=True)}):
+                        these = have & (uptake.run == r) & (uptake.condition == c)
+                        scale = "linear" if kinetics[these].all() else "log"
+                        tag = _file_part(c if state or not r else f"{r}_{c}")
+                        jobs.append((
+                            f"fragments_{stem}_{tag}_{ion}_z{z}",
+                            lambda ion=ion, z=z, sel=sel, r=r, c=c, scale=scale:
+                            fragment_traces_figure(uptake, ion, charge=z, condition=c,
+                                                   series_run=r, labels=config.labels,
+                                                   scale=scale, **sel)))
                     pages = ladder_pages(uptake, ion, charge=z, page_height=(
                         None if page_size is None else page_size[1]), **sel)
                     for n, shown_steps in enumerate(pages):

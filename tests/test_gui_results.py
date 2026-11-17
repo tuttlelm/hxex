@@ -579,6 +579,42 @@ def test_the_fragment_columns_and_filters_show_only_for_fragment_runs(page):
     assert not page.tree.isColumnHidden(COLUMN["spectra"])
 
 
+def test_a_fragment_series_has_its_parents_fragments_tab(qtbot, page, monkeypatch):
+    """Results with fragment ions get a fragments tab at every level (owner, 2026-11-17): every
+    fragment of the selection's parent, the one selected thicker; a click on a fragment's name
+    selects its series. Results without fragments have no such tab (above). The fragment table
+    is a synthetic one whose series ids are this run's."""
+    import numpy as np
+
+    from hxex.gui.results_workspace import PAYLOAD
+    from hxex.report.fragments import SERIES_GID
+    from test_fragment_kinetics import synthetic
+
+    u = synthetic(labels=("M:8", "c:1", "c:2", "c:4"))
+    u = u.select(np.isin(u.data_id, [0, 1, 2, 3]))
+    why = np.full(len(u), "", dtype=object)
+    monkeypatch.setattr(type(page), "_with_fragments", lambda self: True)
+    monkeypatch.setattr(type(page), "_fragment_table",
+                        lambda self, results: (u, why, np.zeros(len(u), dtype=bool)))
+    page._show_tabs("start")  # the tabs again, now with fragments
+    second = page.tree.topLevelItem(0).child(1)  # data_id 1: c:1 in the table
+    page.tree.setCurrentItem(second)
+    tabs = [page.figures.tabText(i) for i in range(page.figures.count())]
+    assert "fragments" in tabs
+    panel = page.panel("fragments")
+    with qtbot.waitSignal(panel.drawn, timeout=30000):
+        page.figures.setCurrentWidget(panel)  # drawn when opened
+    (ax,) = panel.view.figure.axes
+    texts = ax.get_legend().get_texts()
+    assert [t.get_text() for t in texts] == ["c_1_z1", "c_2_z1", "c_4_z1"]
+    assert [t.get_text() for t in texts if t.get_fontweight() == "bold"] == ["c_1_z1"]
+    assert texts[0].get_gid() == f"{SERIES_GID}1"
+    panel.clicked.emit(f"{SERIES_GID}0")  # a name of series 0: the tree moves there
+    assert page.tree.currentItem().data(0, PAYLOAD)[1].data_id == 0
+    panel.clicked.emit(f"{SERIES_GID}99")  # not in the tree: nothing moves
+    assert page.tree.currentItem().data(0, PAYLOAD)[1].data_id == 0
+
+
 def _pooled(results, tmp_path, fasta: str, classes: list[str]):
     """``results`` as if read from pooled data with ``fasta`` as [input] pooled_fasta."""
     import dataclasses

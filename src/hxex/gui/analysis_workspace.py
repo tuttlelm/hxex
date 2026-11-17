@@ -1020,7 +1020,8 @@ def analysis_sections(kinds, fragments: bool | None, shown_reference: str | None
          "reference chosen above",
          [p for p in peptides if p.kind.compares]),
         ("Fragment ions (MS2/MS3)",
-         "figures of the fragment ions read in the MS2 and MS3 scans: the ladders, the closure "
+         "figures of the fragment ions read in the MS2 and MS3 scans: every fragment of a "
+         "series on one panel (the first look), the ladders, the closure "
          "(measured against the parent's MS1 spectrum where the run read it) and the residue "
          "rates; " + drawn_once,
          [p for p in kinds if p.kind.fragments] if fragments is not False else []),

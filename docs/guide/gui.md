@@ -286,6 +286,19 @@ It is kept apart from the spectrum's own figure so that the populations' fit sta
 A spectrum the profile fit did not read (a fragment, another ion type, its own envelope, or
 centroided data, which keep the pick) has no picking check, and the tab says so.
 
+Results with fragment ions (MS2 or MS3) have a **fragments** tab at every level: every
+fragment of the selection's parent at its precursor charge, deuterium against time, a panel
+per ion type and fragment charge (rows) and condition, gentle or harsh say (columns). Each
+fragment is a line, light (the shortest) to dark (the longest), with a pale band of plus and
+minus one standard error; the fragment you selected is drawn thicker and its name is bold. A
+spectrum you rejected, or one the analysis excludes, stays on the page as a faded dashed line
+without a band, so you can see what you took out. It is the first look at which fragments a
+ladder should use: click a fragment's name in a legend to go to its series (to review its
+spectra), and the page follows your decisions as you make them. A peptide read at MS1, or a
+parent's precursor ion, shows its own fragments. Time is on a linear axis for a kinetics run
+and on a log axis otherwise, as in the
+[analysis figure](fragment-residues.md).
+
 A replicate read from mzML or Thermo raw files also has an **elution** tab: its elution
 trace over retention time, to check that the scans summed sit on the peptide's own elution peak and not on a
 neighbour's. *hxex* opens the spectrum's file again and draws, per scan, the intensity at the

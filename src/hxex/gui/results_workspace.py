@@ -108,14 +108,16 @@ class ReviewTree(QTreeWidget):
 SERIES_TABLES = ("uptake.csv", "components.csv", "spectra.csv")  # a series' rows of these
 SERIES_PAGES = ("spectra", "uptake", "populations")  # a series' pages, as hxex report draws
 TABS = {"start": ("overview",),  # results open, nothing selected yet: the first look
-        "series": (*SERIES_PAGES, "data", "overview"),
-        "point": ("spectra", "fits at each K", "uptake", "data", "overview"),
-        "spectrum": ("spectrum", "picking check", "fits at each K", "elution", "uptake", "data",
-                     "overview")}
+        "series": (*SERIES_PAGES, "fragments", "data", "overview"),
+        "point": ("spectra", "fits at each K", "uptake", "fragments", "data", "overview"),
+        "spectrum": ("spectrum", "picking check", "fits at each K", "elution", "uptake",
+                     "fragments", "data", "overview")}
 # shown only for spectra read from scan files (mzML, Thermo raw): read again when in view
 TRACE_TABS = ("elution",)
 # shown only for results picked with the profile fit ([run.picker] pick = "profile_fit")
 PROFILE_TABS = ("picking check",)
+# shown only for results with fragment ions (MS2/MS3 targets)
+FRAGMENT_TABS = ("fragments",)
 # the figure tabs' tooltips (owner, 2026-11-13): a series is a peptide at one charge in one
 # sample, with its time points, replicates, and controls; a spectrum is one replicate
 TAB_TIPS = {
@@ -134,6 +136,9 @@ TAB_TIPS = {
             "spectrum's values",
     "overview": "the whole results at a glance: populations chosen, controls, quality flags (it "
                 "doesn't follow the selection)",
+    "fragments": "every fragment of the selection's parent: deuterium against time, a panel per "
+                 "ion type and condition, the selected fragment thicker; left-out spectra "
+                 "faded and dashed. Click a fragment's name to show its series",
 }
 # the pages of the overview tab, as hxex report --figures writes them (overview_<kind>)
 OVERVIEW_PAGES = {"k_selection": "K selection", "controls": "controls",
@@ -431,6 +436,8 @@ class ResultsWorkspace(QWidget):
                 panel.add_option(self.time_axis)
             if name == "overview":
                 panel.add_option(self.overview_page)
+            if name == "fragments":  # a fragment's name: its series in the tree
+                panel.clicked.connect(self._fragment_clicked)
             if name == "spectra":
                 panel.add_option(self.spectra_page)
             if name == "populations":
@@ -471,7 +478,8 @@ class ResultsWorkspace(QWidget):
         while self.figures.count():
             self.figures.removeTab(0)
         names = tuple(n for n in TABS[kind] if (n not in TRACE_TABS or self._traceable())
-                      and (n not in PROFILE_TABS or self._profile_fitted()))
+                      and (n not in PROFILE_TABS or self._profile_fitted())
+                      and (n not in FRAGMENT_TABS or self._with_fragments()))
         for name in names:
             at = self.figures.addTab(self.table_view if name == "data" else self.panel(name), name)
             self.figures.setTabToolTip(at, tip(TAB_TIPS[name]))
@@ -603,6 +611,93 @@ class ResultsWorkspace(QWidget):
                 b.find(spectrum_id)])))
         except (KeyError, ValueError, TypeError):
             return False
+
+    def _with_fragments(self) -> bool:
+        """Whether the results shown read fragment ions (the fragments tab is offered)."""
+        settings = getattr(self.results, "settings", None)
+        return has_fragments(None if settings is None else settings.spectra_source)
+
+    def _fragment_table(self, results):
+        """The fragment uptake of ``results``, left-out rows included, and why each is left out
+        (:func:`hxex.analysis.fragment_uptake_with_left_out`) and whether each came from a
+        kinetics run: made once per results (a review decision makes new ones). Called in the
+        drawing thread only."""
+        from ..analysis import fragment_uptake_with_left_out
+        from ..report.fragments import _kinetics_rows
+
+        cached = getattr(self, "_fragments_of", None)
+        if cached is None or cached[0] is not results:
+            uptake, why = fragment_uptake_with_left_out(results)
+            cached = (results, uptake, why, _kinetics_rows(results, uptake))
+            self._fragments_of = cached
+        return cached[1:]
+
+    def _fragment_labels(self):
+        """The project's condition names (``[analysis.fragments.labels]``), or None."""
+        window = self.window
+        if window is None or window.project is None or not window.project_results:
+            return None
+        fragments = getattr(window.fresh_project_state().analysis, "fragments", None)
+        return getattr(fragments, "labels", None) or None
+
+    def _draw_fragments(self, payload) -> None:
+        """The fragments tab of the selection ``payload`` (its tree row's ``(peptide, series,
+        ...)``): every fragment of the series' parent at its precursor charge (a fragment's own
+        parent, or the peptide itself as a parent), the fragment selected thicker."""
+        if "fragments" not in self._tab_keys:
+            return
+        from ..report.fragments import fragment_traces_page
+
+        pep, series = payload[0], payload[1]
+        labels = self._fragment_labels()
+        results = self.results
+
+        def none(text: str):
+            from matplotlib.figure import Figure
+
+            fig = Figure(figsize=(6, 1.2))
+            fig.text(0.5, 0.5, text, ha="center", va="center", color="0.4")
+            return fig
+
+        def draw():
+            uptake, why, kinetics = self._fragment_table(results)
+            mine = uptake.data_id == series.data_id
+            if mine.any():  # a fragment (or the precursor's ion): its own parent
+                i = int(np.flatnonzero(mine)[0])
+                sample, parent = str(uptake.sample[i]), str(uptake.parent[i])
+                pz = int(uptake.parent_charge[i])
+                highlight = str(uptake.fragment[i]) if uptake.ion_type[i] != "M" else None
+            else:  # a peptide read at MS1: its fragments at this charge, else at any
+                sample, parent, highlight = pep.sample, pep.peptide, None
+                rows = uptake.where(sample=sample, parent=parent)
+                if not rows.any():
+                    return none(f"{pep.peptide_range} {pep.peptide} has no fragment ions here")
+                charges = sorted(set(uptake.parent_charge[rows].tolist()))
+                pz = series.charge if series.charge in charges else charges[0]
+            rows = uptake.where(sample=sample, parent=parent, parent_charge=pz) & (
+                uptake.time > 0)
+            if not rows.any():
+                return none(f"{parent} at {pz}+ has no fragment spectra after time 0")
+            scale = "linear" if kinetics[rows].all() else "log"
+            return fragment_traces_page(uptake, left_out=why, highlight=highlight,
+                                        sample=sample, parent=parent, parent_charge=pz,
+                                        labels=labels, scale=scale)
+
+        self._draw_panel("fragments", draw)
+
+    def _fragment_clicked(self, gid: str) -> None:
+        """A fragment's name clicked on the fragments tab: its series selected in the tree."""
+        from ..report.fragments import SERIES_GID
+
+        if not gid.startswith(SERIES_GID):
+            return
+        item = self._series_items.get(int(gid[len(SERIES_GID):]))
+        if item is None:
+            if self.window is not None:
+                self.window.statusBar().showMessage(
+                    "That fragment's series is not in the tree (its filters hide it).", 8000)
+            return
+        self.tree.setCurrentItem(item)
 
     def _traceable(self) -> bool:
         """Whether the results shown were read from scan files (an elution trace can be read)."""
@@ -1549,6 +1644,7 @@ class ResultsWorkspace(QWidget):
                         "no picking check: this spectrum kept the pick (a fragment, another "
                         "ion type, its own envelope, or centroided data)")
             self._draw_panel("uptake", uptake)
+        self._draw_fragments(payload)
         self._draw_overview()  # in view: kept, or drawn again for new results (a decision)
         self._selection, self._selection_whole = (kind, payload), whole
         if self._table_key() != self._table_for or self._table_results is not results:

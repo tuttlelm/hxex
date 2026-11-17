@@ -24,8 +24,9 @@ residue tiers, :func:`hxex.report.plot_population_tiers`), and with a reference
 ``woods_K2_<sample>_<time>`` (the K=2 comparisons), ``butterfly_<sample>`` and
 ``regions_<time>``. For a run with fragment series (:class:`hxex.analysis.FragmentAnalysis`;
 those series are left out of the above): ``fragment_uptake.csv``, ``closure.csv`` and per
-parent ``ladder_<sample>_<range>_z<charge>_<ion>_z<fragment charge>`` and
-``closure_..._<n ion>+<c ion>``; with ``fit_rates`` (opt-in) also ``ladder_rates.csv``,
+parent ``ladder_<sample>_<range>_z<charge>_<ion>_z<fragment charge>``,
+``fragments_..._<condition>_<ion>_z<fragment charge>`` and ``closure_..._<n ion>+<c ion>``;
+with ``fit_rates`` (opt-in) also ``ladder_rates.csv``,
 ``ladder_residues.csv``, ``residue_rates_...`` and the fits on the ladder figures. With
 ``protection`` (opt-in, :mod:`hxex.analysis.protection`): ``protection.csv``,
 ``protection_by_time.csv`` and the figures ``protection_<sample>``, and with a reference

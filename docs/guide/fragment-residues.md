@@ -10,7 +10,7 @@ also gets the residue's intrinsic rate and its protection factor with a standard
 
 **The rate fits are opt-in.** Fitting every step takes time: several minutes on a large run.
 Without `fit_rates = true`, `hxex analyse` still writes `fragment_uptake.csv`, `closure.csv`,
-the ladder figures, and the closure figures, but the ladder figures show the measured points
+the ladder figures, the fragment traces, and the closure figures, but the ladder figures show the measured points
 and differences without fitted curves, and there is no `ladder_rates.csv`,
 `ladder_residues.csv`, or residue-rates figure. Turn the fits on when you want the rates:
 
@@ -32,6 +32,18 @@ A ladder too long for
 `[analysis] page_size` (16 by 12 inches: the precursor and three steps) goes on over further
 pages, `..._z1_2`, `..._z1_3`, each with the precursor row again at its top and its page
 number in that row's title. A taller page (`page_size = [16, 30]`) holds more steps a page.
+
+**Every fragment on one panel.** `fragments_<parent>_<condition>_<ion>_z<charge>` draws
+all the fragments of one ion series (c-1 at charge 1, say) in one condition (gentle or harsh,
+say) of one parent and precursor charge: their deuterium against time, one line per fragment,
+from light (the shortest) to dark (the longest), each with a pale band of plus and minus one
+standard error when its points have one. It shows at a glance how the ladder's fragments
+compare, which the ladder figure spreads over its rows. Time is on a linear axis for a
+kinetics run (every scan its own time) and on a log axis otherwise; the undeuterated control
+is not drawn. Each condition has a figure of its own; it needs no rate fits. The window's
+**Results** tab shows the same panels for the parent of whatever you select, with the spectra
+you rejected as faded dashed lines ([the window](gui.md)): look there first to decide which
+fragments the ladder should use.
 
 **How a step is fitted.** Each point of a step counts by how well it is measured: a point
 from a dim spectrum, with a large error, moves the curve less than one from a bright spectrum.
