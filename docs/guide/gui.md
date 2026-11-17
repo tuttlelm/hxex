@@ -285,6 +285,19 @@ when you open them (a selection no longer draws every tab, so moving through a l
 quicker). On a spectra page, and on the fits at each K, click a spectrum's panel to select
 that spectrum in the tree (the **?** by the buttons says so).
 
+Each panel of the fits at each K says above its fit why that K was or was not chosen:
+`selected by the population test` or `selected (lowest ΔBIC)` on the chosen one; a smallest
+population below the fit's minimum (`[run.fit] min_population`) or the test's
+(`[run.population_test] min_population`), such as `population 8 % < test minimum 10 %`; and,
+with the [population test](population-test.md), its step from one K fewer, such as
+`population test p-value 1.5e-21 < 0.01 not selected`: the step is selected when its p-value is
+below `significance` and its smallest population passes the test's minimum (the line above
+then names the minimum it failed). The p-value is the chance that the spectrum would gain this
+much fit from a population it does not have; values far below 0.01 only mean far beyond what
+noise alone produced (see [How it decides](population-test.md#how-it-decides)). A K
+the fit's minimum rules out keeps its ΔBIC, marked `(ruled out)`, so you can see what the
+criterion alone would have chosen.
+
 Results picked with the profile fit (`[run.picker] pick = "profile_fit"`) also have a
 **picking check** tab on a replicate: the raw profile, the peptide's fitted peaks (dark), the
 peaks the fit gave to other species (orange, dashed), and the bin values (triangles), with the

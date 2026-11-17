@@ -976,6 +976,7 @@ def test_tables_of_a_few_rows_are_those_rows_of_the_whole_tables(results, monkey
 
 def test_k_comparison(results):
     from hxex.report import k_comparison_data, plot_k_comparison
+    from hxex.report.overview import k_comparison_notes
 
     sid = str(results.fit.spectrum_id[8])
     d = k_comparison_data(sid, results)
@@ -986,7 +987,13 @@ def test_k_comparison(results):
     fig = plot_k_comparison(sid, results)
     assert len(fig.axes) == 2 and "component:2" in gids(fig)
     sel = fig.axes[d["k_values"].index(d["selected"])].get_title()
-    assert "selected" in sel and "ΔBIC +0.0" in sel
+    assert "selected (lowest ΔBIC)" in sel and "ΔBIC +0.0" in sel
+    assert d["test"] is None and sel.splitlines()[-1].startswith("K=")
+    # a K the fit's minimum rules out says so, and keeps its criterion difference
+    ruled = {**d, "passes": np.array([True, False]),
+             "smallest": np.array([1.0, 0.03])}
+    assert k_comparison_notes(ruled, 2) == ["population 3 % < fit minimum 5 %"]
+    assert k_comparison_notes(ruled, 1) == []
     assert len(plot_k_comparison(sid, results, ks=[2]).axes) == 1
     with pytest.raises(ValueError, match="not fitted"):
         plot_k_comparison(sid, results, ks=[4])

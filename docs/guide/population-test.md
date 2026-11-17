@@ -19,7 +19,9 @@ hundred times.
    allow*. *hxex* finds out by simulation: it makes 20 copies of the spectrum from its
    one-population fit, each with new noise of the size the fit found, and fits each copy with
    one and two populations again. How much two populations improve the fit of these copies,
-   which have only one, is the yardstick for the real spectrum.
+   which have only one, is the yardstick for the real spectrum. The spectrum's own number of
+   populations follows the same two limits as the peptide's below (the chance, and the share
+   of the second population); the [fits at each K](gui.md) in the window say which one decided.
 2. **Each peptide at each time.** All the spectra of a peptide at one time in one sample, its
    replicates and charge states, are tested together: their improvements and their yardsticks
    are added up. A peptide has two populations at that time when the chance of seeing its

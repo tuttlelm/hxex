@@ -976,3 +976,35 @@ def test_sets_above_decide_up_to_are_flagged_and_keep_their_decided_k(tmp_path):
     assert (up.set_test_K[rows] == 3).all() and not up.more_populations_possible.any()
     table = spectra_table(r)
     assert "more_populations_possible" in table
+
+
+def test_the_fits_at_each_k_say_what_the_test_decided(tested_run):
+    from hxex.report import Results
+    from hxex.report.overview import k_comparison_data, k_comparison_notes, plot_k_comparison
+    from test_run import raw_spectra
+
+    results = Results.from_run(tested_run, spectra=raw_spectra(n_series=2))
+    i = 0
+    sid = str(results.fit.spectrum_id[i])
+
+    def notes(p, added, kind="simulated"):
+        test = results.population_test
+        ps, ad, kd = test.p.copy(), test.added_population.copy(), test.null_kind.copy()
+        ps[i, 0], ad[i, 0], kd[i, 0] = p, added, kind
+        changed = dataclasses.replace(results, population_test=dataclasses.replace(
+            test, p=ps, added_population=ad, null_kind=kd))
+        d = k_comparison_data(sid, changed)
+        d = {**d, "passes": np.ones(len(d["k_values"]), dtype=bool)}  # the fit's rule apart
+        return k_comparison_notes(d, 2)
+
+    # the case that hid its reason: significant, but the share below the test's minimum
+    assert notes(1e-21, 0.08) == ["population 8 % < test minimum 10 %",
+                                  "population test p-value 1.0e-21 < 0.01 not selected"]
+    assert notes(1e-21, 0.3) == ["population test p-value 1.0e-21 < 0.01 selected"]
+    assert notes(0.2, 0.3) == ["population test p-value 0.2 ≥ 0.01 not selected"]
+    assert notes(np.nan, np.nan, kind="") == ["population test: not tested"]
+    d = k_comparison_data(sid, results)
+    assert d["test"]["by"] and set(d["test"]["steps"]) == {2}
+    title = plot_k_comparison(sid, results).axes[d["k_values"].index(d["selected"])].get_title()
+    assert title.startswith("selected by the population test")
+    assert title.splitlines()[-1].startswith(f"K={d['selected']}")

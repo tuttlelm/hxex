@@ -10607,3 +10607,24 @@ CSVs or mzML if wanted.
     take `scale = "index"`: the page's time points evenly spaced and named, every panel alike
     (a trace's averaged time is placed at the nearest time point); the data rows keep the
     times. Available for kinetics runs too (owner: harmless, simpler).
+
+404. **The fits at each K say why a K was chosen (owner, 2026-11-17: "transparency is the
+    first need ... no indication on the plot about the minimum population requirement").** A
+    spectrum of the intact-peptide benchmark (30 min, a 20-residue peptide at 3+) showed
+    `selected` on K = 1 with ΔBIC +103 and its K = 2 fit at ΔBIC 0 with no reason given: the
+    population test (p 1.5e-21) refused the second population because its 8 % share is below
+    `[run.population_test] min_population` (0.10), while `[run.fit] min_population` (0.05)
+    let BIC prefer it. Each panel of `plot_k_comparison`/`plot_k_comparisons` now carries,
+    above its K line (which stays at one height in every panel): `selected by the population
+    test` or `selected (lowest ΔBIC)`; a smallest population below the fit's or the test's
+    minimum, one line naming both when the share is the same (`population 2 % < fit minimum
+    5 %, test minimum 10 %`); and, with the test, its step to that K in the owner's wording:
+    `population test p-value 1.5e-21 < 0.01 not selected` (`selected` when the p-value and the
+    share both pass at a step that is reached; `not selected (K=2 not selected)` when the step
+    below failed; `flag only (above decide_up_to)` for a passing step the test does not decide; `population test: screened` / `not tested`). A K the fit's minimum
+    rules out shows its criterion difference marked `(ruled out)` instead of `rejected`.
+    `k_comparison_data` gains `criterion_delta`, `smallest`, `fit_min` and `test` (the steps);
+    `k_comparison_notes` gives the lines. The two minimums themselves are unchanged (whether
+    the test's limit should come from the data, a detection limit, is PLAN Next steps 17).
+    Guide gui.md (Results), population-test.md (step 1). Tests: `test_k_comparison`,
+    `test_the_fits_at_each_k_say_what_the_test_decided`.

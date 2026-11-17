@@ -84,23 +84,108 @@ QUALITY_LABELS = {
 def k_comparison_data(spectrum_id: str, results: Results) -> dict:
     """The fit of one spectrum at every K tried: ``k_values``, ``nll``, ``bic``, ``aic``, the
     selection ``score`` (the configured criterion, inf where the minimum-population rule rejected
-    that K), ``delta`` (score minus the best score), ``passes`` (minimum population),
-    ``criterion``, ``selected`` and ``effective`` (the reviewer's K, else the selected one)."""
+    that K), ``delta`` (score minus the best score), ``criterion_delta`` (the criterion minus the
+    best score, also where the rule rejected the K), ``passes`` (minimum population),
+    ``smallest`` (each K's smallest population), ``fit_min`` (``[run.fit] min_population``),
+    ``criterion``, ``selected`` and ``effective`` (the reviewer's K, else the selected one), and
+    ``test``: None without the population test, else ``by`` (True: the test chose
+    ``selected``), ``significance``, ``min_population`` and, per K above one, ``steps[K]``: the
+    step from K - 1 (``p``, ``added`` (the smallest population of the K fit), ``kind`` (how its
+    null was made), ``decides`` (False above ``decide_up_to``), ``adds`` (its p and share pass)
+    and ``reached`` (every step below it adds a population))."""
     i = results.find(spectrum_id)
     fit = results.fit
     ks = tuple(fit.k_values)
     score = np.asarray(fit.score[i], dtype=float)
     finite = score[np.isfinite(score)]
+    best = finite.min() if len(finite) else np.nan
+    values = np.array([getattr(fit.fits[k], fit.config.criterion)[i] for k in ks], dtype=float)
     return {
         "spectrum_id": spectrum_id, "index": i, "k_values": ks,
         "nll": np.array([fit.fits[k].nll[i] for k in ks]),
         "bic": np.array([fit.fits[k].bic[i] for k in ks]),
         "aic": np.array([fit.fits[k].aic[i] for k in ks]),
-        "score": score, "delta": score - (finite.min() if len(finite) else np.nan),
+        "score": score, "delta": score - best, "criterion_delta": values - best,
         "passes": np.array([bool(fit.fits[k].passes_min_pop[i]) for k in ks]),
+        "smallest": np.array([float(np.min(fit.fits[k].populations[i])) for k in ks]),
+        "fit_min": float(fit.config.min_population),
         "criterion": fit.config.criterion, "selected": int(fit.selected_K[i]),
         "effective": int(results.effective_K[i]),
+        "test": _test_steps(results, i),
     }
+
+
+def _test_steps(results: Results, i: int) -> dict | None:
+    """The population test of fit row ``i`` step by step (:func:`k_comparison_data`)."""
+    from ..population_test import NOT_TESTED, decided_steps
+
+    test = results.population_test
+    if test is None:
+        return None
+    cfg = test.config
+    n_decided = decided_steps(cfg, test.steps)
+    steps, reached = {}, True
+    for s, k in enumerate(test.steps):
+        p = float(test.p[i, s])
+        added = float(test.added_population[i, s])
+        kind = str(test.null_kind[i, s])
+        adds = (kind not in NOT_TESTED and np.isfinite(p) and p < cfg.significance
+                and added >= cfg.min_population)
+        steps[k + 1] = {"p": p, "added": added, "kind": kind, "decides": s < n_decided,
+                        "adds": bool(adds), "reached": reached}
+        reached = reached and bool(adds)
+    return {"by": int(test.selected_K[i]) == int(results.fit.selected_K[i]),
+            "significance": float(cfg.significance),
+            "min_population": float(cfg.min_population), "steps": steps}
+
+
+def _share(x: float) -> str:
+    return f"{100 * x:.0f} %" if x >= 0.01 else f"{100 * x:.1f} %"
+
+
+def _p_text(p: float) -> str:
+    return f"{p:.2g}" if p >= 1e-3 else f"{p:.1e}"
+
+
+def k_comparison_notes(d: dict, k: int) -> list[str]:
+    """Why K = ``k`` was or was not chosen, in words, from :func:`k_comparison_data`: a smallest
+    population below the fit's or the population test's minimum, and the test's step from
+    ``k - 1`` to ``k``."""
+    from ..population_test import FLAT, SCREENED, UNTESTED
+
+    j = d["k_values"].index(k)
+    test = d["test"]
+    step = None if test is None else test["steps"].get(k)
+    tested = step is not None and step["kind"] not in (UNTESTED, FLAT, SCREENED)
+    below = []  # (share, the minimum it is below)
+    if not d["passes"][j]:
+        below.append((d["smallest"][j], f"fit minimum {_share(d['fit_min'])}"))
+    if tested and step["added"] < test["min_population"]:
+        below.append((step["added"], f"test minimum {_share(test['min_population'])}"))
+    notes = []
+    if below:
+        shares = {_share(x) for x, _ in below}
+        if len(shares) == 1:
+            notes.append(f"population {shares.pop()} < " + ", ".join(m for _, m in below))
+        else:
+            notes.extend(f"population {_share(x)} < {m}" for x, m in below)
+    if step is None:
+        return notes
+    if not tested:
+        notes.append("population test: screened" if step["kind"] == SCREENED
+                     else "population test: not tested")
+        return notes
+    sig = test["significance"]
+    if not step["reached"]:
+        outcome = f"not selected (K={k - 1} not selected)"
+    elif not step["decides"]:
+        outcome = ("flag only (above decide_up_to)" if step["adds"]
+                   else "not selected")
+    else:
+        outcome = "selected" if step["adds"] else "not selected"
+    notes.append(f"population test p-value {_p_text(step['p'])} "
+                 f"{'<' if step['p'] < sig else '≥'} {sig:g} {outcome}")
+    return notes
 
 
 LEGEND_BELOW = 1.6  # inches added to a K comparison's height for the legends under the panels
@@ -186,17 +271,22 @@ def plot_k_comparisons(
             _legend_below(ax, many)
             marks = []
             if k == d["selected"]:
-                marks.append("selected")
+                if d["test"] is not None and d["test"]["by"]:
+                    marks.append("selected by the population test")
+                else:
+                    marks.append(f"selected (lowest Δ{d['criterion'].upper()})")
             if k == d["effective"] and d["effective"] != d["selected"]:
                 marks.append("reviewer's choice")
-            if not d["passes"][j]:
-                marks.append("population below minimum")
-            delta = d["delta"][j]
             name = d["criterion"].upper()
-            score_text = "rejected" if not np.isfinite(delta) else f"Δ{name} {delta:+.1f}"
-            # the marks ("selected", ...) above the K line, so every panel's K line sits at the
-            # same height (a title grows upwards from its axes; owner)
-            ax.set_title(wrap_title((f"{', '.join(marks)}\n" if marks else "")
+            raw = d["criterion_delta"][j]
+            score_text = f"Δ{name} {raw:+.1f}" if np.isfinite(raw) else f"Δ{name} –"
+            if not np.isfinite(d["delta"][j]) and np.isfinite(raw):
+                score_text += " (ruled out)"
+            notes = k_comparison_notes(d, k)
+            # the marks ("selected", ...) and the reasons above the K line, so every panel's K
+            # line sits at the same height (a title grows upwards from its axes; owner)
+            ax.set_title(wrap_title("".join(f"{line}\n" for line in
+                                            ([", ".join(marks)] if marks else []) + notes)
                                     + f"{lead}K={k}   loss {d['nll'][j]:.4g}   {score_text}",
                                     room, 8), fontsize=8,
                          fontweight="bold" if k == d["effective"] else "normal")
