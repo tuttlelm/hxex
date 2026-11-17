@@ -10628,3 +10628,12 @@ CSVs or mzML if wanted.
     the test's limit should come from the data, a detection limit, is PLAN Next steps 17).
     Guide gui.md (Results), population-test.md (step 1). Tests: `test_k_comparison`,
     `test_the_fits_at_each_k_say_what_the_test_decided`.
+
+405. **A passing step below the chosen K says `passed` (owner, 2026-11-17: "K=2 also saying
+    selected is confusing").** With three populations chosen, the K = 2 panel of the fits at
+    each K read `... < 0.01 selected` beside the framed K = 3 (item 404). Only the K the test
+    chose now says `selected`; a step below it that passed says `passed`. `k_comparison_data`'s
+    `test` gains `k` (the test's K). Left for later (owner): the test's minimum from the data
+    (PLAN Next steps 17), including the case that started 404, where one replicate's 8 % share
+    with p 1.5e-21 stayed at one population while the other two replicates (13 %, 34 %) took
+    two. Guide gui.md. Test: `test_the_fits_at_each_k_say_what_the_test_decided`.

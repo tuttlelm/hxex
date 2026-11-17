@@ -991,8 +991,10 @@ def test_the_fits_at_each_k_say_what_the_test_decided(tested_run):
         test = results.population_test
         ps, ad, kd = test.p.copy(), test.added_population.copy(), test.null_kind.copy()
         ps[i, 0], ad[i, 0], kd[i, 0] = p, added, kind
+        ks = test.selected_K.copy()  # the test's K follows the forced step
+        ks[i] = 2 if p < 0.01 and added >= 0.1 else 1
         changed = dataclasses.replace(results, population_test=dataclasses.replace(
-            test, p=ps, added_population=ad, null_kind=kd))
+            test, p=ps, added_population=ad, null_kind=kd, selected_K=ks))
         d = k_comparison_data(sid, changed)
         d = {**d, "passes": np.ones(len(d["k_values"]), dtype=bool)}  # the fit's rule apart
         return k_comparison_notes(d, 2)
@@ -1003,6 +1005,15 @@ def test_the_fits_at_each_k_say_what_the_test_decided(tested_run):
     assert notes(1e-21, 0.3) == ["population test p-value 1.0e-21 < 0.01 selected"]
     assert notes(0.2, 0.3) == ["population test p-value 0.2 ≥ 0.01 not selected"]
     assert notes(np.nan, np.nan, kind="") == ["population test: not tested"]
+    # a passing step below the K the test chose says passed, not selected
+    d = k_comparison_data(sid, results)
+    steps = {2: {**d["test"]["steps"][2], "p": 1e-9, "added": 0.3, "kind": "simulated",
+                 "adds": True, "reached": True, "decides": True}}
+    three = {**d, "passes": np.ones(len(d["k_values"]), dtype=bool),
+             "test": {**d["test"], "k": 3, "steps": steps}}
+    assert k_comparison_notes(three, 2) == ["population test p-value 1.0e-09 < 0.01 passed"]
+    assert k_comparison_notes({**three, "test": {**three["test"], "k": 2}}, 2) == [
+        "population test p-value 1.0e-09 < 0.01 selected"]
     d = k_comparison_data(sid, results)
     assert d["test"]["by"] and set(d["test"]["steps"]) == {2}
     title = plot_k_comparison(sid, results).axes[d["k_values"].index(d["selected"])].get_title()

@@ -89,10 +89,10 @@ def k_comparison_data(spectrum_id: str, results: Results) -> dict:
     ``smallest`` (each K's smallest population), ``fit_min`` (``[run.fit] min_population``),
     ``criterion``, ``selected`` and ``effective`` (the reviewer's K, else the selected one), and
     ``test``: None without the population test, else ``by`` (True: the test chose
-    ``selected``), ``significance``, ``min_population`` and, per K above one, ``steps[K]``: the
-    step from K - 1 (``p``, ``added`` (the smallest population of the K fit), ``kind`` (how its
-    null was made), ``decides`` (False above ``decide_up_to``), ``adds`` (its p and share pass)
-    and ``reached`` (every step below it adds a population))."""
+    ``selected``), ``k`` (the test's K), ``significance``, ``min_population`` and, per K above
+    one, ``steps[K]``: the step from K - 1 (``p``, ``added`` (the smallest population of the K
+    fit), ``kind`` (how its null was made), ``decides`` (False above ``decide_up_to``), ``adds``
+    (its p and share pass) and ``reached`` (every step below it adds a population))."""
     i = results.find(spectrum_id)
     fit = results.fit
     ks = tuple(fit.k_values)
@@ -135,6 +135,7 @@ def _test_steps(results: Results, i: int) -> dict | None:
                         "adds": bool(adds), "reached": reached}
         reached = reached and bool(adds)
     return {"by": int(test.selected_K[i]) == int(results.fit.selected_K[i]),
+            "k": int(test.selected_K[i]),
             "significance": float(cfg.significance),
             "min_population": float(cfg.min_population), "steps": steps}
 
@@ -181,8 +182,10 @@ def k_comparison_notes(d: dict, k: int) -> list[str]:
     elif not step["decides"]:
         outcome = ("flag only (above decide_up_to)" if step["adds"]
                    else "not selected")
-    else:
-        outcome = "selected" if step["adds"] else "not selected"
+    elif not step["adds"]:
+        outcome = "not selected"
+    else:  # a step below the chosen K passed; only the chosen K says selected
+        outcome = "selected" if k == test["k"] else "passed"
     notes.append(f"population test p-value {_p_text(step['p'])} "
                  f"{'<' if step['p'] < sig else '≥'} {sig:g} {outcome}")
     return notes
