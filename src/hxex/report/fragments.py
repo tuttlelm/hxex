@@ -315,10 +315,11 @@ SERIES_GID = "series:"  # a legend name's gid: the fragment's series (``series:<
 
 def _trace_panel(ax, table: FragmentUptake, shown: str, pair: tuple[str, str], name: str,
                  ion_type: str, charge: int, *, left_out: np.ndarray | None = None,
-                 highlight: str | None = None) -> int:
+                 highlight: str | None = None, at: np.ndarray | None = None) -> int:
     """Every ``ion_type`` fragment at ``charge`` of the series ``pair`` (run, condition) of
     ``table`` (one parent, after time 0) on ``ax``; ``shown`` is the sample's display name,
-    ``name`` the series'.
+    ``name`` the series'. ``at`` (the page's time points, sorted: :func:`_time_points`) places
+    each time at its time point's position (evenly spaced) instead of at its time.
     ``left_out`` (why each row of ``table`` is left out, '' for kept) draws those rows as a
     faded dashed line without a band (owner, 2026-11-17: as the grey outlines of left-out
     points elsewhere); ``highlight`` (a fragment, ``c-1:4``) is drawn thicker. Each legend
@@ -341,6 +342,13 @@ def _trace_panel(ax, table: FragmentUptake, shown: str, pair: tuple[str, str], n
     kept, gone = table.select(~left), table.select(left)
     reasons = np.asarray(left_out, dtype=object)[left] if left_out is not None else None
     ids = []
+
+    def x(times):
+        if at is None:
+            return times
+        # the nearest time point (a trace's averaged times need not equal the table's bits)
+        return np.abs(np.asarray(times, float)[:, None] - at[None, :]).argmin(axis=1).astype(float)
+
     for length, colour in zip(lengths, colours, strict=True):
         fragment = f"{ion_type}:{length}"
         mine = rows & (table.fragment == fragment)
@@ -354,9 +362,9 @@ def _trace_panel(ax, table: FragmentUptake, shown: str, pair: tuple[str, str], n
         if len(tr):
             known = np.isfinite(tr.mean_se)
             if known.any():
-                ax.fill_between(tr.time, tr.mean - tr.mean_se, tr.mean + tr.mean_se,
+                ax.fill_between(x(tr.time), tr.mean - tr.mean_se, tr.mean + tr.mean_se,
                                 where=known, color=colour, alpha=0.2, lw=0)
-            (line,) = ax.plot(tr.time, tr.mean, color=colour, lw=wide, label=label,
+            (line,) = ax.plot(x(tr.time), tr.mean, color=colour, lw=wide, label=label,
                               marker="o" if len(tr) <= _FEW_POINTS else None, ms=3)
             hover.set_rows(line, [{**base, "time": float(t), "mean": float(m),
                                    "mean_se": float(e), "left_out": ""}
@@ -365,7 +373,7 @@ def _trace_panel(ax, table: FragmentUptake, shown: str, pair: tuple[str, str], n
         if len(off):
             why = reasons[np.flatnonzero((gone.fragment == fragment) & (gone.charge == charge)
                                          & (gone.condition == pair[1]))]
-            (dashed,) = ax.plot(off.time, off.mean, color=colour, lw=max(1.0, wide - 0.4),
+            (dashed,) = ax.plot(x(off.time), off.mean, color=colour, lw=max(1.0, wide - 0.4),
                                 ls="--", alpha=0.45, label=None if len(tr) else label,
                                 marker="o" if len(off) <= _FEW_POINTS else None, ms=3,
                                 mfc="none")
@@ -382,9 +390,32 @@ def _trace_panel(ax, table: FragmentUptake, shown: str, pair: tuple[str, str], n
         if f"{ion_type}:{length}" == highlight:
             text.set_fontweight("bold")
     ax.grid(True, which="major", alpha=0.4)
-    ax.set_xlabel("Time, sec")
+    ax.set_xlabel("Time, sec" if at is None else "time point")
     ax.set_ylabel("D-content")
     return len(lengths)
+
+
+def _check_scale(scale: str) -> None:
+    if scale not in ("linear", "log", "index"):
+        raise ValueError("scale must be 'linear', 'log' or 'index'")
+
+
+def _time_points(table: FragmentUptake, scale: str) -> np.ndarray | None:
+    """For ``scale`` ``'index'``, the times of ``table``, sorted: each drawn at its position
+    among them (the time points evenly spaced, as the uptake page draws them); None for a
+    time axis."""
+    return np.unique(np.asarray(table.time, float)) if scale == "index" else None
+
+
+def _set_time_axis(ax, scale: str, at: np.ndarray | None) -> None:
+    """The time axis of a traces panel: ``scale``, or the time points by name (``at``)."""
+    from ..io.times import format_time
+
+    if at is None:
+        ax.set_xscale(scale)
+        return
+    ax.set_xticks(range(len(at)), [format_time(float(t)) for t in at],
+                  rotation=45 if len(at) > 8 else 0, fontsize=7)
 
 
 def _pick_series(table, labels, condition, series_run):
@@ -435,20 +466,21 @@ def fragment_traces_figure(
     in a merged sample) the series, each needed only when the parent has several. ``labels``
     names the condition (``{'gentle': 'G'}``). ``scale``: the time axis, ``'log'`` or
     ``'linear'`` (``hxex analyse`` draws a kinetics run's on a linear axis: every scan has its
-    own time). Each line carries its points as rows of the window's data table."""
-    if scale not in ("linear", "log"):
-        raise ValueError("scale must be 'linear' or 'log'")
+    own time), or ``'index'``, the time points evenly spaced and named. Each line carries its
+    points as rows of the window's data table."""
+    _check_scale(scale)
     pick, state, sample, parent, pz = _one(uptake, sample, parent, parent_charge, run)
     table = uptake.select(pick & (uptake.time > 0))
     if not len(table):
         raise ValueError("no fragment spectra after time 0")
+    at = _time_points(table, scale)
     shown = display_labels(uptake.state_run, uptake.sample)[(state, sample)]
     pair, name = _pick_series(table, labels, condition, series_run)
     fig = Figure(figsize=panel, layout="constrained")
     ax = fig.add_subplot()
-    if not _trace_panel(ax, table, shown, pair, name, ion_type, charge):
+    if not _trace_panel(ax, table, shown, pair, name, ion_type, charge, at=at):
         raise ValueError(f"no {ion_type} fragments at charge {charge} in {name}")
-    ax.set_xscale(scale)
+    _set_time_axis(ax, scale, at)
     ax.set_title(_traces_title(shown, table, pz, name, ion_type, charge), fontsize=9)
     return fig
 
@@ -471,16 +503,18 @@ def fragment_traces_page(
     condition (the window's first look at which fragments a ladder should use; owner,
     2026-11-17). ``left_out`` (why each row of ``uptake`` is left out, '' for kept;
     :func:`hxex.analysis.fragment_uptake_with_left_out`) draws those rows as faded dashed
-    lines; ``highlight`` (a fragment, ``c-1:4``) is drawn thicker, its legend name bold."""
+    lines; ``highlight`` (a fragment, ``c-1:4``) is drawn thicker, its legend name bold.
+    ``scale`` as in :func:`fragment_traces_figure`; with ``'index'`` every panel places the
+    page's time points alike."""
     from ..analysis.fragments import fragment_ion_types
 
-    if scale not in ("linear", "log"):
-        raise ValueError("scale must be 'linear' or 'log'")
+    _check_scale(scale)
     pick, state, sample, parent, pz = _one(uptake, sample, parent, parent_charge, run)
     later = pick & (uptake.time > 0)
     table = uptake.select(later)
     if not len(table):
         raise ValueError("no fragment spectra after time 0")
+    at = _time_points(table, scale)
     left = None if left_out is None else np.asarray(left_out, dtype=object)[later]
     shown = display_labels(uptake.state_run, uptake.sample)[(state, sample)]
     pairs, names = _series(table, None, labels)
@@ -493,8 +527,8 @@ def fragment_traces_page(
     for (ion, z), row in zip(series, axes, strict=True):
         for pair, ax in zip(pairs, row, strict=True):
             if _trace_panel(ax, table, shown, pair, names[pair], ion, z, left_out=left,
-                            highlight=highlight):
-                ax.set_xscale(scale)
+                            highlight=highlight, at=at):
+                _set_time_axis(ax, scale, at)
                 ax.set_title(_traces_title(shown, table, pz, names[pair], ion, z), fontsize=9)
             else:
                 ax.set_axis_off()

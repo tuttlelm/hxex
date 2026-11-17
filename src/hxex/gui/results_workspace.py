@@ -319,9 +319,21 @@ class ResultsWorkspace(QWidget):
         # the uptake page's time axis, for the window only (owner: the project's linear default
         # is not how uptake is usually read); the project's [figures] setting first
         self.time_axis = QComboBox()
-        self.time_axis.setToolTip(tip("the uptake page's time axis: the project file's [figures] "
-                                      "setting, or one for this window only"))
+        self.time_axis.setToolTip(tip("the time axis of the uptake and fragments pages: the "
+                                      "project file's [figures] setting, or one for this "
+                                      "window only"))
         self.time_axis.currentIndexChanged.connect(self._redraw)
+        # the same choice in the fragments tab's bar (owner, 2026-11-17: "the same as the
+        # uptake"): one list per bar, kept at one choice; its first entry is the fragment page's
+        # own default (linear for a kinetics run, log otherwise)
+        self.fragment_time_axis = QComboBox()
+        self.fragment_time_axis.setToolTip(tip(
+            "the time axis of the fragments and uptake pages: the pages' own default, or one "
+            "for this window only"))
+        self.time_axis.currentIndexChanged.connect(
+            lambda i: _same_choice(self.fragment_time_axis, i))
+        self.fragment_time_axis.currentIndexChanged.connect(
+            lambda i: self.time_axis.setCurrentIndex(i))
         # the overview tab's page: the run's summary pages, one at a time (owner, 2026-11-04)
         self.overview_page = QComboBox()
         self.overview_page.setToolTip(tip("which page of the overview: as hxex report --figures "
@@ -343,7 +355,8 @@ class ResultsWorkspace(QWidget):
         self._populations_paged = False  # the series' populations page is drawn per page
         self._spectra_job = None  # (results, data_id, config, pages) of the series shown
         self._land_on_last_page = False  # stepping back into a series: its last page
-        for box in (self.time_axis, self.overview_page, self.spectra_page,
+        for box in (self.time_axis, self.fragment_time_axis, self.overview_page,
+                    self.spectra_page,
                     self.population_page):  # as wide as needed
             box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._overview_figures: dict[str, object] = {}  # page -> figure, for _overview_of
@@ -432,8 +445,10 @@ class ResultsWorkspace(QWidget):
                 panel.clicked_row.connect(self._spectrum_row_clicked)
             if name != "overview":  # the overview is the whole run's, not the selection's
                 panel.add_option(self._export_button())
-            if name == "uptake":  # the only page with a time axis: its choice in its own bar
+            if name == "uptake":  # the pages with a time axis: its choice in their bars
                 panel.add_option(self.time_axis)
+            if name == "fragments":
+                panel.add_option(self.fragment_time_axis)
             if name == "overview":
                 panel.add_option(self.overview_page)
             if name == "fragments":  # a fragment's name: its series in the tree
@@ -651,6 +666,7 @@ class ResultsWorkspace(QWidget):
         pep, series = payload[0], payload[1]
         labels = self._fragment_labels()
         results = self.results
+        chosen = self.time_axis.currentData()  # read here: draw() runs in the drawing thread
 
         def none(text: str):
             from matplotlib.figure import Figure
@@ -678,7 +694,8 @@ class ResultsWorkspace(QWidget):
                 uptake.time > 0)
             if not rows.any():
                 return none(f"{parent} at {pz}+ has no fragment spectra after time 0")
-            scale = "linear" if kinetics[rows].all() else "log"
+            scale = (chosen if chosen in ("log", "linear", "index")
+                     else "linear" if kinetics[rows].all() else "log")
             return fragment_traces_page(uptake, left_out=why, highlight=highlight,
                                         sample=sample, parent=parent, parent_charge=pz,
                                         labels=labels, scale=scale)
@@ -875,7 +892,7 @@ class ResultsWorkspace(QWidget):
                 except KeyError:
                     continue
                 drift[s] = (float(binned.drift_start[j]), float(binned.drift_end[j]))
-        title = f"{payload[0].sample} {payload[0].peptide_range} {payload[0].peptide} " \
+        title = f"{payload[0].sample} {payload[0].label} " \
                 f"{payload[1].name}, {payload[2].label} rep {payload[3].rep}"  # which file
         # a read for the spectrum shown before stops at its next file (audit of 2026-11-15,
         # F-6: it held the reader's lock, and this spectrum's own trace waited for it)
@@ -995,7 +1012,8 @@ class ResultsWorkspace(QWidget):
             self.table_view.set_note("spectra.csv: this spectrum's row, as hxex report writes it")
         elif kind == "point":
             table = spectra_table(results, rows=[s.index for s in payload[2].spectra])
-            self._show_columns(table, f"{payload[0].peptide_range}_z{series.charge}_"
+            self._show_columns(table, f"{series.own_range or payload[0].peptide_range}"
+                                      f"_z{series.charge}_"
                                       f"{payload[2].label}_spectra")
             self.table_view.set_note("spectra.csv: this time point's spectra, as hxex report "
                                      "writes them")
@@ -1012,11 +1030,13 @@ class ResultsWorkspace(QWidget):
                 about = ", ".join(f"{name} {_cell(row[name][0])}" for name in row
                                   if name not in ("data_id", "sample", "peptide_range",
                                                   "peptide", "charge") and _cell(row[name][0]))
-                stem = f"{payload[0].sample}_{payload[0].peptide_range}_z{series.charge}"
+                stem = (f"{payload[0].sample}_{series.own_range or payload[0].peptide_range}"
+                        f"_z{series.charge}")
                 whose = "this series'"
                 tail = f" series.csv: {about}"
             else:
-                stem = f"{whole.sample}_{whole.peptide_range}_peptide"
+                stem = (f"{whole.sample}_{whole.peptide_range}_z{whole.charge}_precursor"
+                        if whole.charge else f"{whole.sample}_{whole.peptide_range}_peptide")
                 whose = f"this peptide's {len(ids)} series'"
                 tail = ""
             if chosen == "components.csv":
@@ -1043,7 +1063,8 @@ class ResultsWorkspace(QWidget):
         return (kind, payload[1].data_id, payload[2].order if kind in ("point", "spectrum")
                 else None, payload[3].index if kind == "spectrum" else None,
                 self.series_table.currentText(),
-                None if whole is None else (whole.sample, whole.peptide_range, whole.peptide))
+                None if whole is None else (whole.sample, whole.peptide_range, whole.peptide,
+                                            whole.charge))
 
     def _series_table_changed(self, _name: str) -> None:
         self._fill_table()
@@ -1085,8 +1106,8 @@ class ResultsWorkspace(QWidget):
             return {}
         pep, series = known
         out = {"sample": pep.sample, "peptide_range": pep.peptide_range,
-               "peptide": pep.peptide, "charge": series.charge, "data_id": series.data_id,
-               "spectrum_id": spectrum_id}
+               "peptide": pep.peptide, **_precursor_of(pep), "charge": series.charge,
+               "data_id": series.data_id, "spectrum_id": spectrum_id}
         if series.fragment:
             out.update(fragment=series.fragment, condition=series.condition,
                        ms_level=series.ms_level)
@@ -1287,6 +1308,14 @@ class ResultsWorkspace(QWidget):
         index = self.time_axis.findData(keep) if keep is not None else 0
         self.time_axis.setCurrentIndex(max(index, 0))
         self.time_axis.blockSignals(False)
+        box = self.fragment_time_axis
+        box.blockSignals(True)
+        box.clear()
+        box.addItem("default: linear for a kinetics run, else log", None)
+        for key, text in TIME_AXES.items():
+            box.addItem(text, key)
+        box.setCurrentIndex(self.time_axis.currentIndex())
+        box.blockSignals(False)
 
     def set_time_axis(self, key: str | None) -> None:
         index = self.time_axis.findData(key) if key else 0
@@ -1331,6 +1360,9 @@ class ResultsWorkspace(QWidget):
             box.setVisible(targeted)
         for name in TARGET_COLUMNS:
             self.tree.setColumnHidden(COLUMN[name], not targeted)
+        # grouped by precursor: the top row names the parent
+        self.tree.setColumnHidden(COLUMN["parent"], not targeted or any(
+            p.charge for p in self.tree_data))
         self._fill_pool_filters()
 
     def _fill_pool_filters(self) -> None:
@@ -1374,7 +1406,7 @@ class ResultsWorkspace(QWidget):
                 continue
             counts = {n: sum(getattr(s, n) for s in series)
                       for n in ("n_spectra", "n_flagged", "n_rejected", "n_left_out", "n_multi")}
-            top = QTreeWidgetItem([f"{pep.peptide_range} {pep.peptide}", pep.sample,
+            top = QTreeWidgetItem([pep.label, pep.sample,
                                    pep.identity, "", "", "", "", *_counts(counts), "", "", ""])
             if pep.identity_level:
                 top.setToolTip(COLUMN["identity"], tip(
@@ -1382,7 +1414,9 @@ class ResultsWorkspace(QWidget):
                     + (pep.candidates.replace(";", ", ") or "none")))
             top.setData(0, KIND, "peptide")
             top.setData(0, PAYLOAD, pep)
-            top.setToolTip(0, tip(f"{pep.sample} {pep.peptide_range} {pep.peptide}"))
+            top.setToolTip(0, tip(f"{pep.sample} {pep.label}" + (
+                f": the parent at its {pep.charge}+ precursor, with its MS1 series, its "
+                "precursor ions, and its fragments" if pep.charge else "")))
             for s, name in zip(series, _series_names(series), strict=True):
                 child = QTreeWidgetItem([name, "", "", s.fragment, str(s.ms_level or ""),
                                          s.condition, s.parent, *_counts(dataclasses.asdict(s)),
@@ -1496,7 +1530,8 @@ class ResultsWorkspace(QWidget):
         targets = self.export_targets(item)
         n = len(targets[HXEXPRESS])
         hx = menu.addAction(
-            f"Export its {n} charge states for HX-Express…" if kind == "peptide" and n > 1
+            f"Export its {n} {'series' if item.data(0, PAYLOAD).charge else 'charge states'}"
+            " for HX-Express…" if kind == "peptide" and n > 1
             else "Export for HX-Express…" if kind in ("peptide", "series")
             else "Export the series for HX-Express…")
         hx.setToolTip(tip("one spreadsheet per peptide and charge, with every time point and "
@@ -1621,8 +1656,7 @@ class ResultsWorkspace(QWidget):
             point = payload[2]
             ids = [s.spectrum_id for s in point.spectra]
             labels = [f"rep {s.rep}" for s in point.spectra]
-            title = f"{payload[0].sample} {payload[0].peptide_range} {payload[0].peptide} " \
-                    f"{series.name}, {point.label}"
+            title = f"{payload[0].sample} {payload[0].label} {series.name}, {point.label}"
             self._draw_panel("fits at each K", lambda: plot_k_comparisons(
                 ids, results, labels=labels, title=title, mz_range=mz_range))
             self._draw_panel("uptake", uptake)
@@ -1737,7 +1771,7 @@ class ResultsWorkspace(QWidget):
             shown = [s for s in pep.series if self._shown(pep, s)]
             ids = np.array([s.data_id for s in shown])
             rows = list(np.flatnonzero(np.isin(self.results.fit.data_id, ids)))
-            name = f"{pep.sample} {pep.peptide_range} {pep.peptide}"
+            name = f"{pep.sample} {pep.label}"
             if len(shown) > 1:
                 apart = (not any(s.fragment for s in shown)
                          and len({s.charge for s in shown}) == len(shown))
@@ -1745,7 +1779,7 @@ class ResultsWorkspace(QWidget):
             self.review.show_spectra(rows, name)
             return
         pep, series = payload[0], payload[1]
-        name = f"{pep.sample} {pep.peptide_range} {pep.peptide} {series.name}"
+        name = f"{pep.sample} {pep.label} {series.name}"
         if kind == "series":
             rows = list(np.flatnonzero(self.results.fit.data_id == series.data_id))
         elif kind == "point":
@@ -1906,10 +1940,10 @@ class ResultsWorkspace(QWidget):
             kind, payload = item.data(0, KIND), item.data(0, PAYLOAD)
         if kind == "peptide":
             return {"sample": payload.sample, "peptide_range": payload.peptide_range,
-                    "peptide": payload.peptide}
+                    "peptide": payload.peptide, **_precursor_of(payload)}
         pep, series = payload[0], payload[1]
         out = {"sample": pep.sample, "peptide_range": pep.peptide_range,
-               "peptide": pep.peptide, "charge": series.charge}
+               "peptide": pep.peptide, **_precursor_of(pep), "charge": series.charge}
         if series.fragment:
             out.update(fragment=series.fragment, condition=series.condition,
                        ms_level=series.ms_level)
@@ -1966,7 +2000,11 @@ class ResultsWorkspace(QWidget):
 
     def _find(self, selection: dict) -> bool:
         """Select what ``selection`` names among the rows the tree shows now (False when it
-        is not there)."""
+        is not there). A series named by its ``data_id`` is found under whichever row holds it
+        (the list names a fragment by its own residues, the tree by its precursor's)."""
+        child = self._series_items.get(selection.get("data_id"))
+        if child is not None:
+            return self._find_under(child.parent(), child, selection)
         for i in range(self.tree.topLevelItemCount()):
             top = self.tree.topLevelItem(i)
             pep = top.data(0, PAYLOAD)
@@ -1974,6 +2012,8 @@ class ResultsWorkspace(QWidget):
                                                    selection.get("peptide_range")):
                 continue
             if "peptide" in selection and pep.peptide != selection["peptide"]:
+                continue
+            if selection.get("parent_charge", pep.charge) != pep.charge:
                 continue
             if "charge" not in selection:
                 self.tree.setCurrentItem(top)
@@ -1986,23 +2026,42 @@ class ResultsWorkspace(QWidget):
                         name in selection and getattr(found, name) != selection[name]
                         for name in ("fragment", "condition", "ms_level")):
                     continue
-                if "point" not in selection and "spectrum_id" not in selection:
-                    self.tree.setCurrentItem(child)
-                    return True
-                top.setExpanded(True)
-                child.setExpanded(True)
-                for k in range(child.childCount()):
-                    point = child.child(k)
-                    if point.data(0, PAYLOAD)[2].label == selection.get("point"):
-                        self.tree.setCurrentItem(point)
-                        return True
-                    for m in range(point.childCount()):
-                        leaf = point.child(m)
-                        if leaf.data(0, PAYLOAD)[3].spectrum_id == selection.get("spectrum_id"):
-                            point.setExpanded(True)
-                            self.tree.setCurrentItem(leaf)
-                            return True
+                return self._find_under(top, child, selection)
         return False
+
+    def _find_under(self, top: QTreeWidgetItem, child: QTreeWidgetItem,
+                    selection: dict) -> bool:
+        """Select the series row ``child`` (under ``top``), or its time point or spectrum that
+        ``selection`` names."""
+        if "point" not in selection and "spectrum_id" not in selection:
+            self.tree.setCurrentItem(child)
+            return True
+        top.setExpanded(True)
+        child.setExpanded(True)
+        for k in range(child.childCount()):
+            point = child.child(k)
+            if point.data(0, PAYLOAD)[2].label == selection.get("point"):
+                self.tree.setCurrentItem(point)
+                return True
+            for m in range(point.childCount()):
+                leaf = point.child(m)
+                if leaf.data(0, PAYLOAD)[3].spectrum_id == selection.get("spectrum_id"):
+                    point.setExpanded(True)
+                    self.tree.setCurrentItem(leaf)
+                    return True
+        return False
+
+
+def _same_choice(box: QComboBox, index: int) -> None:
+    """``box`` at ``index`` without its signal (the list it follows has redrawn already)."""
+    box.blockSignals(True)
+    box.setCurrentIndex(index)
+    box.blockSignals(False)
+
+
+def _precursor_of(pep) -> dict:
+    """A precursor row's charge, as a selection names it ({} for a peptide row)."""
+    return {"parent_charge": pep.charge} if pep.charge else {}
 
 
 def _residues(peptide_range: str) -> tuple[int, int] | None:
@@ -2044,8 +2103,8 @@ def _series_names(series: list) -> list[str]:
     parents adds its parent, and two series still of one name (a peptide read from two lists,
     say) the series number, as spectra.csv's data_id."""
     names = [s.name for s in series]
-    names = [n + f"  from {s.parent}" if s.parent and names.count(n) > 1 else n
-             for s, n in zip(series, names, strict=True)]
+    names = [n + f"  from {s.parent}" if s.parent and not s.by_precursor and names.count(n) > 1
+             else n for s, n in zip(series, names, strict=True)]
     return [n + (f" (series {s.data_id})" if names.count(n) > 1 else "")
             for s, n in zip(series, names, strict=True)]
 

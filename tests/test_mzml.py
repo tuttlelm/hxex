@@ -777,7 +777,9 @@ def test_result_tables_name_the_fragment_and_precursor(tmp_path):
 
         (pep,) = peptides(results)
         z = ENTRY.charge
-        assert [s.name for s in pep.series] == [f"z={z}", f"z={z}  c:10  ETD, MS2"]
+        # grouped by precursor (owner, 2026-11-17): the parent at its charge, then its fragment
+        assert pep.charge == z and pep.label.endswith(f" {z}+")
+        assert [s.name for s in pep.series] == ["MS1", f"c:10  z={z}  ETD, MS2"]
         assert [s.ms_level for s in pep.series if shown(pep, s, ms_level=2)] == [2]
         assert [s.fragment for s in pep.series if shown(pep, s, ion_type="")] == [""]
         assert [s.fragment for s in pep.series if shown(pep, s, text="c:10")] == ["c:10"]

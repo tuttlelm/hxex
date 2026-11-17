@@ -9,7 +9,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from hxex.gui.results_tree import peptides, points, shown
-from hxex.gui.results_workspace import COLUMN, ResultsWorkspace
+from hxex.gui.results_workspace import COLUMN, KIND, ResultsWorkspace
 from hxex.report import Results
 from hxex.report.series import plot_series_spectra
 from test_run import config, raw_spectra, run
@@ -613,6 +613,15 @@ def test_a_fragment_series_has_its_parents_fragments_tab(qtbot, page, monkeypatc
     assert page.tree.currentItem().data(0, PAYLOAD)[1].data_id == 0
     panel.clicked.emit(f"{SERIES_GID}99")  # not in the tree: nothing moves
     assert page.tree.currentItem().data(0, PAYLOAD)[1].data_id == 0
+    # its own time-axis list, one choice with the uptake page's (owner, 2026-11-17)
+    box = page.fragment_time_axis
+    assert box.itemData(0) is None and "kinetics" in box.itemText(0)
+    with qtbot.waitSignal(panel.drawn, timeout=30000):
+        box.setCurrentIndex(box.findData("index"))
+    assert page.time_axis.currentData() == "index"
+    assert panel.view.figure.axes[0].get_xlabel() == "time point"
+    page.time_axis.setCurrentIndex(page.time_axis.findData("linear"))
+    assert box.currentData() == "linear"
 
 
 def _pooled(results, tmp_path, fasta: str, classes: list[str]):
@@ -1043,3 +1052,109 @@ def test_a_bundle_opened_alone_says_the_left_out_column_uses_the_defaults(qtbot,
     assert page.left_bar.isHidden()
     page._left_stale("your latest review decisions")
     assert not page.left_update.isHidden()
+
+
+def _targets(parent_charges: dict[int, int]) -> dict:
+    """Series targets that make series ``data_id`` the fragment c:2 of the fixture's peptide
+    read from the precursor at ``parent_charges[data_id]`` (others: its MS1 series)."""
+    from test_run import PEPTIDE
+
+    out = {}
+    for data_id, pz in parent_charges.items():
+        out[data_id] = ({"fragment": "", "ion_type": "", "condition": "", "ms_level": 1,
+                         "parent": "", "parent_range": "", "parent_peptide": "",
+                         "parent_charge": 0} if pz is None else
+                        {"fragment": "c:2", "ion_type": "c", "condition": "ETD", "ms_level": 2,
+                         "parent": f"0001-0010 z{pz}", "parent_range": "0001-0010",
+                         "parent_peptide": PEPTIDE, "parent_charge": pz})
+    return out
+
+
+def test_fragment_results_are_grouped_by_precursor(monkeypatch):
+    """Owner, 2026-11-17: a top row per parent and precursor charge, its MS1 series first,
+    then its precursor ions, then its fragments by ion series (N-terminal first), length,
+    charge, MS level and condition; one fragment read from two precursors is under each; no
+    "from ..."; a residue number finds a fragment by its own residues."""
+    from types import SimpleNamespace
+
+    import hxex.gui.results_tree as tree
+    import hxex.report.tables as tables
+    from hxex.gui.results_workspace import _series_names
+
+    # (data_id, own range, own sequence, charge, target)
+    parent = ("2-12", "ALKRINKELSD")
+    made = [(0, *parent, 3, None), (1, *parent, 2, None),
+            (2, "8-12", "KELSD", 1, ("z", "z:5", "ETD", 2, 3)),
+            (3, "2-6", "ALKRI", 1, ("c", "c:5", "ETD_pre", 3, 3)),
+            (4, "2-6", "ALKRI", 1, ("c", "c:5", "ETD", 2, 3)),
+            (5, "2-3", "AL", 1, ("c", "c:2", "ETD", 2, 3)),
+            (6, *parent, 1, ("M", "M:11", "ETD", 2, 3)),
+            (7, "2-6", "ALKRI", 2, ("c", "c:5", "ETD", 2, 3)),
+            (8, "2-6", "ALKRI", 1, ("c", "c:5", "EThcD", 2, 2)),
+            (9, "20-25", "PEPTID", 2, None)]
+    rows = {"data_id": [m[0] for m in made], "sample": ["S"] * len(made),
+            "peptide_range": [m[1] for m in made], "peptide": [m[2] for m in made],
+            "charge": [m[3] for m in made], **{n: [1] * len(made) for n in (
+                "n_spectra", "n_flagged", "n_rejected", "n_multi")}}
+    targets = {}
+    for d, _r, _p, _z, t in made:
+        targets[d] = ({"fragment": "", "ion_type": "", "condition": "", "ms_level": 1,
+                       "parent": "", "parent_range": "", "parent_peptide": "",
+                       "parent_charge": 0} if t is None else
+                      {"fragment": t[1], "ion_type": t[0], "condition": t[2], "ms_level": t[3],
+                       "parent": f"2-12 z{t[4]}", "parent_range": "2-12",
+                       "parent_peptide": parent[1], "parent_charge": t[4]})
+    monkeypatch.setattr(tables, "series_table", lambda results: rows)
+    monkeypatch.setattr(tables, "series_identities", lambda results: {})
+    monkeypatch.setattr(tree, "series_targets", lambda results: targets)
+    results = SimpleNamespace(review_status=np.array([]),
+                              fit=SimpleNamespace(data_id=np.array([], int)))
+    peps = tree.peptides(results)
+    assert [p.label for p in peps] == ["2-12 ALKRINKELSD 2+", "2-12 ALKRINKELSD 3+",
+                                       "20-25 PEPTID 2+"]
+    two, three, alone = peps
+    assert [s.data_id for s in two.series] == [1, 8] and [s.data_id for s in alone.series] == [9]
+    assert [s.data_id for s in three.series] == [0, 6, 5, 4, 3, 7, 2]
+    assert _series_names(three.series) == [
+        "MS1", "M  z=1  ETD, MS2", "c:2  z=1  ETD, MS2", "c:5  z=1  ETD, MS2",
+        "c:5  z=1  ETD_pre, MS3", "c:5  z=2  ETD, MS2", "z:5  z=1  ETD, MS2"]
+    # a residue finds a fragment by its own residues; the parent's series cover the parent's
+    assert [s.data_id for s in three.series if tree.shown(three, s, text="5")] == [0, 6, 4, 3, 7]
+    assert [s.data_id for s in three.series if tree.shown(three, s, text="2-6")] == [4, 3, 7]
+    # results without fragments: a peptide row with its charges, as before
+    monkeypatch.setattr(tree, "series_targets", lambda results: {})
+    plain = tree.peptides(results)
+    assert [p.label for p in plain] == ["2-3 AL", "2-6 ALKRI", "2-12 ALKRINKELSD", "8-12 KELSD",
+                                        "20-25 PEPTID"]
+    assert [s.name for s in plain[2].series] == ["z=1", "z=2", "z=3"]
+
+
+def test_the_window_shows_and_finds_precursor_rows(qtbot, results, monkeypatch):
+    """The window's tree of fragment results: the precursor rows, the parent column hidden
+    (the row names it), a selection kept by the precursor's charge, a series found by its
+    data_id wherever the tree holds it."""
+    import hxex.gui.results_tree as tree
+
+    monkeypatch.setattr(tree, "series_targets", lambda r: _targets({0: None, 1: 3}))
+    w = ResultsWorkspace()
+    qtbot.addWidget(w)
+    w.show_results(results, None)
+    labels = [w.tree.topLevelItem(i).text(0) for i in range(w.tree.topLevelItemCount())]
+    assert [lbl.split()[-1] for lbl in labels] == ["2+", "3+"]
+    assert w.tree.isColumnHidden(COLUMN["parent"]) and not w.tree.isColumnHidden(COLUMN["ion"])
+    fragment = w.tree.topLevelItem(1).child(0)
+    assert fragment.text(0) == "c:2  z=2  ETD, MS2"
+    w.tree.setCurrentItem(fragment)
+    kept = w.selection()
+    assert kept["parent_charge"] == 3 and kept["fragment"] == "c:2"
+    w.tree.setCurrentItem(w.tree.topLevelItem(0))
+    assert w.selection()["parent_charge"] == 2
+    assert w.select(kept) and w.tree.currentItem() is fragment
+    # the list names a fragment by its own residues: found by its data_id
+    sid = str(results.fit.spectrum_id[np.flatnonzero(results.fit.data_id == 1)[0]])
+    assert w.select({"sample": "S", "peptide_range": "0001-0003", "charge": 2, "data_id": 1,
+                     "spectrum_id": sid})
+    assert w.tree.currentItem().data(0, KIND) == "spectrum"
+    assert w.tree.currentItem().parent().parent() is fragment
+    # a session's selection from before the grouping (no parent_charge) finds a row of the range
+    assert w.select({"sample": "S", "peptide_range": "0001-0010", "peptide": labels[0].split()[1]})

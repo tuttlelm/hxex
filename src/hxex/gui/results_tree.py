@@ -2,10 +2,13 @@
 """The tree of the Results workspace, without Qt (docs/PLAN.md, "GUI", "Results and review"):
 each peptide of each sample, its charges (the series), each series' time points (the
 undeuterated controls first, the fully deuterated last, labelled as the figures label them),
-and each point's replicates, which are the spectra. Every level carries the counts the window
-shows, from the same tables ``hxex report`` writes (``series.csv``, ``spectra.csv``), with the
-review applied, and the spectra the analysis settings leave out (:func:`left_out`, as
-``hxex analyse`` lists them in ``left_out_spectra.csv``).
+and each point's replicates, which are the spectra. Results with fragment ions are grouped by
+precursor instead (owner, 2026-11-17): a top row is a parent at one precursor charge, with its
+MS1 series at that charge, its precursor ions (M), and its fragments under it. Every level
+carries the counts the window shows, from the same tables ``hxex report`` writes
+(``series.csv``, ``spectra.csv``), with the review applied, and the spectra the analysis
+settings leave out (:func:`left_out`, as ``hxex analyse`` lists them in
+``left_out_spectra.csv``).
 """
 
 from __future__ import annotations
@@ -69,15 +72,29 @@ class Series:
     condition: str = ""
     ms_level: int = 0
     parent: str = ""
+    # the parent of a fragment (or precursor ion): its residues, sequence and the precursor's
+    # charge (empty and 0 for a peptide read at MS1)
+    parent_range: str = ""
+    parent_peptide: str = ""
+    parent_charge: int = 0
+    own_range: str = ""  # the series' own residues ('2-6' for c-1:5 of 2-12)
+    by_precursor: bool = False  # named under a precursor row (results with fragments)
 
     @property
     def name(self) -> str:
         """The series as the tree names it under its peptide: the charge, and for a fragment
-        its ion, condition and MS level (``z=1  c-1:4  ETD, MS2``)."""
+        its ion, condition and MS level (``z=1  c-1:4  ETD, MS2``). Under a precursor row the
+        precursor's charge is the row's, so the fragment comes first (``c-1:4  z=1  ETD, MS2``),
+        a precursor ion goes without its length (``M  z=1  ETD, MS2``), and the parent's own
+        series is ``MS1``."""
+        how = ", ".join(p for p in (self.condition,
+                                    f"MS{self.ms_level}" if self.ms_level else "") if p)
         if not self.fragment:
-            return f"z={self.charge}"
-        return f"z={self.charge}  {self.fragment}  " + ", ".join(
-            p for p in (self.condition, f"MS{self.ms_level}" if self.ms_level else "") if p)
+            return "MS1" if self.by_precursor else f"z={self.charge}"
+        if not self.by_precursor:
+            return f"z={self.charge}  {self.fragment}  {how}"
+        ion = self.ion_type if self.ion_type.startswith("M") else self.fragment
+        return f"{ion}  z={self.charge}  {how}"
 
 
 @dataclass
@@ -94,6 +111,14 @@ class Peptide:
     identity_level: str = ""
     classes: str = ""
     candidates: str = ""
+    charge: int = 0  # a precursor row's precursor charge (0: a peptide with its charges)
+
+    @property
+    def label(self) -> str:
+        """The row as the tree and the titles name it: ``2-12 ALKRINKELSD`` (a precursor row
+        adds its charge: ``2-12 ALKRINKELSD 3+``)."""
+        return f"{self.peptide_range} {self.peptide}" + (f" {self.charge}+" if self.charge
+                                                         else "")
 
     def counts(self) -> dict[str, int]:
         return {name: sum(getattr(s, name) for s in self.series)
@@ -103,7 +128,9 @@ class Peptide:
 def peptides(results, left: list[str] | None = None) -> list[Peptide]:
     """Every peptide of every sample with its series, in the order of the samples and then of
     the residues and charges; ``left``: :func:`left_out` of the results (none left out when
-    not given)."""
+    not given). Results with fragment ions are grouped by precursor (:func:`_precursor_key`):
+    a row per parent and precursor charge, its MS1 series first, then its precursor ions, then
+    its fragments by ion series, length, charge, MS level and condition (owner, 2026-11-17)."""
     from ..report.tables import series_identities, series_table
 
     rows = series_table(results)
@@ -111,24 +138,56 @@ def peptides(results, left: list[str] | None = None) -> list[Peptide]:
     reviewed = _reviewed(results)
     n_left = left_out_counts(results, left)
     targets = series_targets(results)
+    grouped = any(t.get("fragment") for t in targets.values())
     out: dict[tuple, Peptide] = {}
     for r in range(len(rows["data_id"])):
-        key = (str(rows["sample"][r]), str(rows["peptide_range"][r]), str(rows["peptide"][r]))
-        pep = out.setdefault(key, Peptide(*key))
         data_id = int(rows["data_id"][r])
+        target = targets.get(data_id, {})
+        own = (str(rows["sample"][r]), str(rows["peptide_range"][r]), str(rows["peptide"][r]))
+        charge = int(rows["charge"][r] or 0)
+        if grouped:
+            key = _precursor_key(own, charge, target)
+            pep = out.setdefault(key, Peptide(*key[:3], charge=key[3]))
+        else:
+            pep = out.setdefault(own, Peptide(*own))
         found = known.get(data_id)
         if found is not None and not pep.identity_level:
             pep.identity, pep.identity_level = found.identity, found.level
             pep.classes, pep.candidates = ";".join(found.classes), ";".join(found.candidates)
         pep.series.append(Series(
-            data_id, int(rows["charge"][r] or 0), int(rows["n_spectra"][r]),
+            data_id, charge, int(rows["n_spectra"][r]),
             int(rows["n_flagged"][r]), int(rows["n_rejected"][r]), int(rows["n_multi"][r]),
-            reviewed.get(data_id, 0), n_left.get(data_id, 0), **targets.get(data_id, {})))
+            reviewed.get(data_id, 0), n_left.get(data_id, 0), **target, own_range=own[1],
+            by_precursor=grouped))
     for pep in out.values():
-        pep.series.sort(key=lambda s: (s.charge, s.ms_level, natural_key(s.condition),
-                                       natural_key(s.fragment)))
+        pep.series.sort(key=_order_under_precursor if grouped else (
+            lambda s: (s.charge, s.ms_level, natural_key(s.condition), natural_key(s.fragment))))
     return [out[k] for k in sorted(out, key=lambda k: (natural_key(k[0]), natural_key(k[1]),
-                                                       k[2]))]
+                                                       k[2], *k[3:]))]
+
+
+def _precursor_key(own: tuple[str, str, str], charge: int, target: dict) -> tuple:
+    """The precursor row of a series: (sample, the parent's residues and sequence, the
+    precursor's charge); a series read at MS1 is a parent at its own charge."""
+    if target.get("fragment") and target.get("parent_range"):
+        return (own[0], target["parent_range"], target["parent_peptide"],
+                int(target["parent_charge"]))
+    return (*own, charge)
+
+
+def _order_under_precursor(s: Series) -> tuple:
+    """A precursor row's series in order: the MS1 series, the precursor ions, then the
+    fragments by ion series (N-terminal types first), length, charge, MS level and
+    condition, so that each fragment's conditions are together."""
+    if not s.fragment:
+        group, ion = 0, ""
+    elif s.ion_type.startswith("M"):
+        group, ion = 1, s.ion_type
+    else:
+        group, ion = (2 if s.ion_type[:1] in "abc" else 3), s.ion_type
+    length = s.fragment.rpartition(":")[2]
+    return (group, natural_key(ion), int(length) if length.isdigit() else 0, s.charge,
+            s.ms_level, natural_key(s.condition), s.data_id)
 
 
 def series_targets(results) -> dict[int, dict]:
@@ -146,13 +205,17 @@ def series_targets(results) -> dict[int, dict]:
     for i, d in enumerate(results.fit.data_id):
         if int(d) not in out:
             target = targets.get(int(d))
-            z = dict(target.entry.extra).get("parent_charge", "") if target is not None else ""
+            extra = dict(target.entry.extra) if target is not None else {}
+            z = extra.get("parent_charge", "")
             parent = str(cols["parent_range"][i])
             out[int(d)] = {"fragment": str(cols["fragment"][i]),
                            "ion_type": str(cols["ion_type"][i]),
                            "condition": str(cols["condition"][i]),
                            "ms_level": int(cols["ms_level"][i]),
-                           "parent": f"{parent} z{z}" if parent and z != "" else parent}
+                           "parent": f"{parent} z{z}" if parent and z != "" else parent,
+                           "parent_range": parent,
+                           "parent_peptide": str(extra.get("parent_peptide", "")),
+                           "parent_charge": int(z) if str(z).isdigit() else 0}
     return out
 
 
@@ -279,13 +342,15 @@ def shown(pep: Peptide, series: Series, how: str = "all", text: str = "",
           ms_level: int | None = None, ion_type: str | None = None,
           identity_level: str | None = None, pool_class: str | None = None) -> bool:
     """Whether a series is shown under the filter ``how`` (:data:`FILTERS`), the search
-    ``text`` (:func:`search_matches`: residues by number, else the sample, residues, peptide,
+    ``text`` (:func:`search_matches`: residues by number, the series' own (a fragment's, under
+    a precursor row), else the sample, residues, peptide,
     charge, fragment, condition, or a pooled peptide's identity and candidates as text), the
     MS level ``ms_level`` and the ion type ``ion_type`` (None: any; ``''``: peptides, not
     fragments), and for pooled peptides the identity level ``identity_level`` (isoform,
     class, ambiguous or none) and the class ``pool_class`` (one of the peptide's classes;
     None: any)."""
-    if text and not search_matches(text, pep.sample, pep.peptide_range, pep.peptide,
+    if text and not search_matches(text, pep.sample, series.own_range or pep.peptide_range,
+                                   pep.peptide,
                                    f"z{series.charge} {series.fragment} {series.condition} "
                                    f"{series.parent} {pep.identity} {pep.candidates}"):
         return False

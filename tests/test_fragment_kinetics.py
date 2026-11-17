@@ -346,6 +346,15 @@ def test_every_fragment_of_a_series_on_one_panel():
     # a kinetics run's on a linear time axis; the condition must be chosen
     assert fragment_traces_figure(u, "z", condition="harsh",
                                   scale="linear").axes[0].get_xscale() == "linear"
+    # or the time points evenly spaced and named, as the uptake page can (owner, 2026-11-17);
+    # the data rows keep the times
+    even = fragment_traces_figure(few, "c", condition="gentle", scale="index").axes[0]
+    later = [t for t in TIMES[:10] if t > 0]
+    assert np.allclose(even.lines[0].get_xdata(), range(len(later)))
+    assert even.get_xlabel() == "time point" and len(even.get_xticklabels()) == len(later)
+    assert figure_rows(even.figure)[1][0]["time"] == later[0]
+    with pytest.raises(ValueError, match="scale must be"):
+        fragment_traces_figure(u, "c", condition="gentle", scale="order")
     with pytest.raises(ValueError, match="choose one condition"):
         fragment_traces_figure(u, "c")
     with pytest.raises(ValueError, match="no y fragments"):

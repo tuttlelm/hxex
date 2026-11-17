@@ -10569,3 +10569,41 @@ CSVs or mzML if wanted.
       benchmark, and a peptide backs it.
     Private record: `hxex_private/analysis_examples/residue_gate/region_k2` (README: the K = 2
     region test, composition prototype, segments evaluation).
+
+403. **The Results tree grouped by precursor for fragment results (owner, 2026-11-17).**
+    Before, the tree grouped series by their own residues and sequence,
+    so one fragment of several parents and precursor charges shared a row (the c-1:5 ion of
+    2-12 3+, 2-13 3+ and 2-12 2+ under `2-6 ALKRI`, told apart by "from 2-12 z3"), and the
+    parent's MS1 series and M ions of both precursors shared the parent's row: 320 top rows on
+    the private targeted dataset, 83 of them mixing parents or precursor charges. Now, for
+    results with at least one fragment series, a top row is one parent at one precursor charge
+    in one sample (`2-12 ALKRINKELSD 3+`; `Peptide.charge`, `Peptide.label`), keyed by the
+    entry's `parent_range`, `parent_peptide` and `parent_charge` (an MS1 series is a parent at
+    its own charge, so a peptide read at a charge without fragments has a row of its own). Under
+    it: `MS1`, the precursor ions (`M  z=1  ETD, MS2`, without the length, which is the
+    parent's), then the fragments by ion series (N-terminal types first), length, charge, MS
+    level and condition (`c-1:5  z=1  ETD, MS2`; the fragment first, as the rows are sorted by
+    it). A fragment read from two precursors is two series and sits under each; "from ..." is
+    gone. 18 top rows on the targeted dataset. The levels stay peptide / series / time point /
+    spectrum, so stepping, counts, review and export work as before; owner's choices: the
+    level keeps the name "peptide", a top row's review covers every series it shows (up to 168
+    series there; the filters narrow it), M without its length. Find takes a residue number
+    as the series' own residues (`Series.own_range`: `20` shows the fragments covering residue
+    20 under every precursor). The parent column is hidden in the tree (the row names the
+    parent; the List keeps it). A selection names the precursor's charge (`parent_charge`); a
+    series named by its `data_id` (the list, the data tab, figure clicks) is found wherever the
+    tree holds it, since the list names a fragment by its own residues. Fragment selections
+    saved in sessions before this change name the fragment's own range and are not found
+    (nothing selected). Data-tab stems of a series keep the series' own residues; a precursor
+    row's are `<sample>_<range>_z<charge>_precursor`. Results with peptides read at MS1 only
+    are unchanged. Guide gui.md (Results). Tests:
+    `test_fragment_results_are_grouped_by_precursor`,
+    `test_the_window_shows_and_finds_precursor_rows`; the real-mzML tree names in
+    `test_result_tables_name_the_fragment_and_precursor` follow the grouping.
+    The fragments tab gets the uptake page's time-axis list (owner: "the same as the uptake"):
+    a second list in its bar, kept at the same choice (one changed, both pages follow; the
+    session keeps it as before); its first entry is the fragment page's own default (linear
+    for a kinetics run, log otherwise). `fragment_traces_page` and `fragment_traces_figure`
+    take `scale = "index"`: the page's time points evenly spaced and named, every panel alike
+    (a trace's averaged time is placed at the nearest time point); the data rows keep the
+    times. Available for kinetics runs too (owner: harmless, simpler).

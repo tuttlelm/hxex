@@ -8,9 +8,9 @@ you can switch between them at any point.
 The window is being built in steps. What it does today:
 
 - **Project**: makes a new project file or opens one, and changes its settings (below).
-- **Results**: opens results as a tree of peptides, their series (one per charge state, or
-  per fragment ion), time points, and spectra (the replicates), and shows the figures of what
-  you select (below).
+- **Results**: opens results as a tree of peptides (or, with fragment ions, of precursors),
+  their series (one per charge state, or per fragment ion), time points, and spectra (the
+  replicates), and shows the figures of what you select (below).
 - **Run**: runs *hxex*'s commands on the project (check, run, resume, report, analyse, info),
   with their messages, a progress bar, and a Stop button (below).
 - **Analysis**: shows the figures `hxex analyse` would write with the project's settings, and
@@ -232,12 +232,19 @@ to see what it counts, and on a flag or a reason it is left out to see what it m
 is in [Flags and reasons](flags.md)). The same works in the List tab and in every table shown
 in the window.
 
-For results with fragment ions (read from mzML or Thermo files with fragment lists), a charge
-row also names its fragment, its condition (the fragment list's label), and its MS level, for
-example `z=1  c-1:3  ETD, MS2`; one fragment taken from two parent peptides adds the parent
-(`from 2-12 z3`). The columns **ion**, **MS level**, **condition**, and **parent** show the
-same, and two lists beside the filter show only one MS level or one ion type (**peptides**: the
-peptides read at MS1). **Find** also finds a fragment (`c-1:3`), a condition, or a parent.
+For results with fragment ions (read from mzML or Thermo files with fragment lists), the tree
+is grouped by precursor: each top row is a parent peptide at one precursor charge, for example
+`2-12 ALKRINKELSD 3+`. Under it come the parent's own series at that charge (`MS1`), its
+precursor ions (`M  z=1  ETD, MS2`), and then its fragments, by ion series (the N-terminal
+ones, such as c, first), length, charge, MS level, and condition, so that one fragment's
+conditions are next to each other: `c-1:3  z=1  ETD, MS2`, then `c-1:3  z=1  ETD_pre, MS3`. A
+fragment read from two precursors (the 2+ and the 3+, say) is under each of them, as they are
+separate measurements. A peptide read at MS1 at a charge with no fragments has a row of its own
+at that charge. The columns **ion**, **MS level**, and **condition** show the same as the
+names, and two lists beside the filter show only one MS level or one ion type (**peptides**:
+the peptides read at MS1). **Find** also finds a fragment (`c-1:3`), a condition, or a parent;
+a residue number finds the fragments that cover that residue (`20`, or `2-6` for the fragments
+of exactly residues 2 to 6), under every precursor.
 
 For pooled results with a pooled FASTA (`[input] pooled_fasta`), the **identity** column says
 what each peptide may be: the one record whose sequence holds it, else the class all its
@@ -297,7 +304,8 @@ ladder should use: click a fragment's name in a legend to go to its series (to r
 spectra), and the page follows your decisions as you make them. A peptide read at MS1, or a
 parent's precursor ion, shows its own fragments. Time is on a linear axis for a kinetics run
 and on a log axis otherwise, as in the
-[analysis figure](fragment-residues.md).
+[analysis figure](fragment-residues.md), unless you choose another time axis in the list in the
+tab's bar (below).
 
 A replicate read from mzML or Thermo raw files also has an **elution** tab: its elution
 trace over retention time, to check that the scans summed sit on the peptide's own elution peak and not on a
@@ -514,12 +522,15 @@ Stepping by series with **◀ ▶** goes through its pages before the next serie
 previous series' last page first), from the spectra or the populations tab.
 
 Every such list in a figure's bar (the overview's pages, the spectra and populations pages, the
-uptake page's time axis) has small **◀ ▶** buttons beside it: they step to the previous or next
+uptake and fragments pages' time axis) has small **◀ ▶** buttons beside it: they step to the previous or next
 entry, and go round from the last to the first.
 
 The uptake page has a list of its own in its bar, for how it spreads the times: the project
 file's `[figures]` setting (named, with its value), or for the window only a log time axis, a
-linear one, or the time points evenly spaced. The session remembers the choice.
+linear one, or the time points evenly spaced. The fragments tab has the same list, and the two
+always show the same choice: change one and both pages follow. Its first entry is the fragment
+page's own default (linear for a kinetics run, log otherwise). The session remembers the
+choice.
 
 Results opened through the project file carry its `[figures]` settings and its review: change
 either (in the Project part, or in a text editor) and the results are shown again with the
