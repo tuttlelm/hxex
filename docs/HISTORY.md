@@ -10685,3 +10685,31 @@ CSVs or mzML if wanted.
     the benchmark 0 of 1,130 (highest 0.729), the tutorial 0 of 191 (highest 0.635). The
     controls overview names the line `max 0.85 (d2o_fraction)`. Test:
     `test_no_control_holds_more_deuterium_than_the_labelling_buffer`.
+
+409. **One measurement read under several samples counts once in the controls, and is
+    never compared with itself (owner, 2026-11-17).** A pooled project reads the same control
+    files for every state: of the private pooled dataset's spectra, 8,084 (all controls: 2,363
+    fully deuterated, 5,721 undeuterated) were one file read for two to five samples, and its
+    raw-file run 4,828 (328 and 4,500). The controls treated each copy as its own measurement,
+    so a fully deuterated control "agreed" with its own copy (`fd_retention_agrees`: the
+    unreplicated, multimodal control of an acetylated peptide passed that way), and the run's
+    median and outlier limit, the kint fit, the other-sample stand-ins and the retention map
+    counted one control up to five times. `hxex.picking.same_measurement` now numbers the
+    spectra by their content (the ion, and the picked bins' m/z and intensity, hashed; a
+    spectrum without signal is always its own), so a copy, a link, or one scan file listed for
+    two samples is found whatever its name. `fit_controls(measurement=)` compares a control
+    only with the other samples' own measurements, counts each measurement once wherever the
+    controls are pooled, and notes `fd_same_measurement` on series that share one; the run
+    passes it, and the analysis's recomputed controls and older bundles derive it from the
+    picked table. `spectra.csv` gains `same_measurement_as` (the other spectra's ids) and
+    `hxex info` a `shared spectra` line. Check (controls recomputed with and without the
+    numbering, d2o_fraction as stored): the pooled SpecExport run, 661 series noted, 65
+    `fd_retention_agrees` gone (each confirmed by its own copy), 3 newly `fd_disagrees`, the
+    run's limit made from 147 measurements instead of 639 (median 0.570 -> 0.562), and 877
+    stand-in retentions moved (at most 0.08, mostly `fd_map` and `fd_median`); the raw-file run
+    244 noted, 196 moved (at most 0.26), 2 controls no longer `retention_outlier`; the
+    benchmark and the tutorial share no spectra and do not change. No two spectra of one sample
+    were the same measurement in either pooled run. Not done (later steps): the per-bin noise
+    curve and the shared envelopes still count each copy, and copies within one sample are not
+    refused. Tests: `test_one_measurement_read_twice_is_found_by_its_content`,
+    `test_a_control_read_under_two_samples_counts_once`.

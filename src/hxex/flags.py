@@ -369,6 +369,15 @@ _add("fd_retention_agrees", "controls", "series", SERIES_CONTROLS,
      "samples.",
      "None: written as `fd_multimodal (retention agrees)` in `control_notes`.",
      guide=CONTROLS_PAGE)
+_add("fd_same_measurement", "controls", "series", SERIES_CONTROLS,
+     "The fully deuterated control's spectra are the same measurement as another sample's or "
+     "condition's: the same file, read twice (a copy, a link, or one scan file listed for "
+     "both). `same_measurement_as` in `spectra.csv` names the other spectra.",
+     "It counts once wherever the run's controls are pooled (the run's limits and median, "
+     "the kint fit, stand-ins from other samples, the retention map), and it is not compared "
+     "with itself, so the other sample cannot confirm it.",
+     check="If the samples should have had controls of their own, check which files they read.",
+     guide=CONTROLS_PAGE)
 _add("fd_charges_agree", "controls", "series", SERIES_CONTROLS,
      "The fully deuterated control's retention agrees with the peptide's other charge states.",
      "None: written as `fd_multimodal (retention agrees with its other charge states)` in "

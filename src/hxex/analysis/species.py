@@ -473,13 +473,14 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
         picked = results.binned.select(keep)
         rates = control_rates(picked, dataclasses.replace(run, controls=config))
         rt = series_rt(picked.data_id, picked.rt)
-    groups = charges = residues = None
+    groups = charges = residues = measurement = None
     fragments: set[int] = set()
     if results.binned is not None:
         from ..controls import charge_groups, fragment_ids, series_groups, series_residues
         from ..io.mzml import fragment_series
 
         b = results.binned
+        measurement = _fit_measurements(b, fit.spectrum_id)
         groups = series_groups(b.peptide, b.modification, b.charge, b.data_id)
         scan_fragments = fragment_series(spectra_source(results))
         charges = charge_groups(b.sample, b.peptide, b.modification, b.charge, b.data_id,
@@ -507,7 +508,7 @@ def analysis_controls(results, changes: Mapping[str, Any] | None = None, *, quie
         out = fit_controls(fit, _site_counts(results), config, usable=usable, rates=rates,
                            rt=rt, groups=groups, charges=charges, uncorrected=fragments,
                            screened=screened if n_screened else None, residues=residues,
-                           deamidation=deamidation)
+                           deamidation=deamidation, measurement=measurement)
     for k in [k for k, (ref, *_) in _RECOMPUTED.items() if ref() is None]:
         del _RECOMPUTED[k]
     _RECOMPUTED[key] = (weakref.ref(results), out, held)
@@ -1723,3 +1724,17 @@ def left_out_reasons(results, config=None) -> list[str]:
         why[np.isclose(time, t, rtol=1e-9, atol=1e-6)] = "time left out (exclude_times)"
     why[status == "rejected"] = ""
     return [str(w) for w in why]
+
+
+def _fit_measurements(binned, spectrum_id) -> np.ndarray | None:
+    """:func:`hxex.picking.same_measurement` of ``binned``, one value per spectrum of
+    ``spectrum_id`` (a fit's order); None when a spectrum is not in ``binned``."""
+    from ..picking import same_measurement
+
+    found = same_measurement(binned)
+    at = {str(x): i for i, x in enumerate(np.asarray(binned.spectrum_id, dtype=str))}
+    rows = [at.get(str(x)) for x in np.asarray(spectrum_id, dtype=str)]
+    if any(r is None for r in rows):
+        return None
+    return found[np.asarray(rows, dtype=np.int64)]
+

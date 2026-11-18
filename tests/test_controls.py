@@ -588,6 +588,44 @@ def test_flags_that_only_warn():
     assert table(rows2, groups={0: 1, 1: 1}).flags.tolist() == ["fd_disagrees"] * 2
 
 
+
+def test_a_control_read_under_two_samples_counts_once():
+    """Two samples that read the same fully deuterated spectra (one file, copied or listed for
+    both): the control is not compared with itself (no fd_retention_agrees from its own copy),
+    both are noted fd_same_measurement, and the run's median counts it once."""
+    def series(d, ret):
+        return [(d, 0, 0.0), (d, 0, 0.0), (d, 1e6, 10 * ret), (d, 1e6, 10 * ret)]
+
+    rows = series(0, 0.6) + series(1, 0.6)
+    groups = {0: ("PEPTIDE", "", 2), 1: ("PEPTIDE", "", 2)}
+    k = [1, 1, 2, 2, 1, 1, 2, 2]  # a split fully deuterated envelope, in both copies
+    fit = fake_fit(rows, selected_K=k)
+    alone = fit_controls(fit, np.full(8, 10.0), CFG, groups=groups)
+    assert alone.flags[0] == "fd_multimodal;fd_retention_agrees"  # its own copy agreed
+    same = [0, 1, 2, 3, 4, 5, 2, 3]  # the second sample's controls are the first's spectra
+    c = fit_controls(fit, np.full(8, 10.0), CFG, groups=groups, measurement=same)
+    assert c.flags.tolist() == ["fd_multimodal;fd_same_measurement"] * 2
+    from hxex.report.tables import _control_notes
+
+    assert _control_notes(c.flags[0]) == (
+        "fd_multimodal (retention unchecked);fd_same_measurement")
+    # an independent third sample still checks it
+    rows3 = rows + series(2, 0.62)
+    groups3 = {**groups, 2: ("PEPTIDE", "", 2)}
+    c = fit_controls(fake_fit(rows3, selected_K=k + [1] * 4), np.full(12, 10.0), CFG,
+                     groups=groups3, measurement=same + list(range(8, 12)))
+    assert c.flags[0] == "fd_multimodal;fd_retention_agrees;fd_same_measurement"
+    # the run's median: 0.4 twice (one measurement) and 0.6 give 0.5, not 0.4
+    rows = series(0, 0.4) + series(1, 0.4) + series(2, 0.6) + [(3, 0, 0.0), (3, 0, 0.0)]
+    fit = fake_fit(rows)
+    n = np.full(len(rows), 10.0)
+    assert fit_controls(fit, n, CFG).retention[3] == pytest.approx(0.4)
+    same = [0, 1, 2, 3, 4, 5, 2, 3, *range(8, 14)]
+    c = fit_controls(fit, n, CFG, measurement=same)
+    assert c.flags[3] == "fd_missing;fd_median" and c.retention[3] == pytest.approx(0.5)
+    with pytest.raises(ValueError, match="one value per measurement"):
+        fit_controls(fit, n, CFG, measurement=[0, 1])
+
 def test_a_missing_or_rejected_control_takes_the_other_charge_states():
     """combine_charges = false: a series without a good fully deuterated control takes the
     mean retention of the same peptide's accepted controls at its other charges in the same

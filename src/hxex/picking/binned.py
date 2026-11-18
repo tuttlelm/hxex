@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -161,3 +162,30 @@ class BinnedSet:
             peak_mz=self.peak_mz[bins],
             **out,
         )
+
+
+def same_measurement(binned: BinnedSet) -> np.ndarray:
+    """Which spectra of ``binned`` are one measurement read more than once, ``(M,)`` integers:
+    spectra of the same ion (peptide, modification and charge) whose picked bins are identical
+    in m/z and intensity, to the last bit, share a number (the index of the first of them in
+    spectrum-id order); every other spectrum has its own index. This is what two samples or
+    conditions that read the same file (a copy, a link, or one scan file listed twice) give:
+    the same raw data picked the same way. A spectrum without signal (every picked intensity 0)
+    is never the same as another."""
+    order = np.argsort(np.asarray(binned.spectrum_id, dtype=str), kind="stable")
+    out = np.arange(len(binned), dtype=np.int64)
+    first: dict[bytes, int] = {}
+    for i in order.tolist():
+        a, b = int(binned.offsets[i]), int(binned.offsets[i + 1])
+        intensity = np.asarray(binned.intensity[a:b], dtype=np.float64)
+        if not (intensity > 0).any():
+            continue
+        h = hashlib.blake2b(digest_size=16)
+        for part in (binned.peptide[i], binned.modification[i], binned.charge[i]):
+            h.update(str(part).encode())
+            h.update(b"\x1f")
+        h.update(np.ascontiguousarray(binned.mz[a:b], dtype=np.float64).tobytes())
+        h.update(intensity.tobytes())
+        out[i] = first.setdefault(h.digest(), i)
+    return out
+

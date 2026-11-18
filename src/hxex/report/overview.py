@@ -56,6 +56,7 @@ CONTROL_LABELS = {
     "fd_replicate_left_out": "FD replicate left out (note)",
     "fd_charges_agree": "agrees across charges (note)",
     "fd_deamidated": "FD deamidation corrected (note)",
+    "fd_same_measurement": "FD same file as another sample (note)",
 }
 QUALITY_LABELS = {
     "poor_fit": "poor fit",

@@ -869,3 +869,18 @@ def test_binned_set_keeps_peak_positions():
     # a table from elsewhere has no positions
     bare = dataclasses.replace(b, peak_mz=None, mz_offset_ppm=None)
     assert np.isnan(bare.peak_mz).all() and np.isnan(bare.mz_offset_ppm).all()
+
+
+def test_one_measurement_read_twice_is_found_by_its_content():
+    from hxex.picking import same_measurement
+
+    b = pick_spectra(make_set(), CFG)  # spectra 0 to 2 have the same sticks; 3 is empty
+    assert same_measurement(b).tolist() == [0, 0, 0, 3]  # an empty spectrum is its own
+    y = b.intensity.copy()
+    y[b.offsets[1]] += 1e-9  # the last bit decides
+    assert same_measurement(dataclasses.replace(b, intensity=y)).tolist() == [0, 1, 0, 3]
+    other = dataclasses.replace(b, charge=np.array([2, 3, 2, 2]))  # another ion
+    assert same_measurement(other).tolist() == [0, 1, 0, 3]
+    # numbered by the first in spectrum-id order, whatever the table's order
+    swapped = dataclasses.replace(b, spectrum_id=np.array(["p:s2", "p:s1", "p:s0", "p:s3"]))
+    assert same_measurement(swapped).tolist() == [2, 2, 2, 3]

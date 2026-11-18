@@ -13,6 +13,7 @@ says a series' back-exchange correction used a fallback instead of its own measu
 from __future__ import annotations
 
 import csv
+import weakref
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -388,7 +389,8 @@ def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     (:mod:`hxex.picking.profile`; empty for a spectrum that kept the pick); and the
     spectrum's own m/z check (``spectrum_offset_ppm``, its offset against its injection's
     median, and ``spectrum_offset_limit_ppm``, :func:`hxex.quality.spectrum_mz_offsets`; empty
-    where not assessed)."""
+    where not assessed); ``same_measurement_as``, the other spectra that are the same
+    measurement (the same file read under another sample or condition; empty for most)."""
     ks = results.effective_K
     k_max = int(ks.max())  # over every spectrum: the same columns whichever rows are made
     picked = np.arange(len(ks)) if rows is None else np.asarray(rows, dtype=np.int64)
@@ -424,7 +426,38 @@ def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
                        ("spectrum_offset_limit_ppm", "spectrum_offset_limit")):
         out[name] = (np.asarray(getattr(q, attr), dtype=np.float64)[picked] if q is not None
                      else np.full(len(picked), np.nan))
+    out["same_measurement_as"] = _same_measurement_as(results, picked)
     return out
+
+
+_SAME_AS: dict[int, tuple] = {}  # id(binned) -> (weak reference, spectrum id -> text)
+
+
+def _same_measurement_as(results: Results, picked) -> np.ndarray:
+    """``same_measurement_as`` of the spectra at positions ``picked`` (in the fit): the ids of
+    the other spectra that are the same measurement (:func:`hxex.picking.same_measurement`:
+    the same file read under two samples or conditions), ";"-separated; empty for the rest.
+    Worked out once per picked table."""
+    ids = np.asarray(results.fit.spectrum_id, dtype=str)[picked]
+    b = results.binned
+    if b is None:
+        return np.full(len(ids), "", dtype=object)
+    held = _SAME_AS.get(id(b))
+    if held is None or held[0]() is not b:
+        from ..picking import same_measurement
+
+        for k in [k for k, (ref, _) in _SAME_AS.items() if ref() is None]:
+            del _SAME_AS[k]
+        group = same_measurement(b)
+        sids = np.asarray(b.spectrum_id, dtype=str)
+        members: dict[int, list[str]] = {}
+        for g, sid in zip(group.tolist(), sids.tolist(), strict=True):
+            members.setdefault(g, []).append(sid)
+        text = {sid: ";".join(x for x in rows if x != sid)
+                for rows in members.values() if len(rows) > 1 for sid in rows}
+        held = (weakref.ref(b), text)
+        _SAME_AS[id(b)] = held
+    return np.array([held[1].get(sid, "") for sid in ids], dtype=object)
 
 
 def _test_columns(results: Results) -> dict[str, np.ndarray]:

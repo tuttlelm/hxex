@@ -82,6 +82,7 @@ from .picking import (
     PickerConfig,
     choose_measure,
     pick_spectra,
+    same_measurement,
     series_envelopes,
 )
 from .population_test import (
@@ -609,6 +610,7 @@ def _fit_part(
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None), noise_curve=_MEASURE, screened=None,
     chosen=None, residues=None, deamidation=None, rt_found=None, drift_unclear=None,
+    measurement=None,
     elution_cut=None, precursor=None, reused=None, injection=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
@@ -629,8 +631,10 @@ def _fit_part(
     (spectrum id -> K, a review table's choices): fitted whatever the screen says.
     ``deamidation``: the fully deuterated controls' deamidation
     (:func:`hxex.deamidation.deamidation_from_picked`), with ``[run.controls] deamidation``.
-    ``reused`` (:class:`hxex.reuse.Reused`): the previous results' fits (and tests) of the
-    measurements ``plan`` leaves out, merged with those fitted here. ``injection``: every
+    ``measurement``: which spectra are one measurement read twice
+    (:func:`hxex.picking.same_measurement`), counted once by the controls. ``reused``
+    (:class:`hxex.reuse.Reused`): the previous results' fits (and tests) of the measurements
+    ``plan`` leaves out, merged with those fitted here. ``injection``: every
     measurement's injection for ``low_intensity`` (:func:`hxex.quality.injection_keys`)."""
     lo, hi, share, edges = plan.lo, plan.hi, plan.fit_share, plan.edges
     if noise_curve is _MEASURE:  # run() gives its own (None: its rule found too few controls)
@@ -689,7 +693,7 @@ def _fit_part(
         controls = fit_controls(fit, n_sites, config.controls, rates=rates, rt=rt,
                                 groups=groups, charges=charges, uncorrected=fragments,
                                 screened=screened, residues=residues,
-                                deamidation=deamidation)
+                                deamidation=deamidation, measurement=measurement)
         if screened is not None and screened.any():
             log.info("controls: %d control spectra left out by the spectrum quality screens "
                      "(the loose level of [analysis.filters] spectrum_quality_filtering)",
@@ -1236,9 +1240,9 @@ def _control_inputs(picked: BinnedSet, measurements: Measurements, config: RunCo
                     source: Mapping | None) -> dict[str, Any]:
     """What :func:`hxex.controls.fit_controls` takes besides the fit, as :func:`run` makes it
     from the picked spectra (``picked``, those measured) and the read record (``source``):
-    ``rates``, ``rt``, ``groups``, ``charges``, ``fragments``, ``residues``, ``screened`` and
-    ``deamidation``. :func:`resume_bootstrap` makes them again from a bundle to recompute its
-    controls."""
+    ``rates``, ``rt``, ``groups``, ``charges``, ``fragments``, ``residues``, ``screened``,
+    ``deamidation`` and ``measurement`` (:func:`hxex.picking.same_measurement`).
+    :func:`resume_bootstrap` makes them again from a bundle to recompute its controls."""
     from .analysis.screening import control_removal
     from .io.mzml import fragment_series
 
@@ -1263,7 +1267,8 @@ def _control_inputs(picked: BinnedSet, measurements: Measurements, config: RunCo
             "groups": series_groups(picked.peptide, picked.modification, picked.charge,
                                     picked.data_id),
             "charges": charges, "fragments": fragments, "residues": residues,
-            "screened": screened, "deamidation": deamidation}
+            "screened": screened, "deamidation": deamidation,
+            "measurement": same_measurement(picked)}
 
 
 def site_counts(binned: BinnedSet, config: RunConfig) -> np.ndarray:
@@ -1511,6 +1516,7 @@ def run(
                                              fragments=inputs["fragments"],
                                              residues=inputs["residues"],
                                              deamidation=inputs["deamidation"],
+                                             measurement=inputs["measurement"],
                                              screened=inputs["screened"],
                                              envelope_offset=(
                                                  binned.envelope_offset_ppm[kept],

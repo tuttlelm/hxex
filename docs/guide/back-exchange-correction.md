@@ -108,6 +108,15 @@ Two more checks only warn, and the control is still used. They are listed in the
   `fd_multimodal (retention agrees with its other charge states)`. `fd_multimodal (retention
   unchecked)` means there was nothing to compare it with, or its other charge states disagree,
   so look at its spectra.
+- `fd_same_measurement`: the fully deuterated control's spectra are the same measurement as
+  another sample's or condition's, because both read the same file (a copy, a link, or one
+  scan file listed for both; a pooled project often reads its controls for every state).
+  *hxex* recognises this by the spectra themselves, whatever the files are called, and
+  `same_measurement_as` in `spectra.csv` names the other spectra. A control is never compared
+  with its own copy, so another sample cannot confirm it unless that sample measured its own,
+  and wherever the run's controls are pooled (the run's median and outlier limit, the
+  theoretical back-exchange fit, another sample's stand-in, the retention map), each
+  measurement counts once.
 - `data_below_m0`: a time point of the series reads below its undeuterated control. The
   fastest time points are the hardest to measure, so it is the time point that is suspect,
   not the control: look at that time point's spectra. Noted only when the undeuterated control
@@ -160,7 +169,8 @@ the amide-count rule applies, and the log says so. `control_notes` then says
    charge states (`fd_other_charge`, a stand-in, checked against its time course in the same
    way), unless `fd_other_charge = false` too.
 2. The same peptide in the run's other samples (`fd_other_sample`): the mean retention of its
-   accepted fully deuterated controls there. The samples of one run share the peptide and the
+   accepted fully deuterated controls there, each measurement once (samples that read the
+   same control file count as one, `fd_same_measurement`). The samples of one run share the peptide and the
    LC, so this is close: in three datasets it predicted a peptide's measured retention to
    within 0.006 to 0.012 (median), against 0.040 to 0.054 for the run's median. It needs the
    same sequence and modification, so a peptide that carries a sample's mutation has no match.

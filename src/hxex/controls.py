@@ -107,7 +107,8 @@ FD_FALLBACKS = ("d2o", "median", "kint")
 # flags that only warn (the control stays in use)
 CONTROL_NOTES = ("fd_disagrees", "fd_multimodal", "m0_multimodal", "data_below_m0",
                  "fd_retention_agrees", "fd_charges_disagree", "m0_replicate_left_out",
-                 "fd_replicate_left_out", "fd_charges_agree", "fd_deamidated")
+                 "fd_replicate_left_out", "fd_charges_agree", "fd_deamidated",
+                 "fd_same_measurement")
 # every name a series' control flags can hold (the ``flags`` of a ControlTable, ";"-separated;
 # ``series.csv`` shows them in ``controls`` and ``control_notes``): each has an entry in
 # hxex.flags, and a test keeps this list complete against the names written in this module
@@ -604,6 +605,7 @@ def fit_controls(
     screened: np.ndarray | None = None,
     residues: Mapping[int, tuple] | None = None,
     deamidation: Deamidation | None = None,
+    measurement: np.ndarray | None = None,
 ) -> ControlTable:
     """The control table of a fit that includes K=1 (``fit.fits[1]``).
 
@@ -629,6 +631,12 @@ def fit_controls(
     (``ControlTable.screened``). ``deamidation`` (with ``config.deamidation``;
     :func:`hxex.deamidation.deamidation_from_picked`) lowers the fully deuterated mean of the
     Asn-Gly series of a deamidated sample by its share before the checks (``fd_deamidated``).
+    ``measurement`` (``(M,)``; :func:`hxex.picking.same_measurement`) says which spectra are one
+    measurement read more than once (equal numbers): the fully deuterated controls of series
+    that share one (two samples reading the same file) count once wherever the run's controls
+    are pooled (the run's limits, its median, the kint fit, another sample's stand-in, the
+    retention map) and are never compared with each other (``fd_same_measurement``, a note);
+    None: every spectrum is its own.
     """
     uncorrected = {int(d) for d in uncorrected}
     if not config.deamidation:
@@ -662,6 +670,11 @@ def fit_controls(
         screened_ids = tuple(str(x) for x in np.asarray(fit.spectrum_id)[screened])
         usable = usable & ~screened
     means = fit.fits[1].means[:, 0]
+    if measurement is None:
+        measurement = np.arange(m, dtype=np.int64)
+    measurement = np.asarray(measurement)
+    if measurement.shape != (m,):
+        raise ValueError("measurement must have one value per measurement")
     role = np.asarray(fit.role, dtype=str)
     series = np.unique(fit.data_id)
     serves = {UNDEUT: role == UNDEUT, FULLDEUT: role == FULLDEUT}
@@ -725,7 +738,8 @@ def fit_controls(
     cols: dict[str, list] = {name: [] for name in (
         "n_amides", "n_undeut", "n_fd", "m0_measured", "mfd_measured", "m0", "m0_se", "mfd",
         "mfd_se", "retention", "fallback", "flags",
-        "course_high", "course_tol")}  # the last two for the stand-in checks only
+        "course_high", "course_tol",  # these two for the stand-in checks only
+        "own_fd")}  # the measurements of its fully deuterated control (_independent)
     candidates: list[int] = []  # rows whose measured mFD passed the checks so far
     pending: list[int] = []  # rows whose mFD falls back, filled in after the loop
     for s in series:
@@ -743,7 +757,7 @@ def fit_controls(
                 "n_amides": n_am, "n_undeut": n_u, "n_fd": n_f, "m0_measured": m0_meas,
                 "mfd_measured": mfd_meas, "m0": 0.0, "m0_se": 0.0, "mfd": n_am, "mfd_se": 0.0,
                 "retention": float("nan"), "fallback": False, "flags": "uncorrected",
-                "course_high": high, "course_tol": tol,
+                "course_high": high, "course_tol": tol, "own_fd": frozenset(),
             }
             for name, value in values.items():
                 cols[name].append(value)
@@ -800,6 +814,8 @@ def fit_controls(
             "retention": (mfd - m0) / n_am if n_am > 0 else float("nan"),
             "fallback": fallback, "flags": ";".join(flags), "course_high": high,
             "course_tol": tol,
+            "own_fd": frozenset(measurement[rows[usable[rows] & ~left_out[rows]
+                                                  & serves[FULLDEUT][rows]]].tolist()),
         }
         for name, value in values.items():
             cols[name].append(value)
@@ -808,7 +824,7 @@ def fit_controls(
     # judges (fd_fallback 'kint', series with rates) are left to it
     limits = None
     if config.retention_min is None:
-        limits = _run_limits(cols, candidates, config)
+        limits = _run_limits(cols, _independent(cols, candidates), config)
         judged = (candidates if config.fd_mode != "kint" else
                   [i for i in candidates if rates is None or int(series[i]) not in rates])
         pending += _reject_outliers(cols, judged, limits, config)
@@ -826,7 +842,7 @@ def fit_controls(
     # d2o_fraction
     pending = sorted(i for i in set(pending) if config.fd_mode != "d2o"
                      and "fd_kint" not in cols["flags"][i].split(";"))
-    accepted = [cols["retention"][i] for i in candidates
+    accepted = [cols["retention"][i] for i in _independent(cols, candidates)
                 if not set(cols["flags"][i].split(";")) & set(FD_REJECTED)]
     corrected = [f.split(";") for f in cols["flags"] if "uncorrected" not in f.split(";")]
     missing = [f for f in corrected if "m0_missing" in f]
@@ -867,6 +883,7 @@ def fit_controls(
     if charges and (config.fd_other_sample or config.fd_retention_map):
         _peptide_elsewhere(cols, series, charges, residues, config)
     _flag_disagreement(cols, series, groups, config, charges)
+    _note_same_measurement(cols)
     return ControlTable(
         config=config, data_id=series.astype(np.int64),
         n_amides=np.array(cols["n_amides"], dtype=np.float64),
@@ -1039,13 +1056,19 @@ def _flag_sample_disagreement(cols: dict, series: np.ndarray, groups: Mapping,
     for rows in members.values():
         measured = {i: (cols["mfd_measured"][i] - cols["m0"][i]) / cols["n_amides"][i]
                     for i in rows}
-        finite = [r for r in measured.values() if np.isfinite(r)]
         for i in rows:
-            if len(finite) < 2 or not np.isfinite(measured[i]):
+            if not np.isfinite(measured[i]):
+                continue
+            # the other samples' own measurements, each once: a control read under two
+            # samples from one file is not compared with itself
+            others = [measured[j] for j in _independent(cols, [
+                j for j in rows if j != i and not cols["own_fd"][j] & cols["own_fd"][i]])
+                if np.isfinite(measured[j])]
+            if not others:
                 continue
             # the group's median (robust from three on), or the other control of a pair
-            ref = (float(np.median(finite)) if len(finite) > 2
-                   else next(r for j, r in measured.items() if j != i))
+            ref = (float(np.median([measured[i], *others])) if len(others) > 1
+                   else others[0])
             if abs(measured[i] - ref) > config.sample_tolerance:
                 cols["flags"][i] = ";".join(f for f in (cols["flags"][i], "fd_disagrees") if f)
                 n += 1
@@ -1243,6 +1266,41 @@ FD_REJECTED = ("fd_missing", "retention_low", "retention_high", "fd_below_data",
                "retention_outlier", "fd_off_model")
 
 
+def _independent(cols: dict, rows) -> list[int]:
+    """``rows`` with each measurement once: a row is kept unless its fully deuterated
+    control shares a measurement (``own_fd``) with a row kept before it, so two samples
+    reading the same file count as one control. Rows without measurements are all kept."""
+    seen: set = set()
+    out: list[int] = []
+    for i in rows:
+        own = cols["own_fd"][i]
+        if own & seen:
+            continue
+        seen |= own
+        out.append(i)
+    return out
+
+
+def _note_same_measurement(cols: dict) -> None:
+    """Note ``fd_same_measurement`` on every corrected series whose own fully deuterated
+    control shares a measurement with another series' (another sample or condition reading
+    the same file), and say how many in the log."""
+    holders: dict = {}
+    for i, own in enumerate(cols["own_fd"]):
+        if "uncorrected" in cols["flags"][i].split(";"):
+            continue
+        for x in own:
+            holders.setdefault(x, []).append(i)
+    shared = sorted({i for rows in holders.values() if len(rows) > 1 for i in rows})
+    for i in shared:
+        cols["flags"][i] = ";".join(f for f in (cols["flags"][i], "fd_same_measurement") if f)
+    if shared:
+        log.info("%d series have a fully deuterated control that is the same measurement as "
+                 "another series' (the same spectra read under two samples or conditions; "
+                 "fd_same_measurement): each such measurement counts once in the run's checks "
+                 "and stand-ins, and is never compared with itself", len(shared))
+
+
 def _fd_used(cols: dict, i: int) -> bool:
     """Whether row ``i``'s own fully deuterated control is measured and accepted."""
     return (cols["n_fd"][i] > 0 and cols["n_amides"][i] > 0
@@ -1404,8 +1462,9 @@ def _peptide_elsewhere(cols: dict, series: np.ndarray, charges: Mapping,
     for i in donors:
         _, pep, mod = charges[int(series[i])][0]
         by_peptide.setdefault((pep, mod), []).append(i)
-    on_map = ([(residues[int(series[j])], cols["retention"][j]) for j in donors
-               if int(series[j]) in residues] if residues else [])
+    on_map = ([(residues[int(series[j])], cols["retention"][j])
+               for j in _independent(cols, donors) if int(series[j]) in residues]
+              if residues else [])
     n_sample = n_map = 0
     for i, s in enumerate(series):
         s = int(s)
@@ -1417,8 +1476,8 @@ def _peptide_elsewhere(cols: dict, series: np.ndarray, charges: Mapping,
         r = flag = None
         se = 0.0
         if config.fd_other_sample:
-            others = [j for j in by_peptide.get((pep, mod), ())
-                      if charges[int(series[j])][0][0] != sample]
+            others = _independent(cols, [j for j in by_peptide.get((pep, mod), ())
+                                         if charges[int(series[j])][0][0] != sample])
             if others:
                 cand = float(np.mean([cols["retention"][j] for j in others]))
                 if not _below_its_data(cols, i, cand):
@@ -1498,8 +1557,9 @@ def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Ma
         cols["flags"][i] = ";".join(f for f in (cols["flags"][i], name) if f)
 
     pending_set = set(pending)
-    fitted = [i for i, s in enumerate(series)
+    judged = [i for i, s in enumerate(series)
               if i not in pending_set and int(s) in rates and cols["n_amides"][i] > 0]
+    fitted = _independent(cols, judged)  # each measurement once in the fit
     if len(fitted) < config.kint_min_series:
         log.warning("theoretical back-exchange not fitted: %d usable fully deuterated controls "
                     "(kint_min_series %d); missing ones take the run's median retention",
@@ -1530,10 +1590,10 @@ def _kint_fallback(cols: dict, series: np.ndarray, pending: list[int], rates: Ma
 
     a, t0, b, _ = _fit_kint(measured(fitted), [rates[int(series[i])] for i in fitted],
                             amides(fitted), times(fitted))
-    off = (np.abs(_kint_predict(a, t0, [rates[int(series[i])] for i in fitted], times(fitted), b)
-                  - measured(fitted)) / amides(fitted) > config.kint_tolerance)
-    rejected = [i for i, o in zip(fitted, off, strict=True) if o]
-    kept = [i for i, o in zip(fitted, off, strict=True) if not o]
+    off = (np.abs(_kint_predict(a, t0, [rates[int(series[i])] for i in judged], times(judged), b)
+                  - measured(judged)) / amides(judged) > config.kint_tolerance)
+    rejected = [i for i, o in zip(judged, off, strict=True) if o]
+    kept = _independent(cols, [i for i, o in zip(judged, off, strict=True) if not o])
     if len(kept) < config.kint_min_series:
         log.warning("theoretical back-exchange not fitted: %d fully deuterated controls agree "
                     "with it (kint_min_series %d); missing ones take the run's median "

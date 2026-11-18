@@ -361,8 +361,9 @@ def test_tables_have_the_documented_columns_and_values(results):
     k_max = int(ks.max())
     assert f"mean_{k_max}" in spec and f"population_se_{k_max}" in spec
     # the screens, one column each, the series' m/z check, then the spectrum's own, last
-    assert list(spec)[-10:] == [*SCREEN_SCORES, *MZ_CHECK_COLUMNS, "spectrum_offset_ppm",
-                                "spectrum_offset_limit_ppm"]
+    assert list(spec)[-11:] == [*SCREEN_SCORES, *MZ_CHECK_COLUMNS, "spectrum_offset_ppm",
+                                "spectrum_offset_limit_ppm", "same_measurement_as"]
+    assert set(spec["same_measurement_as"]) == {""}  # no spectrum read twice here
     i = 8
     sel = comp["spectrum_id"] == spec["spectrum_id"][i]
     assert np.isclose(spec["centroid"][i], (comp["mean"][sel] * comp["population"][sel]).sum())

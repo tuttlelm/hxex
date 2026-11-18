@@ -2039,6 +2039,8 @@ def cmd_info(args) -> int:
               if source.get("sequences") else []),
             ("bin values", _peak_measure_text(b.peak_measure())),
             ("measurements", str(len(fit))),
+            *([("shared spectra", _same_measurement_text(b))]
+              if _same_measurement_text(b) else []),
             ("series", str(len(set(fit.data_id.tolist())))),
             ("K tried", ", ".join(str(k) for k in fit.config.k_values)
              + (" (and K = 1 for the controls, for the back-exchange correction)"
@@ -2095,6 +2097,26 @@ def cmd_info(args) -> int:
             b.verify()
             _say(f"{'checksums':14s} ok")
     return 0
+
+
+def _same_measurement_text(bundle) -> str | None:
+    """``hxex info``'s line on spectra that are one measurement read more than once
+    (:func:`hxex.picking.same_measurement`): how many, and how many of them are controls; None
+    when there are none, or without a picked table."""
+    from .picking import same_measurement
+
+    if not bundle.has("binned"):
+        return None
+    b = bundle.binned()
+    group = same_measurement(b)
+    shared = np.bincount(group, minlength=len(group))[group] > 1
+    if not shared.any():
+        return None
+    role = np.asarray(b.role if b.role is not None else [""] * len(b), dtype=str)
+    return (f"{int(shared.sum())} spectra are the same measurement as another sample's or "
+            "condition's (the same file read for each; "
+            f"{int((shared & (role != '')).sum())} of them controls, which the controls count "
+            "once; spectra.csv same_measurement_as names them)")
 
 
 def _preset_info(manifest) -> str | None:
