@@ -555,6 +555,14 @@ _add("fragment quality flag", "left_out", "spectrum",
      "Left out of the fragment analysis (uptake, ladders, closure, rates); the precursor's own "
      "ion and a spectrum the review accepted stay in. Not left out of anything else.",
      guide="fragment-residues.md#residue-level-rates-and-protection-factors-from-fragment-ladders")
+_add("sequence shared within the vial", "left_out", "series", LEFT_OUT,
+     "With groups of samples, the peptide's sequence also occurs in another group's protein "
+     "measured in the same vial (a sample of the same label), so its spectra are the sum of "
+     "both proteins' copies.",
+     "Left out when `[analysis] shared_sequences = \"leave_out\"`; with \"keep\" (the "
+     "default) kept, named in the `shared_with` column of `species_uptake.csv` and "
+     "`compare_peptides.csv`, and marked by a grey strip on the Woods and butterfly plots.",
+     guide="experiments.md#groups-of-samples")
 
 ENTRIES: tuple[Entry, ...] = tuple(_ENTRIES)
 _BY_NAME = {e.name: e for e in ENTRIES}

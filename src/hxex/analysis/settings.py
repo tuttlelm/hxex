@@ -192,6 +192,11 @@ class AnalysisConfig:
       (set together with ``groups`` is refused: one way in); every other setting applies to
       every group. ``group`` names the group an analysis is of (:meth:`with_group`; empty
       otherwise).
+    - ``shared_sequences``: what a group's analysis does with a peptide whose sequence another
+      group's protein in the same vial (a sample of the same label) also has
+      (:mod:`hxex.analysis.shared`; always marked, ``shared_with`` in the peptide tables):
+      ``'keep'`` (the default) compares it like any other, ``'leave_out'`` leaves its spectra
+      out of the sample's analysis (reason in ``left_out_spectra.csv``).
     - ``times`` (s, or text with a unit such as ``"5 min"``): the time points of the per-time
       figures (empty: all); ``exclude_times``: time points left out of the whole analysis
       (unreliable ones; the fits in the bundle are kept; the controls are not times).
@@ -329,6 +334,7 @@ class AnalysisConfig:
     summary: Mapping[str, Any] | None = None  # item -> text, or sample -> text
     groups: Mapping[str, AnalysisGroup] | None = None
     group: str = ""  # the group this analysis is of (with_group), empty otherwise
+    shared_sequences: str = "keep"
 
     def __post_init__(self):
         from ..kint import read_conditions
@@ -440,6 +446,17 @@ class AnalysisConfig:
             object.__setattr__(self, "head_to_head", tuple(str(g) for g in given))
         if self.populations is not None and self.populations not in POPULATION_RULES:
             raise ValueError(f"populations must be one of {', '.join(POPULATION_RULES)}")
+        from .shared import SHARED_SEQUENCES
+
+        if self.shared_sequences not in SHARED_SEQUENCES:
+            raise ValueError(f"shared_sequences must be one of {', '.join(SHARED_SEQUENCES)}")
+        if self.shared_sequences == "leave_out" and self.filters is None:
+            raise ValueError('shared_sequences = "leave_out" leaves spectra out as '
+                             "[analysis.filters] does: filters = false turns that off")
+        if self.shared_sequences == "leave_out" and self.runs:
+            raise ValueError('shared_sequences = "leave_out" is not made for separate runs '
+                             '([analysis.runs]) yet: use "keep" (the peptides are marked, '
+                             "shared_with)")
         if isinstance(self.borderline_evidence, bool) or not self.borderline_evidence >= 0:
             raise ValueError("borderline_evidence must be a number >= 0")
 
@@ -566,9 +583,10 @@ class AnalysisConfig:
         for f in fields(self):
             value = getattr(self, f.name)
             if f.name in ("filters", "choice", "fragments"):
+                hidden = getattr(value, "NOT_SETTINGS", ())  # set by the analysis itself
                 value = None if value is None else value.to_dict() if hasattr(
                     value, "to_dict") else {g.name: getattr(value, g.name)
-                                            for g in fields(value)}
+                                            for g in fields(value) if g.name not in hidden}
             elif f.name == "annotations":
                 value = value.to_dict()
             elif f.name == "groups":

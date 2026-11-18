@@ -40,7 +40,9 @@ FD_CMAP = LinearSegmentedColormap.from_list("hxex_fD", FD_COLORS)
 FD_CMAP.set_bad("#d0d0d0")
 # one colour, marker and marker size per sample (the reference sample first, in black)
 # the dashed grey lines at region boundaries and sites, the same in every residue plot (owner)
-MARK_LINE = {"color": "#8c8c8c", "linewidth": 1.0, "linestyle": "--", "zorder": 1}
+# region boundaries and sites: thin short dashes, so that many regions do not crowd the data
+# (owner, 2026-11-18)
+MARK_LINE = {"color": "#8c8c8c", "linewidth": 0.6, "linestyle": (0, (3, 3)), "zorder": 1}
 
 SAMPLE_STYLES = (
     ("#000000", "s", 3.5), ("#1f77b4", "o", 4.5), ("#d62728", "o", 6.0), ("#17becf", "o", 7.0),

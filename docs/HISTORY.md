@@ -10929,3 +10929,39 @@ CSVs or mzML if wanted.
     after the other reasons; entry in `hxex.flags` (`hxex explain`, flags.md). Checked on the
     private targeted dataset: the same 10,371 spectra as `fragment_left_out.csv`; the column
     takes 2 s. Guide fragment-residues.md. Test: the fragment filter test.
+
+416. **Groups of samples, step 2: peptides another protein of the vial also has are marked,
+    and left out on request (owner, 2026-11-18; PLAN Next steps 38).** With
+    `[analysis.groups]`, a group's analysis looks, for each of its samples, at the other groups'
+    samples of the same vial and checks every peptide the sample measured against their protein
+    sequences (`hxex.analysis.shared`: residues compared, modifications aside, anywhere in the
+    protein; the sequence from `[analysis.fasta]`, else the one the reader stored, a
+    SpecExport's FASTA). Two groups' samples are one vial when they share a label that names
+    both groups, split at `+` (owner's choice: "alone", in every group, names none, so each
+    group's own sample is its own vial; on the private heterooligomer dataset the other rule,
+    any shared label, marked the third protein's sample alone as sharing with the second).
+    Found peptides are named in a `shared_with` column (after `end`) of `species_uptake.csv`
+    and `compare_peptides.csv` (either side there). `[analysis] shared_sequences = "keep"`
+    (the default) compares them as any other; `"leave_out"` leaves their spectra out as
+    `[analysis.filters]` does (`SpeciesFilters.shared`, set by the analysis and not a setting;
+    reason `sequence shared within the vial`, one fixed text for the flag dictionary, the group
+    named in `shared_with`; a spectrum the review accepted stays; refused with `filters =
+    false` and with `[analysis.runs]`). A partner whose sequence is unknown is warned about by
+    `hxex analyse`, and `hxex check` gains a `shared` line: the vials found in several groups,
+    what is done, and the samples whose sequence it cannot find. Also: a sample of `[analysis]
+    samples` (or a group's) every spectrum of which the filters left out is now dropped with a
+    warning instead of stopping the analysis ("no sample ... in the results"; the reference
+    must still be there). Checked on the private dataset: one peptide (in the third protein's
+    sample of its vial with the second) also occurs in the second protein; keep marked its 19
+    species rows, leave_out left its 21 spectra out (left_out_summary counts them). The mark on
+    the figures, chosen from drafts on that case (owner: the look of the pooled forms' strip,
+    filled grey without hatching, above the grid lines): a grey strip outlined in black along
+    the bottom of the sample's Woods plots (every panel, under the peptide's residues) and of
+    the butterfly's differences (under its place), named "shared peptide sequence" in the
+    legend; on a Woods panel with a strip the note at the bottom right sits above it (6 % of
+    the panel instead of 3 %), so a strip near the end of the protein never runs under the
+    text. A peptide left out by "leave_out" has no bar, so no strip. Region boundaries on
+    every residue figure (owner: "very busy"): thin short dashes (0.6 pt, 3-on-3; were 1 pt
+    long dashes) and no line before residue 1 (`Annotations.marks`; a region's end and the
+    next one's start were already one line; a line after the last residue lies outside the
+    axis). Drafts in the private analysis_groups folder.

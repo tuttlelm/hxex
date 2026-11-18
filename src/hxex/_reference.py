@@ -203,6 +203,11 @@ _DESCRIPTIONS: dict[str, str] = {
                         "the default colours follow this order, the first black, whichever "
                         "sample is the reference; empty: every sample, in alphabetical order. "
                         "With [analysis.groups] each group names its own instead",
+    "analysis.shared_sequences": 'with [analysis.groups]: what a group\'s analysis does with a '
+                                 "peptide whose sequence another group's protein in the same "
+                                 'vial also has (always named in shared_with): "keep" compares '
+                                 'it like any other, "leave_out" leaves its spectra out '
+                                 "(left_out_spectra.csv)",
     "analysis.groups.reference": "the group's sample the others of the group are compared with",
     "analysis.groups.samples": 'the group\'s samples, in order: a list (`["B_alone", '
                                '"B_in_AB"]`), or a table of vial label = sample (`{ alone = '

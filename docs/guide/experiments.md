@@ -101,12 +101,14 @@ label = "S19"
 Repeat a table for every region or site; regions may overlap. Residues are numbered as the
 protein's sequence numbers them (the FASTA, or the peptides' own numbers).
 
-- **A region** is drawn as dashed lines at its two ends on every by-residue figure (the residue
-  overlays, the every-sample residue figure, and the Woods plots), and it is also a unit of the
-  analysis: `regions.csv` gives each region's fD per sample and time, the Regions figure
-  (`regions_<time>`) draws them as bars, and with a reference `compare_regions.csv`, the region
-  significance map, and the region composition maps say whether, and where in it, each sample
-  differs from the reference (see [Outputs](outputs.md)).
+- **A region** is drawn as thin dashed lines at its boundaries on every by-residue figure (the
+  residue overlays, the every-sample residue figure, the Woods plots, and redundancy and
+  resolution): one line between two regions that follow each other, and none before residue
+  1. It is also a unit of the analysis: `regions.csv` gives each region's fD per sample and
+  time, the Regions figure (`regions_<time>`) draws them as bars, and with a reference
+  `compare_regions.csv`, the region significance map, and the region composition maps say
+  whether, and where in it, each sample differs from the reference (see
+  [Outputs](outputs.md)).
 - **A site** is only drawn: a dashed line at the residue, with its label above the Woods plots.
   It is not tabled or tested; to test a stretch around a site, name it as a region.
 
@@ -145,6 +147,23 @@ end = 64
   never merged.
 - A sample may be in several groups; a sample in no group is not analysed (`hxex check` lists
   them).
+
+**Peptides another protein of the vial also has.** In a vial that holds two of the groups'
+proteins, a peptide whose sequence occurs in both proteins is measured as the sum of both
+proteins' copies, so it is not like with like against the group's reference. *hxex* looks for
+these in every vial two groups share: a label in both groups that names both, split at `+`
+(`"A+B"` in groups A and B; `"alone"` names no group, so each group's sample labelled
+`alone` is its own vial). A peptide counts as shared when its residues, modifications aside,
+occur anywhere in the other protein's sequence, which comes from `[analysis.fasta]` or else
+from the FASTA files the results were read with (SpecExport). Such peptides are always named in
+the `shared_with` column of `species_uptake.csv` and `compare_peptides.csv`, and marked on the
+sample's Woods and butterfly plots by a grey strip along the bottom of the panel under the
+peptide ("shared peptide sequence" in the legend). With
+`[analysis] shared_sequences = "keep"` (the default) they are compared like any other peptide;
+with `"leave_out"` their spectra are left out of that sample's analysis (reason `sequence
+shared within the vial` in `left_out_spectra.csv`), so the residues and comparisons agree.
+`hxex check` lists the vials it found shared and the samples whose sequence it does not know
+(their partners' peptides cannot be checked: give their FASTA in `[analysis.fasta]`).
 
 `hxex analyse` then makes one analysis per group, each in its own folder named after the group
 (`results_analysis_A`, `results_analysis_B`), with every table and figure of an ordinary

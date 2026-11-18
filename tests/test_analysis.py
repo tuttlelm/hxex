@@ -588,7 +588,8 @@ def test_annotations_round_trip_and_marks():
 
     ann = Annotations(regions=(Region("A", 1, 10), Region("B", 11, 20)), sites=(Site(5, "S5"),))
     assert Annotations.from_dict(ann.to_dict()) == ann
-    assert ann.marks() == [0.5, 5.0, 10.5, 20.5]
+    assert ann.marks() == [5.0, 10.5, 20.5]  # none before residue 1; 10.5 once
+    assert Annotations(regions=(Region("C", 3, 8),)).marks() == [2.5, 8.5]
     with pytest.raises(ValueError):
         Region("bad", 5, 4)
     with pytest.raises(ValueError, match="unknown"):

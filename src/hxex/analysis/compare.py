@@ -82,8 +82,12 @@ class Annotations:
     sites: tuple[Site, ...] = field(default_factory=tuple)
 
     def marks(self) -> list[float]:
-        """Residues for dashed lines: region boundaries (between residues) and sites."""
-        edges = {r.start - 0.5 for r in self.regions} | {r.end + 0.5 for r in self.regions}
+        """Residues for dashed lines: region boundaries (between residues; a region's end and
+        the next one's start share one line) and sites. No line before residue 1: the protein's
+        start needs none (owner, 2026-11-18; a line after its last residue lies outside the
+        figures' residue axis)."""
+        edges = ({r.start - 0.5 for r in self.regions if r.start > 1}
+                 | {r.end + 0.5 for r in self.regions})
         return sorted(edges | {float(s.residue) for s in self.sites})
 
     def to_dict(self) -> dict:

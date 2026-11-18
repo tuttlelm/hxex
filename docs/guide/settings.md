@@ -457,6 +457,7 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `modified_peptides` | text | `"separate"` | "separate" (modified forms as states of their own) or "combined" (averaged with the sample) |
 | `protection` | true/false | `false` | opt in to the peptides' protection factors (needs [analysis.labelling]) |
 | `summary` | table | unset | what only you know for the HDX data summary table (summary.csv, summary.md): [analysis.summary] (below) |
+| `shared_sequences` | text | `"keep"` | with [analysis.groups]: what a group's analysis does with a peptide whose sequence another group's protein in the same vial also has (always named in shared_with): "keep" compares it like any other, "leave_out" leaves its spectra out (left_out_spectra.csv) |
 
 ## `[analysis.filters]`
 

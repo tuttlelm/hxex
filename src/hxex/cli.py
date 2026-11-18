@@ -687,6 +687,7 @@ def cmd_check(args) -> int:
         _say(f"{'correction':14s} {_correction_text(project, peptide_roles)}")
     if project.analysis is not None and project.analysis.groups:
         problems += _group_lines(project.analysis, read_samples)
+        _shared_check_line(project)
     if inp is not None and inp.retention_times is not None and not inp.retention_times.is_file():
         problems.append(f"input.retention_times {inp.retention_times}: no such file")
     if inp is not None and inp.rt_elution_windows is not None:
@@ -754,6 +755,63 @@ def _group_lines(analysis, read: list[str] | None) -> list[str]:
         if left := [s for s in read if s not in grouped]:
             _say(f"{'':14s} in no group, so not analysed: {', '.join(left)}")
     return problems
+
+
+def _sequence_sources(project) -> tuple[bool, set[str]]:
+    """Whose protein sequence the shared-sequence check of ``[analysis.groups]`` will know:
+    (every sample's, the samples named), from ``[analysis.fasta]``, a SpecExport folder's FASTA
+    files, and the sequences a bundle stored."""
+    from .io.bundle import bundle_manifest
+
+    analysis, inp = project.analysis, project.input
+    if isinstance(analysis.fasta, str):
+        return True, set()
+    known = {str(k) for k in (analysis.fasta or {})}
+    if inp is not None and inp.format == "specexport" and inp.spectra is None \
+            and inp.data_dir.is_dir():
+        from .io.specexport import _fasta_files
+
+        known |= {p.stem for p in _fasta_files(inp.data_dir)}
+    bundle = project.output.bundle
+    if bundle is not None and Path(bundle).exists():
+        try:
+            source = ((bundle_manifest(bundle) or {}).get("configs") or {}).get(
+                "spectra_source") or {}
+        except Exception:  # noqa: BLE001 - a bundle that does not read: said elsewhere
+            source = {}
+        known |= {str(k) for k in (source.get("sequences") or {})}
+    return False, {k.lower() for k in known}
+
+
+def _shared_check_line(project) -> None:
+    """``hxex check``'s line on the peptides another protein in the same vial may share: for
+    each vial (label) two groups or more hold, whether every partner's protein sequence is
+    known, so that the check can be made (``[analysis] shared_sequences``)."""
+    analysis = project.analysis
+    vials: dict[str, list[tuple[str, str]]] = {}
+    for name, group in analysis.groups.items():
+        for label, sample in zip(group.labels, group.samples, strict=True):
+            vials.setdefault(label, []).append((name, sample))
+    from .analysis.shared import vial_groups
+
+    # a vial two groups hold: a label in both that names both ("A+B"; "alone" names none)
+    shared = {label: [(g, smp) for g, smp in v if g in vial_groups(label)]
+              for label, v in vials.items()
+              if len({g for g, _ in v} & set(vial_groups(label))) > 1}
+    if not shared:
+        _say(f"{'shared':14s} no vial in two groups (a label shared by groups must name them, "
+             "\"A+B\" in groups A and B), so no peptide is checked for a shared sequence")
+        return
+    every, known = _sequence_sources(project)
+    missing = sorted({s for v in shared.values() for _, s in v
+                      if not every and s.lower() not in known})
+    what = ("peptides another protein of the vial also has are "
+            + ("left out" if analysis.shared_sequences == "leave_out"
+               else "kept and marked (shared_with)"))
+    _say(f"{'shared':14s} vials in several groups: {', '.join(shared)}; {what}"
+         + (f"; no sequence known for {', '.join(missing)}, so their partners' peptides are "
+            "not checked against them (name their FASTA in [analysis.fasta])" if missing
+            else ""))
 
 
 def _device_text(project) -> tuple[str, str | None]:

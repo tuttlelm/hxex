@@ -65,6 +65,7 @@ REPLICATE_OUTLIER_REASON = "replicate outlier"
 # a fragment ion carrying one of [analysis.fragments] leave_out_flags; written with the
 # flags in brackets: "fragment quality flag (below_noise;poor_envelope)"
 FRAGMENT_FLAG_REASON = "fragment quality flag"
+SHARED_REASON = "sequence shared within the vial"  # [analysis] shared_sequences = "leave_out"
 # the reasons the spectrum quality screens remove a spectrum, in the order of the summary
 _SCREEN_REMOVE = ("screen_below_mono", "screen_off_position", "screen_between",
                   "screen_beyond_reach")
@@ -73,7 +74,8 @@ _SCREEN_REMOVE = ("screen_below_mono", "screen_off_position", "screen_between",
 LEFT_OUT_REASONS = (OFF_MZ_REASON, *(screen_reason(x) for x in _SCREEN_REMOVE),
                     KEPT_AT_ONE_REASON, UNDEUT_HIGH_REASON, UNDEUT_LEFT_OUT_REASON,
                     STAND_IN_REASON, STAND_IN_SCREENED_REASON, STAND_IN_UNDEUT_REASON,
-                    ABOVE_AMIDES_REASON, REPLICATE_OUTLIER_REASON, FRAGMENT_FLAG_REASON)
+                    ABOVE_AMIDES_REASON, REPLICATE_OUTLIER_REASON, FRAGMENT_FLAG_REASON,
+                    SHARED_REASON)
 
 log = logging.getLogger(__name__)
 
@@ -160,8 +162,15 @@ class SpeciesFilters:
     spectrum_quality_filtering: str = "loose"
     off_mz: bool = True
     undeuterated_cap: bool = False
+    # (sample, peptide) whose sequence another protein in the same vial has, left out by
+    # [analysis] shared_sequences = "leave_out" (hxex.analysis.shared); set by the analysis,
+    # not a setting of [analysis.filters]
+    shared: frozenset = frozenset()
+
+    NOT_SETTINGS = ("shared",)
 
     def __post_init__(self):
+        object.__setattr__(self, "shared", frozenset((str(s), str(p)) for s, p in self.shared))
         if not 0 <= self.min_population < 0.5:
             raise ValueError("min_population must be in [0, 0.5)")
         if self.max_fD_se <= 0 or self.max_fD <= 0:
@@ -773,6 +782,8 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
             listed.append(ABOVE_AMIDES_REASON)
         if filters.replicate_outlier is not None:
             listed.append(REPLICATE_OUTLIER_REASON)
+        if filters.shared:
+            listed.append(SHARED_REASON)
         listed += sorted(set(reasons) - set(listed))
         where = {OFF_MZ_REASON: "off_mz = true",
                  UNDEUT_HIGH_REASON: "[run.controls] m0_max",
@@ -780,6 +791,7 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
                  "spectrum quality": f"spectrum_quality_filtering = \"{level}\"",
                  STAND_IN_REASON: f"stand_in_controls = \"{filters.stand_in_controls}\"",
                  ABOVE_AMIDES_REASON: "above_amides = true",
+                 SHARED_REASON: "[analysis] shared_sequences = \"leave_out\"",
                  REPLICATE_OUTLIER_REASON: f"replicate_outlier = {filters.replicate_outlier:g}"
                  if filters.replicate_outlier is not None else ""}
         for reason in listed:
@@ -910,6 +922,10 @@ def _left_out(results, filters: SpeciesFilters, controls, n_amides: np.ndarray,
                                 "m0_max and are left out (stand_in_controls = \"%s\"); "
                                 "is a labelled file marked as undeuterated?", s, n_heavy,
                                 n_series, filters.stand_in_controls)
+    if filters.shared:  # before the amide count: the series is not the protein's alone
+        peptide = np.asarray(binned.peptide)[rows].astype(str)
+        mark(np.array([(s, p) in filters.shared for s, p in zip(sample, peptide, strict=True)],
+                      dtype=bool), SHARED_REASON)
     if filters.above_amides:
         mark(np.isfinite(k1) & (k1 > n_amides + 1e-9) & ~raw, ABOVE_AMIDES_REASON)
     fd = k1.copy()

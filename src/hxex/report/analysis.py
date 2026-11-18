@@ -396,14 +396,28 @@ def fragment_series_ids(results) -> tuple[set[int], bool]:
     return series, bool(targets) and len(series) == len(targets)
 
 
-def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
+def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None, shared=None):
     """The tables (name -> columns) and figures (stem -> drawing function) of the peptide
-    analysis of the species table ``up``."""
+    analysis of the species table ``up``; ``shared`` (:class:`hxex.analysis.shared.
+    SharedPeptides`) marks the peptides another protein of a sample's vial also has on its
+    Woods and butterfly plots."""
     # the samples are states (run, sample); the settings name them by sample (run:sample for
     # one run's), and the figures by their display label
     present = _states(up)
-    wanted = ([resolve_sample(up.run, up.sample, s) for s in config.samples]
-              if config.samples else present)
+    wanted = []
+    for s in config.samples or ():
+        try:
+            wanted.append(resolve_sample(up.run, up.sample, s))
+        except ValueError:
+            if s == config.reference or not any(
+                    state[1] == s or label(*state) == s
+                    for state in (_sample_states(results) or ())):
+                raise
+            # in the results, but the analysis left every spectrum out (a filter, or
+            # shared_sequences = "leave_out"): said, not an error
+            log.warning("%s: every spectrum was left out (left_out_spectra.csv says why), so "
+                        "it is not in the analysis", s)
+    wanted = wanted if config.samples else present
     ref_state = (resolve_sample(up.run, up.sample, config.reference, "reference sample")
                  if config.reference else None)
     if ref_state is None and len(wanted) >= 2:  # (owner, 2026-11-13: easy to miss)
@@ -460,6 +474,10 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     reference = labels[ref_state] if ref_state is not None else ""
     ref_name = label(*ref_state) if ref_state is not None else ""  # names it for the analyses
     styles = _sample_styles(up, labels, in_order + states_shown, config.colours)
+    # each sample's peptides another protein of its vial also has, by display label
+    strips: dict[str, set[str]] = {}
+    for run, sample, peptide in (shared.shared if shared is not None else ()):
+        strips.setdefault(labels.get((run, sample), label(run, sample)), set()).add(peptide)
     # the display labels of the samples with residue-level outputs, in the figures' order
     res_order = [labels[s] for s in wanted if s in on]
     res_order = [x for x in in_order if x in set(res_order)]
@@ -796,14 +814,14 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
                 if k1_rows and counts_d is not None:
                     jobs.append((f"woods_{s}_{when_}", lambda s=s, t=t: woods_populations_figure(
                         comparisons["K=1 fD"], counts_d, s, t, annotations=ann,
-                        length=length, **when)))
+                        length=length, shared=strips.get(s), **when)))
                 elif k1_rows:
                     jobs.append((f"woods_{s}_{when_}", lambda s=s, t=t: woods_figure(
                         [("K=1 fD", comparisons["K=1 fD"])], s, t, annotations=ann,
-                        length=length, **when)))
+                        length=length, shared=strips.get(s), **when)))
                 if k2_stack and all(c.where(sample=s, time=t).any() for _, c in k2_stack):
                     jobs.append((f"woods_K2_{s}_{when_}", lambda s=s, t=t: woods_figure(
-                        k2_stack, s, t, annotations=ann, length=length,
+                        k2_stack, s, t, annotations=ann, length=length, shared=strips.get(s),
                         note=("compared where both samples have two populations" if gate
                               else "every K=2 description compared"), **when)))
         # which residues differ from the reference, judged on the shared peptides (HISTORY 203)
@@ -869,7 +887,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
             if drawn and k1.where(sample=s, time=drawn).any():
                 jobs.append((f"butterfly_{s}", lambda s=s: plot_butterfly(
                     k1, s, times=[t for t in drawn if k1.where(sample=s, time=t).any()],
-                    **when)))
+                    shared=strips.get(s), **when)))
     if protection is not None:
         for s in in_order:
             if protection.where(sample=s).any():
@@ -1479,13 +1497,20 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
                         for name, r in runs.items()}
             results = (RunSet(peptides, merge=results.merge) if isinstance(results, RunSet)
                        else peptides[""])
+        shared = _shared_peptides(results, config, base)
+        if config.shared_sequences == "leave_out" and shared.shared:
+            config = dataclasses.replace(config, filters=dataclasses.replace(
+                config.filters, shared=shared.left_out()))
         up = species_uptake(results, ks=config.ks, exclude_flagged=config.exclude_flagged,
                             filters=config.filters, controls=config.controls,
                             min_population=config.choice_limits.min_population,
                             populations=config.populations)
         check_cancel(cancel)
         if len(up):
-            tables, jobs = _peptide_outputs(results, config, base, up, cancel=cancel)
+            tables, jobs = _peptide_outputs(results, config, base, up, cancel=cancel,
+                                            shared=shared)
+            if config.group:
+                _add_shared_with(tables, shared, config)
             # what was left out on the way, step by step, for people
             tables["left_out_summary"] = left_out_summary(
                 results, config.filters, ks=config.ks, exclude_flagged=config.exclude_flagged,
@@ -1498,6 +1523,64 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
     tables.update(frag_tables)
     jobs += frag_jobs
     return AnalysisOutputs(_with_pooled_identities(tables, runs), jobs, config)
+
+
+def _shared_peptides(results, config: AnalysisConfig, base):
+    """A group's peptides that another protein in the same vial also has
+    (:func:`hxex.analysis.shared.shared_peptides`), said in the log: how many, and the
+    partners whose sequence is unknown (the check is not made against those)."""
+    from ..analysis.shared import SharedPeptides, shared_peptides
+
+    if not config.group:
+        return SharedPeptides()
+    found = shared_peptides(results, config, config.sequences(base))
+    for sample, group, partner in found.unknown:
+        log.warning("%s: the sequence of %s (group %s, the same vial) is not known, so its "
+                    "peptides sharing a sequence with it cannot be found: name its FASTA in "
+                    "[analysis.fasta]", sample, partner, group)
+    if found.shared:
+        by_sample: dict[str, int] = {}
+        for _, sample, _ in found.shared:
+            by_sample[sample] = by_sample.get(sample, 0) + 1
+        what = ("left out ([analysis] shared_sequences = \"leave_out\")"
+                if config.shared_sequences == "leave_out" else
+                "kept and marked (shared_with; shared_sequences = \"leave_out\" leaves them "
+                "out)")
+        log.info("peptides whose sequence another protein in the same vial also has, %s: %s",
+                 what, ", ".join(f"{n} in {s}" for s, n in by_sample.items()))
+    return found
+
+
+def _add_shared_with(tables: dict, shared, config: AnalysisConfig) -> None:
+    """The ``shared_with`` column (after ``end``) of the peptide tables of a group's analysis:
+    the other groups whose protein in the same vial also has the row's peptide ('' for none;
+    in ``compare_peptides`` for either side, the sample's or the reference's)."""
+    ref = config.reference
+
+    def add(name: str, values) -> None:
+        table = tables.get(name)
+        if not table or "peptide" not in table:
+            return
+        cols = list(table)
+        at = cols.index("end") + 1 if "end" in cols else len(cols)
+        column = np.array(values, dtype=object).astype(str)
+        tables[name] = {**{k: table[k] for k in cols[:at]}, "shared_with": column,
+                        **{k: table[k] for k in cols[at:]}}
+
+    for name in ("species_uptake", "compare_peptides"):
+        table = tables.get(name)
+        if not table or "peptide" not in table:
+            continue
+        runs = np.asarray(table.get("run", [""] * len(table["peptide"]))).astype(str)
+        values = []
+        for run, sample, peptide in zip(runs, np.asarray(table["sample"]).astype(str),
+                                        np.asarray(table["peptide"]).astype(str), strict=True):
+            names = [g for g in shared.groups_of(run, sample, peptide).split(", ") if g]
+            if name == "compare_peptides" and ref:
+                names += [g for g in shared.groups_of(run, ref, peptide).split(", ")
+                          if g and g not in names]
+            values.append(", ".join(names))
+        add(name, values)
 
 
 def _flags_found(tables: Mapping, config: AnalysisConfig, runs: Mapping) -> dict:

@@ -953,7 +953,7 @@ check`, 3 strict comparisons by sequence, 4 the forms of the pool, 5 head-to-hea
 table, 6 the window (identity columns, filter by class and level; built). Check data: the private
 pooled dataset (`HXEX_POOLED_EXAMPLE`, both conditions) and the state exports beside it.
 
-### Groups of samples (design, owner 2026-11-18; step 1 built, HISTORY 414)
+### Groups of samples (design, owner 2026-11-18; steps 1-2 built, HISTORY 414 and 416)
 
 **The use case.** One project holds samples of several proteins, analysed together but each
 protein looked at on its own: heterooligomers of three proteins A, B, and C, each alone and in
@@ -1012,8 +1012,17 @@ always marked: a `shared_with` column (the other group's name) in the peptide ta
 (`species_uptake.csv`, `compare_peptides.csv`) and a mark on the peptide figures (drafts
 first). `[analysis] shared_sequences = "keep"` (default; owner: keep and flag) compares them
 like any other peptide; `"leave_out"` leaves their spectra out of that sample's analysis, as an
-`[analysis.filters]` rule does (reason "sequence shared with GROUP in this vial" in
-`left_out_spectra.csv`), so residues and comparisons agree. The other sample's sequence comes
+`[analysis.filters]` rule does (reason "sequence shared within the vial" in
+`left_out_spectra.csv`, the group named in `shared_with`: the flag dictionary needs one fixed
+reason), so residues and comparisons agree. Two groups' samples are one vial when they share a
+label that names both groups, split at `+` (owner, 2026-11-18: `"alone"` names no group, so each
+group's own sample is its own vial, though the label lines the groups up across the analysis).
+Built as step 2 (HISTORY 416); the mark on the figures, chosen from drafts (owner,
+2026-11-18): a grey strip outlined in black along the bottom of the Woods plot under the
+peptide's residues and under its place on the butterfly's differences, as the pooled forms' own
+residues, "shared peptide sequence" in the legend; the Woods note at the bottom right moves
+above the strips. The
+other sample's sequence comes
 from the bundle (stored FASTA) or `[analysis.fasta]`; where it is unknown the check cannot be
 made and `hxex check` says so. Measured on a private three-protein heterooligomer dataset
 (2026-11-18): 297 distinct measured sequences, one of which also occurs in a second protein,

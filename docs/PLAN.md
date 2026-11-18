@@ -1968,8 +1968,10 @@ Planned, not built:
    regions by name over each protein's own residues. Also covers the gap item 29 left (several
    proteins on one residue axis). Design in `docs/ANALYSIS.md` "Groups of samples". Step 1
    built (HISTORY 414: the settings, one analysis per group, own regions and sites, `hxex
-   check`, `--group`, the guide's "Regions and sites"); steps 2 (shared sequences), 3 (across
-   groups), and 4 (the window's group choice and the project editor's pages; until then the
+   check`, `--group`, the guide's "Regions and sites"); step 2 built (HISTORY 416: the
+   `shared_with` column, `shared_sequences`, and a grey strip on the Woods and butterfly
+   plots); steps 3
+   (across groups) and 4 (the window's group choice and the project editor's pages; until then the
    editor leaves the groups to the file, and the Sequence view draws the shared regions) to do.
 
 ## Risks and open decisions

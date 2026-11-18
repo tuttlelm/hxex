@@ -17,6 +17,7 @@ from matplotlib.axes import Axes
 from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from matplotlib.ticker import AutoMinorLocator, FuncFormatter
 
 from ..analysis import (
@@ -44,6 +45,20 @@ KEY_GREY = "#4d4d4d"  # legend entries for shapes and lines: not a sample's colo
 SHAPE_LABELS = {"avg": r"fD$_{\rm avg}$", "low": r"fD$_{\rm low}$", "high": r"fD$_{\rm high}$",
                 "pop_low": r"pop$_{\rm low}$", "pop_high": r"pop$_{\rm high}$"}
 THRESHOLD_LABEL = "critical difference (±)"
+# a peptide whose sequence another group's protein in the same vial also has (groups of samples,
+# hxex.analysis.shared): a strip along the bottom of the panel, as the pooled forms' own residues
+# (hxex.report.pooled), above the grid lines and below the data (owner, 2026-11-18)
+SHARED_FILL, SHARED_EDGE, SHARED_ZORDER = "0.91", "black", 1.7
+SHARED_LABEL = "shared peptide sequence"
+
+
+def _shared_key() -> Patch:
+    return Patch(facecolor=SHARED_FILL, edgecolor=SHARED_EDGE, lw=0.8, label=SHARED_LABEL)
+
+
+def _shared_strip(ax: Axes, left: float, right: float, height: float = 0.04) -> None:
+    ax.axvspan(left, right, ymin=0.0, ymax=height, facecolor=SHARED_FILL,
+               edgecolor=SHARED_EDGE, lw=0.8, zorder=SHARED_ZORDER)
 
 
 def _style(n: int):
@@ -639,6 +654,7 @@ def plot_peptide_differences(
     ax: Axes | None = None,
     time_scale: str = "seconds",
     legend: bool = True,
+    shared: Collection[str] | None = None,
 ) -> Figure:
     """The Woods plot of ``sample`` against the reference at ``time``: each peptide a horizontal
     bar over its residues at its difference in ``fD``, red if significantly higher, blue if lower,
@@ -647,7 +663,10 @@ def plot_peptide_differences(
     line for :meth:`~hxex.analysis.PeptideComparison.scaled_by_separation`'s copy); a
     ``*`` at the top over the middle of each peptide whose two values were corrected differently
     (one with a fallback control). With ``legend``, the colours and the dashed line are named
-    above the panel, on the right. Bars have the gid ``peptide:<start>-<end>``.
+    above the panel, on the right. Bars have the gid ``peptide:<start>-<end>``. ``shared``: the
+    peptides (sequences) another protein of the sample's vial also has (groups of samples), each
+    marked by a grey strip under its residues along the bottom (named in the legend; the note at
+    the bottom right then sits above the strips).
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -675,6 +694,9 @@ def plot_peptide_differences(
     ax.axhline(0, color="#999999", linewidth=0.8, zorder=1.6)  # above the grid, grey: not the data
     differ = rows[comparison.corrected_differently[rows]]
     _corrected_differently(ax, (comparison.start[differ] + comparison.end[differ]) / 2)
+    stripped = [i for i in rows if shared and str(comparison.peptide[i]) in shared]
+    for i in stripped:
+        _shared_strip(ax, comparison.start[i] - 0.5, comparison.end[i] + 0.5)
     _marks(ax, annotations)
     top = length if length is not None else int(comparison.end[rows].max())
     ax.set_xlim(0, top)
@@ -690,11 +712,13 @@ def plot_peptide_differences(
     ax.grid(color="#e5e5e5", linewidth=0.8)
     n_sig = int(comparison.significant[rows].sum())
     n_compared = int(np.isfinite(comparison.delta[rows]).sum())  # a population may not be
-    ax.text(0.99, 0.03, f"{_when(time, time_scale)}; {n_sig} of {n_compared} significant",
+    ax.text(0.99, 0.06 if stripped else 0.03,  # above the strips: never over them
+            f"{_when(time, time_scale)}; {n_sig} of {n_compared} significant",
             transform=ax.transAxes, ha="right", va="bottom", fontsize=9)
     if legend:
         ax.legend(handles=_difference_key(comparison.quantity, comparison.reference,
-                                          comparison.share),
+                                          comparison.share)
+                  + ([_shared_key()] if stripped else []),
                   loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=2, frameon=False,
                   fontsize=7, handlelength=1.6, columnspacing=1.0, borderaxespad=0.2)
     return fig
@@ -805,11 +829,12 @@ def woods_populations_figure(
     annotations: Annotations | None = None,
     length: int | None = None,
     time_scale: str = "seconds",
+    shared: Collection[str] | None = None,
 ) -> Figure:
     """The first page of the Woods plot of ``sample`` at ``time``: the K=1 differences
-    (:func:`plot_peptide_differences`) above where the number of populations differs
-    (:func:`plot_population_counts`); the K=2 comparisons are the second page
-    (:func:`woods_figure`)."""
+    (:func:`plot_peptide_differences`; ``shared`` as there) above where the number of
+    populations differs (:func:`plot_population_counts`); the K=2 comparisons are the second
+    page (:func:`woods_figure`)."""
     up, down, both = _count_groups(counts, sample, time)
     lanes = sum(max(_lanes([(a, b) for a, b, _ in g])) + 1 if g else 1
                 for g in (up, down, both))
@@ -818,7 +843,7 @@ def woods_populations_figure(
     top_ax, bottom_ax = fig.subplots(2, 1, sharex=True,
                                      gridspec_kw={"height_ratios": [2.7, height]})
     plot_peptide_differences(k1, sample, time, annotations=annotations, length=length,
-                             ax=top_ax, time_scale=time_scale)
+                             ax=top_ax, time_scale=time_scale, shared=shared)
     top_ax.set_title("K=1 fD", fontsize=10, loc="left")
     top_ax.set_xlabel("")
     plot_population_counts(counts, sample, time, length=length or int(max(k1.end)),
@@ -899,6 +924,7 @@ def plot_butterfly(
     max_labels: int = 60,
     time_scale: str = "seconds",
     own: Collection[tuple[str, int, int]] | None = None,
+    shared: Collection[str] | None = None,
 ) -> Figure:
     """The butterfly plot of ``sample`` against the reference: every peptide in order of its
     position, the reference's value upwards and the sample's downwards, one line per time (a
@@ -911,6 +937,9 @@ def plot_butterfly(
     ``difference:<time>``; each difference line carries its time's rows of the comparison
     (``compare_peptides.csv``). ``own``: the ``(peptide, start, end)`` of a pooled form's own
     peptides, each marked by a black triangle under the differences (named in their legend).
+    ``shared``: the peptides (sequences) another protein of the sample's vial also has (groups
+    of samples), each marked by a grey strip along the bottom of the differences (named in
+    their legend).
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -994,6 +1023,11 @@ def plot_butterfly(
                        transform=bottom.get_xaxis_transform(), clip_on=False, zorder=4)
         key.append(Line2D([], [], linestyle="none", marker="^", markersize=4, color="black",
                           label="its own peptides"))
+    common = [position[k] for k in keys if shared and k[2] in shared]
+    for x in common:  # under the differences, as on the Woods plot
+        _shared_strip(bottom, x - 0.5, x + 0.5, height=0.05)
+    if common:
+        key.append(_shared_key())
     bottom.legend(handles=key, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=len(key),
                   frameon=False, fontsize=7, borderaxespad=0.2)
     what = "ΔfD" if comparison.quantity == "fD" else "Δpopulation"
@@ -1017,11 +1051,12 @@ def woods_figure(
     length: int | None = None,
     time_scale: str = "seconds",
     note: str = "",
+    shared: Collection[str] | None = None,
 ) -> Figure:
     """Woods plots of ``sample`` stacked, one per ``(title, comparison)`` (for example K=1, the
     K=2 ranks and the population), sharing the residue axis; the fD panels and a population
     scaled by its separation (in fD units) share one y range. ``note``: a line at the top of
-    the page.
+    the page. ``shared``: as :func:`plot_peptide_differences`, in every panel.
 
     ``time_scale`` (:attr:`hxex.report.Results.time_scale`): with ``'order'`` the time is
     labelled as a point number, not a time."""
@@ -1032,7 +1067,8 @@ def woods_figure(
         # population panel
         new = n == 0 or comparison.quantity != comparisons[n - 1][1].quantity
         plot_peptide_differences(comparison, sample, time, annotations=annotations,
-                                 length=length, ax=ax, time_scale=time_scale, legend=new)
+                                 length=length, ax=ax, time_scale=time_scale, legend=new,
+                                 shared=shared)
         ax.set_title(title, fontsize=10, loc="left")
         if n < len(comparisons) - 1:
             ax.set_xlabel("")

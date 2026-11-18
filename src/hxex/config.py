@@ -1096,7 +1096,8 @@ ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "residu
                  "overlay_two_only", "peptide_match", "head_to_head", "populations",
                  "borderline_evidence", "modified_peptides",
                  "controls", "merge", "colours",
-                 "fragments", "protection", "labelling", "summary", "groups")
+                 "fragments", "protection", "labelling", "summary", "groups",
+                 "shared_sequences")
 # removed (owner, 2026-10-19; docs/HISTORY.md item 106): refused with the reason
 _REMOVED_ANALYSIS_KEYS = ("protection_residues", "protection_r1", "protection_max_se")
 
@@ -1142,7 +1143,8 @@ def _analysis_from(data: Mapping, base: Path):
     if isinstance(values.get("filters"), Mapping):
         from .analysis import SpeciesFilters
 
-        _check_keys(values["filters"], {f.name for f in fields(SpeciesFilters)},
+        _check_keys(values["filters"], {f.name for f in fields(SpeciesFilters)}
+                    - set(SpeciesFilters.NOT_SETTINGS),
                     "[analysis.filters]")
     if values.get("choice") is None:
         values.pop("choice", None)  # false, or unset: the defaults of the populations rule
@@ -2242,7 +2244,9 @@ def _not_settings(cls: type | None) -> dict[str, Any]:
     names = getattr(cls, "NOT_SETTINGS", ())
     if not names:
         return {}
-    defaults = cls().to_dict()
+    instance = cls()
+    defaults = (instance.to_dict() if hasattr(instance, "to_dict")
+                else {f.name: getattr(instance, f.name) for f in fields(cls)})
     return {k: defaults[k] for k in names}
 
 def _toml_table(name: str, data: Mapping, comment: bool = False, cls: type | None = None,

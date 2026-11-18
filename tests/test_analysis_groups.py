@@ -193,3 +193,134 @@ def test_check_finds_a_group_sample_that_is_not_read(tmp_path, capsys):
     assert cli.main(["check", str(path)]) == 1
     err = capsys.readouterr().err
     assert "[analysis.groups.B] samples: no sample 'B2' among those read (A1, A2, B1)" in err
+
+
+SHARED = """
+[analysis]
+ks = [1]
+overlay = ["avg"]
+{extra}
+[analysis.groups.A]
+reference = "A1"
+samples = {{ alone = "A1", "A+B" = "A2" }}
+[analysis.groups.B]
+reference = "B1"
+samples = {{ alone = "B0", "A+B" = "B1" }}
+"""
+
+
+def shared_project(tmp_path, extra="", fasta=("A1", "A2", "B0", "B1")):
+    """Groups A and B, each with a sample alone and one in the vial A+B; every protein holds
+    the peptide (so A2's is shared with B1's protein and B1's with A2's, but A1's and B0's,
+    labelled "alone", are each their own vial's)."""
+    path = groups_project(tmp_path, "")
+    write_mzml(tmp_path / "B0.mzML", time_course(n=6))
+    text = path.read_text().replace(
+        '[output]', '[[input.runs]]\npath = "B0.mzML"\nsample = "B0"\n\n[output]')
+    for sample in fasta:
+        # group A's own proteins number the peptide 1-10; group B's (only partners here) hold
+        # it further in: the sequence is compared, not the residue numbers
+        (tmp_path / f"{sample}.fasta").write_text(f">{sample}\nMK{PEPTIDE}GGS\n"
+                                                  if sample.startswith("B")
+                                                  else f">{sample}\n{PEPTIDE}GG\n")
+    files = "\n".join(f'{s} = "{s}.fasta"' for s in fasta)
+    path.write_text(text + SHARED.format(extra=extra) + f"[analysis.fasta]\n{files}\n")
+    return path
+
+
+def test_a_peptide_another_protein_of_the_vial_has_is_marked_or_left_out(tmp_path, capsys):
+    """shared_with names the other group where the vial's label names both groups ("A+B"),
+    never for "alone"; shared_sequences = "leave_out" leaves the spectra out with a reason;
+    a partner without a known sequence is warned about; hxex check names the shared vials."""
+    path = shared_project(tmp_path)
+    assert cli.main(["-q", "run", str(path)]) == 0
+    capsys.readouterr()
+    assert cli.main(["check", str(path)]) == 0
+    assert "shared         vials in several groups: A+B; peptides another protein of the " \
+        "vial also has are kept and marked (shared_with)" in capsys.readouterr().out
+    assert cli.main(["analyse", str(path), "--group", "A"]) == 0
+    assert "kept and marked" in capsys.readouterr().err
+
+    def rows(folder, name):
+        with open(folder / f"{name}.csv", newline="") as f:
+            return list(csv.DictReader(f))
+
+    a = tmp_path / "out_analysis_A"
+    marks = {(r["sample"], r["shared_with"]) for r in rows(a, "species_uptake")}
+    assert marks == {("A1", ""), ("A2", "B")}
+    assert {(r["sample"], r["shared_with"]) for r in rows(a, "compare_peptides")} == {
+        ("A2", "B")}
+
+    path.write_text(path.read_text().replace('overlay = ["avg"]',
+                                             'overlay = ["avg"]\nshared_sequences = "leave_out"'))
+    capsys.readouterr()
+    assert cli.main(["analyse", str(path), "--group", "A", "--overwrite"]) == 0
+    # every spectrum of A2 left out: the sample is said to be gone, the analysis goes on
+    assert "A2: every spectrum was left out" in capsys.readouterr().err
+    left = rows(a, "left_out_spectra")
+    assert {r["sample"] for r in left if r["reason"] == "sequence shared within the vial"} \
+        == {"A2"}
+    assert {r["sample"] for r in rows(a, "species_uptake")} == {"A1"}
+    # the settings used say so, without the peptides the analysis found (not a setting)
+    used = (a / "analysis_settings_used.toml").read_text()
+    assert 'shared_sequences = "leave_out"' in used and "shared =" not in used
+
+
+def test_a_partner_without_a_sequence_is_named(tmp_path, capsys):
+    path = shared_project(tmp_path, fasta=("A1", "A2"))
+    assert cli.main(["-q", "run", str(path)]) == 0
+    capsys.readouterr()
+    assert cli.main(["check", str(path)]) == 0
+    assert "no sequence known for B1, so their partners' peptides are not checked" in \
+        capsys.readouterr().out
+    assert cli.main(["analyse", str(path), "--group", "A"]) == 0
+    assert "A2: the sequence of B1 (group B, the same vial) is not known" in \
+        capsys.readouterr().err
+
+
+def test_shared_sequences_is_checked():
+    with pytest.raises(ValueError, match="shared_sequences must be one of keep, leave_out"):
+        AnalysisConfig(shared_sequences="drop")
+    with pytest.raises(ValueError, match="filters = false turns that off"):
+        AnalysisConfig(shared_sequences="leave_out", filters=None)
+
+
+def test_shared_peptides_are_marked_on_the_woods_and_butterfly_plots():
+    """A grey strip under each shared peptide (above the grid lines, below the data), named
+    "shared peptide sequence" in the legend; on the Woods plot the note at the bottom right
+    then sits above the strips. Without shared peptides, nothing changes."""
+    import numpy as np
+    from matplotlib.colors import to_rgba
+
+    from hxex.analysis import PeptideComparison
+    from hxex.report import plot_butterfly, plot_peptide_differences
+    from hxex.report.compare import SHARED_FILL, SHARED_LABEL
+
+    n = 4
+    pc = PeptideComparison(
+        sample=np.array(["S"] * n), peptide=np.array(["GSTVED", "AKLPGSTV"] * 2),
+        modification=np.array([""] * n), start=np.array([6, 2, 6, 2]),
+        end=np.array([11, 9, 11, 9]), time=np.array([4.0, 4.0, 60.0, 60.0]),
+        value_reference=np.array([0.3, 0.2, 0.6, 0.5]), value_reference_se=np.full(n, 0.01),
+        value=np.array([0.4, 0.2, 0.7, 0.5]), value_se=np.full(n, 0.01),
+        delta=np.array([0.1, 0.0, 0.1, 0.0]), delta_se=np.full(n, 0.01), t=np.zeros(n),
+        p=np.array([0.01, 0.9, 0.01, 0.9]), n_reference=np.full(n, 3), n=np.full(n, 3),
+        significant=np.array([True, False, True, False]), reference="R", delta_crit=0.05)
+
+    def strips(ax):  # read by colour, not by artist type (matplotlib 3.8: a Polygon)
+        return [p for p in ax.patches if tuple(p.get_facecolor()) == to_rgba(SHARED_FILL)]
+
+    def note_y(ax):
+        return next(t for t in ax.texts if "significant" in t.get_text()).get_position()[1]
+
+    plain = plot_peptide_differences(pc, "S", 4.0).axes[0]
+    assert not strips(plain) and note_y(plain) == 0.03
+    assert SHARED_LABEL not in [t.get_text() for t in plain.get_legend().texts]
+    marked = plot_peptide_differences(pc, "S", 4.0, shared={"GSTVED"}).axes[0]
+    (strip,) = strips(marked)
+    assert strip.get_zorder() > 1.6 and note_y(marked) == 0.06  # above the grid and zero line
+    assert SHARED_LABEL in [t.get_text() for t in marked.get_legend().texts]
+    bottom = plot_butterfly(pc, "S", shared={"AKLPGSTV"}).axes[1]
+    assert len(strips(bottom)) == 1
+    assert SHARED_LABEL in [t.get_text() for t in bottom.get_legend().texts]
+    assert not strips(plot_butterfly(pc, "S").axes[1])
