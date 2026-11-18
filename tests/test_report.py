@@ -1027,7 +1027,7 @@ def test_controls_overview(results):
     # the limits are named beside their lines, the bars in short words (owner: not verbose)
     a1, a2, a3 = fig.axes
     named = [t.get_text() for t in a1.texts]
-    assert "max 1.1" in named
+    assert "max 0.9 (d2o_fraction)" in named
     assert any(t.startswith(("outlier limit", "no outlier limit", "min", "no lower"))
                for t in named)
     assert [t.get_text() for t in a2.texts] == ["max 0.5 D"]
@@ -1068,7 +1068,7 @@ def test_overview_labels_name_every_flag_in_words():
             self.config, self.limits = ControlConfig(**kw), limits
 
     run = {"retention_floor": 0.23, "median": 0.5, "robust_sd": 0.07, "n_series": 50}
-    assert retention_limit_labels(Controls(run)) == ("outlier limit 0.23", "max 1.1")
+    assert retention_limit_labels(Controls(run)) == ("outlier limit 0.23", "max 0.9 (d2o_fraction)")
     few = {"retention_floor": 0.0, "median": None, "robust_sd": None, "n_series": 3}
     assert retention_limit_labels(Controls(few))[0] == "no outlier limit (< 10 controls)"
     assert retention_limit_labels(Controls(retention_min=0.3))[0] == "min 0.30"

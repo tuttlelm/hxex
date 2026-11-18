@@ -199,7 +199,7 @@ no new run, only `hxex report` again. (Given the bundle instead, `hxex report re
 
 - `overview.pdf`: which K was selected and how often (per time, before and after review); the
   controls (retention against its limits, measured against fallback); the quality flags. Each
-  dashed limit line is named beside it (for example `outlier limit 0.23` or `max 1.1`), and
+  dashed limit line is named beside it (for example `outlier limit 0.23` or `max 0.85 (d2o_fraction)`), and
   the bars say in a few words what they count, close to the flag names of `series.csv` and
   `spectra.csv` (`UN two populations` is `m0_multimodal`, `low intensity` is
   `low_intensity`). On the controls page, bars marked `(note)` (light grey) count controls

@@ -2,6 +2,7 @@
 """Deamidated fully deuterated controls: Asn-Gly candidates, the share from the picked peaks'
 m/z, and the correction of the controls (docs/ANALYSIS.md, HISTORY 197)."""
 
+import dataclasses
 from types import SimpleNamespace
 
 import numpy as np
@@ -142,7 +143,9 @@ def test_a_deamidated_control_is_lowered_by_the_share_before_the_checks():
     found = Deamidation(samples=(SampleDeamidation("S", 0.5, 0.05, 4, 6, "deamidated"),),
                         candidates={0: "S", 1: "S"})
     n = np.full(len(rows), 10.0)
-    c = fit_controls(fake_fit(rows), n, ON, deamidation=found)
+    # (a retention of 0.98 needs fully deuterated samples made above the labelling's 0.9)
+    c = fit_controls(fake_fit(rows), n, dataclasses.replace(ON, retention_max=1.0),
+                     deamidation=found)
     assert c.flags[0] == "fd_deamidated" and c.measured[0] and not c.fallback[0]
     assert c.mfd_measured[0] == pytest.approx(6.5) and c.retention[0] == pytest.approx(0.65)
     assert c.flags[1] == "fd_deamidated" and c.retention[1] == pytest.approx(0.98)

@@ -10668,3 +10668,20 @@ CSVs or mzML if wanted.
     again): 0 and 568 flagged (none naming its own ion; 28 % of them above their amide count +
     0.2 vs 2 % of the rest). `QUALITY_VERSION` 5, so that `hxex resume` assesses older bundles'
     flags again. Test: `test_an_ions_other_times_in_a_kinetics_run_are_not_other_ions`.
+
+408. **A fully deuterated control can no longer hold more deuterium than the labelling
+    buffer gave it: `retention_max` unset is `d2o_fraction` (owner, 2026-11-17).** A control's
+    retention `(mFD - m0) / n_amides` was rejected only above 1.1, which no real control
+    reaches, while a control above the buffer's D fraction cannot be right either: the
+    unreplicated, multimodal fully deuterated control of an acetylated peptide in the private
+    pooled dataset read 0.878 with an 85 % buffer and passed every check (two-sided outlier
+    limits catch nothing on any dataset measured: the run's spread is wide). `retention_max`
+    is now None by default, meaning `d2o_fraction` (`ControlConfig.max_retention`); a project
+    that made its fully deuterated samples at a higher D fraction than the labelling sets it,
+    and a warning naming the count says so whenever the check rejects controls. Bundles keep
+    the limit they were made with (their stored settings say 1.1). Measured on the series'
+    accepted measured controls (D2O 0.85 in all four): the private pooled dataset 3 of 639
+    (SpecExport; highest 0.878), its raw-file run 36 of 1,211 (30 above 0.90; highest 0.997),
+    the benchmark 0 of 1,130 (highest 0.729), the tutorial 0 of 191 (highest 0.635). The
+    controls overview names the line `max 0.85 (d2o_fraction)`. Test:
+    `test_no_control_holds_more_deuterium_than_the_labelling_buffer`.

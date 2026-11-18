@@ -71,13 +71,34 @@ def test_each_control_falls_back_on_its_own():
     assert c.mfd_se[0] == 0.0 and c.retention[0] == pytest.approx(0.9)
     assert c.flags[0] == "retention_low"
     # replicates above the amide count are left out before the mean (HISTORY 143), so with
-    # m0 near 0 a retention above retention_max (1.1) leaves no replicate: the control is gone
+    # m0 near 0 a retention above the amide count leaves no replicate: the control is gone
     c = table([(0, 0, 0.0), (0, 0, 0.0), (0, 1e6, 12.0), (0, 1e6, 12.0)])
     assert c.flags[0] == "fd_replicate_left_out;fd_missing" and c.mfd[0] == pytest.approx(9.0)
     # retention_high still applies below the amide count (an m0 below 0)
     c = table([(0, 0, -1.5), (0, 0, -1.5), (0, 1e6, 9.8), (0, 1e6, 9.8)])
     assert c.flags[0] == "retention_high"
 
+
+
+def test_no_control_holds_more_deuterium_than_the_labelling_buffer(caplog):
+    # retention_max unset is d2o_fraction (default 0.9): 9.5 of 10 amides is rejected
+    rows = [(0, 0, 0.0), (0, 0, 0.0), (0, 1e6, 9.5), (0, 1e6, 9.5)]
+    assert CFG.retention_max is None and CFG.max_retention == 0.9
+    with caplog.at_level(logging.WARNING, logger="hxex.controls"):
+        c = table(rows)
+    assert c.flags[0] == "retention_high" and c.fallback[0]
+    assert "more deuterium than d2o_fraction 0.9" in caplog.text
+    assert "set [run.controls] retention_max" in caplog.text
+    # it follows the labelling buffer's fraction
+    assert table(rows, ControlConfig(d2o_fraction=0.95)).flags[0] == ""
+    assert table(rows[:2] + [(0, 1e6, 8.8)] * 2,
+                 ControlConfig(d2o_fraction=0.85)).flags[0] == "retention_high"
+    # fully deuterated samples made at a higher D fraction: set it
+    cfg = ControlConfig(d2o_fraction=0.85, retention_max=1.0)
+    assert cfg.max_retention == 1.0 and table(rows, cfg).flags[0] == ""
+    # a floor at or above the limit is refused, naming the default
+    with pytest.raises(ValueError, match="unset: d2o_fraction, 0.9"):
+        ControlConfig(retention_min=0.95)
 
 def test_missing_controls_use_theory_and_are_flagged():
     c = table([(0, 5, 3.0)])
@@ -657,7 +678,7 @@ def test_the_retention_map_of_overlapping_peptides():
 
     peptides = {0: ("ACDEFGHIKL", 1, 0.50), 1: ("GHIKLMNQRS", 6, 0.60),
                 2: ("DEFGHIKLMN", 3, None),  # the series without a control
-                3: ("WWWWWWWWWW", 4, 0.95),  # another protein's peptide at those numbers
+                3: ("WWWWWWWWWW", 4, 0.85),  # another protein's peptide at those numbers
                 4: ("TVWYACDEF", 16, None)}  # beyond every accepted peptide
     rows = []
     for d, (_, _, r) in peptides.items():
@@ -674,7 +695,7 @@ def test_the_retention_map_of_overlapping_peptides():
     assert c.flags[2] == "fd_missing;fd_map" and c.fallback[2]
     assert 0.50 < c.retention[2] < 0.60  # between its neighbours, the other protein ignored
     assert c.flags[4] == "fd_missing;fd_median"
-    assert c.retention[4] == pytest.approx(np.median([0.50, 0.60, 0.95]))
+    assert c.retention[4] == pytest.approx(np.median([0.50, 0.60, 0.85]))
     off = fit_controls(fake_fit(rows), np.full(len(rows), 10.0),
                        ControlConfig(fd_retention_map=False), charges=charges, residues=residues)
     assert off.flags[2] == "fd_missing;fd_median"

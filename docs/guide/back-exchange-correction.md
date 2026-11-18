@@ -68,7 +68,11 @@ digestion, and LC. How much depends on the workflow, and on the peptide (its seq
 long it stays on the column), so there is no single right value: in the B5 tutorial data it runs
 from 0.34 to 0.64 with an 85 % D₂O buffer. A fully deuterated control is rejected when:
 
-- its retention is 0 or less, or above 1.1 (`retention_max`): it cannot be right;
+- its retention is 0 or less, or above the D₂O fraction of the labelling buffer
+  (`d2o_fraction`): it cannot be right, since a control cannot hold more deuterium than its
+  buffer gave it. If you made your fully deuterated samples at a higher D₂O fraction than the
+  labelling, set `retention_max` (under `[run.controls]`) to that fraction; *hxex* warns when
+  this check rejects controls;
 - it is below the highest time point of its own series (`fd_below_data`): the sample did not
   fully deuterate. A little below is allowed (`time_course_tolerance`, 0.1 D per amide), and
   each time point counts by the median of its replicates, so one bad replicate does not

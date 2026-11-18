@@ -331,19 +331,21 @@ def controls_overview_data(results: Results) -> dict:
         "fallback": c.fallback.copy(), "reasons": reasons, "notes": notes,
         "measured": int((~c.fallback & ~c.uncorrected).sum()),
         "uncorrected": int(c.uncorrected.sum()),
-        "retention_min": retention_floor(c), "retention_max": cfg.retention_max,
+        "retention_min": retention_floor(c), "retention_max": cfg.max_retention,
         "m0_max": cfg.m0_max, "n_series": len(c),
     }
 
 
 def retention_limit_labels(controls) -> tuple[str, str]:
     """What the lower and upper retention limits of :func:`plot_controls_overview` are, in
-    words: how the lower one was set (:func:`retention_floor`) and the ``retention_max``."""
+    words: how the lower one was set (:func:`retention_floor`) and the upper one
+    (``retention_max``, or ``d2o_fraction`` when unset)."""
     from ..controls import OUTLIER_MIN_SERIES
 
     cfg = controls.config
     floor = retention_floor(controls)
-    upper = f"max {cfg.retention_max:g}"
+    upper = (f"max {cfg.retention_max:g}" if cfg.retention_max is not None
+             else f"max {cfg.max_retention:g} (d2o_fraction)")
     if cfg.retention_min is not None:
         return f"min {floor:.2f}", upper
     limits = controls.limits

@@ -289,10 +289,13 @@ _add("retention_low", "controls", "series", SERIES_CONTROLS,
      check="Look at the control's spectra.",
      guide=CONTROLS_PAGE)
 _add("retention_high", "controls", "series", SERIES_CONTROLS,
-     "The fully deuterated control's retention is above {run.controls.retention_max}: it "
-     "cannot be right, so it is rejected.",
+     "The fully deuterated control's retention is above `retention_max`, which is the "
+     "labelling buffer's {run.controls.d2o_fraction} unless set: no control holds more "
+     "deuterium than its buffer gives, so it is rejected.",
      "It takes the next value in the order.",
-     check="Look at the control's spectra: another species, or a wrong pick.",
+     check="Look at the control's spectra: another species, or a wrong pick. If the fully "
+     "deuterated samples were made at a higher D fraction than the labelling, set "
+     "`retention_max` to it.",
      guide=CONTROLS_PAGE)
 _add("fd_below_data", "controls", "series", SERIES_CONTROLS,
      "The fully deuterated control is below the highest time point of its series: the sample "

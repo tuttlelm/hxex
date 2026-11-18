@@ -1975,7 +1975,10 @@ _COMMENTS: dict[str, str] = {
                                   "controls are judged against the run, outlier_sd, or the "
                                   'kint prediction); not a retention time',
     "run.controls.retention_max": "largest deuterium retention of a good fully deuterated "
-                                  "control, as a fraction",
+                                  "control, as a fraction (unset: d2o_fraction, as no control "
+                                  "holds more deuterium than the labelling buffer gives; set "
+                                  "it when the fully deuterated samples were made at a higher "
+                                  "D fraction)",
     "run.controls.outlier_sd": "a fully deuterated control this many robust standard "
                                "deviations below the median retention of the run's controls "
                                "is rejected (without retention_min; needs ten controls that "

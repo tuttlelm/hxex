@@ -337,7 +337,7 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 | `fulldeut_marked` | true/false | `true` | the files marked fulldeut serve as the control (false: only the spectra at fulldeut_at do, e.g. when the measured file reads low) |
 | `m0_max` | number | `0.5` | largest mean (D) of a good undeuterated control, and of each undeuterated spectrum (undeut_high) |
 | `retention_min` | number | unset | a fixed smallest deuterium retention of a good fully deuterated control, as a fraction (false: none; the controls are judged against the run, outlier_sd, or the kint prediction); not a retention time |
-| `retention_max` | number | `1.1` | largest deuterium retention of a good fully deuterated control, as a fraction |
+| `retention_max` | number | unset | largest deuterium retention of a good fully deuterated control, as a fraction (unset: d2o_fraction, as no control holds more deuterium than the labelling buffer gives; set it when the fully deuterated samples were made at a higher D fraction) |
 | `outlier_sd` | number | `4.0` | a fully deuterated control this many robust standard deviations below the median retention of the run's controls is rejected (without retention_min; needs ten controls that pass the other checks, else not applied) |
 | `time_course_tolerance` | number | `0.1` | D per amide: a fully deuterated control below its series' highest time point by more than this is rejected (an undeuterated one above its lowest is flagged data_below_m0) |
 | `sample_tolerance` | number | `0.1` | an accepted fully deuterated control whose retention differs this much from the same peptide's accepted controls in the other samples is flagged fd_disagrees (still used) |

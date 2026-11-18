@@ -1689,10 +1689,12 @@ def test_controls_follow_the_review_and_can_be_recomputed(results, caplog):
     assert c is not results.controls and "1 rejected control spectra left out" in caplog.text
     assert c.n_fd[c.rows([series])[0]] == before - 1
     # changed settings: recomputed with them, the rest of the run's settings kept
-    changed = analysis_controls(results, {"d2o_fraction": 0.8, "retention_min": 0.99})
+    changed = analysis_controls(results, {"d2o_fraction": 0.8, "retention_min": 0.99,
+                                          "retention_max": 1.0})
     assert changed.config.d2o_fraction == 0.8 and changed.config.retention_min == 0.99
     assert changed.fallback.all() and changed.retention == pytest.approx(0.8)
-    up = species_uptake(results, controls={"d2o_fraction": 0.8, "retention_min": 0.99})
+    up = species_uptake(results, controls={"d2o_fraction": 0.8, "retention_min": 0.99,
+                                           "retention_max": 1.0})
     base = species_uptake(results)
     assert up.control_fallback.all() and not np.allclose(up.fD, base.fD)
     # a time point promoted by [analysis.controls] leaves the labelled points of the tables
@@ -3416,7 +3418,8 @@ def test_a_quiet_recomputation_keeps_the_controls_lines_for_the_first_caller_not
                                                                                     caplog):
     from hxex.analysis import analysis_controls
 
-    changes = {"d2o_fraction": 0.81, "retention_min": 0.98}  # every control rejected: lines
+    # every control rejected: lines
+    changes = {"d2o_fraction": 0.81, "retention_min": 0.98, "retention_max": 1.0}
 
     def lines():
         return [r.getMessage() for r in caplog.records if r.name == "hxex.controls"]

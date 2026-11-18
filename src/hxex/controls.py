@@ -27,7 +27,8 @@ Each control falls back to its theoretical value, and the series is flagged, on 
 - ``m0`` falls back to 0 when it is missing (``m0_missing``) or above ``m0_max`` (``m0_high``);
 - ``mFD`` falls back to ``m0 + r * n_amides`` when it is missing (``fd_missing``), when the
   retention ``(mFD - m0) / n_amides`` is 0 or less or below a set ``retention_min``
-  (``retention_low``), above ``retention_max`` (``retention_high``), below the highest time
+  (``retention_low``), above ``retention_max`` (unset: ``d2o_fraction``; ``retention_high``),
+  below the highest time
   point of its series (``fd_below_data``, beyond ``time_course_tolerance``), or, without a set
   ``retention_min``, an outlier below the run's controls (``retention_outlier``,
   ``outlier_sd``; with ``fd_fallback='kint'`` only for the series the prediction cannot judge,
@@ -142,7 +143,10 @@ class ControlConfig:
     - ``retention_min``, ``retention_max`` (fractions): the range of a good fully deuterated
       control's retention ``(mFD - m0) / n_amides``. ``retention_min`` None (the default) sets
       no fixed floor: a control is then judged against the run (``outlier_sd``) or, with
-      ``fd_fallback = 'kint'``, against the prediction.
+      ``fd_fallback = 'kint'``, against the prediction. ``retention_max`` None (the default)
+      is ``d2o_fraction``: a control cannot hold more deuterium than the labelling buffer
+      gives (owner, 2026-11-17); set it when the fully deuterated samples were made at a higher
+      D fraction than the labelling (:attr:`max_retention`).
     - ``outlier_sd``: with ``retention_min`` unset, a fully deuterated control whose retention
       is more than this many robust standard deviations (1.4826 times the median absolute
       deviation) below the median of the run's controls is rejected (``retention_outlier``);
@@ -226,7 +230,7 @@ class ControlConfig:
     fulldeut_marked: bool = True
     m0_max: float = 0.5
     retention_min: float | None = None
-    retention_max: float = 1.1
+    retention_max: float | None = None
     outlier_sd: float = 4.0
     time_course_tolerance: float = 0.1
     sample_tolerance: float = 0.1
@@ -258,8 +262,6 @@ class ControlConfig:
         for name in ("outlier_sd", "time_course_tolerance", "sample_tolerance"):
             if not getattr(self, name) > 0:
                 raise ValueError(f"{name} must be positive")
-        if not 0 <= self.min_retention < self.retention_max:
-            raise ValueError("need 0 <= retention_min < retention_max")
         if self.fd_fallback is not None and self.fd_fallback not in FD_FALLBACKS:
             raise ValueError(f"fd_fallback must be one of {', '.join(FD_FALLBACKS)}")
         for name in ("undeut_at", "fulldeut_at"):
@@ -278,6 +280,9 @@ class ControlConfig:
         if not 0 < self.d2o_fraction <= 1:
             raise ValueError(f"d2o_fraction = {self.d2o_fraction}: write the D2O fraction as "
                              "a number above 0 and up to 1 (85 % is 0.85)")
+        if not 0 <= self.min_retention < self.max_retention:
+            raise ValueError("need 0 <= retention_min < retention_max (unset: d2o_fraction, "
+                             f"{self.d2o_fraction:g})")
         if (isinstance(self.deamidation_min_share, bool)
                 or not 0 < self.deamidation_min_share <= 1):
             raise ValueError("deamidation_min_share must be a share in (0, 1]")
@@ -305,6 +310,12 @@ class ControlConfig:
         judged against the run, ``outlier_sd``, or the prediction; the limit a run used is in
         :attr:`ControlTable.limits`)."""
         return 0.0 if self.retention_min is None else self.retention_min
+
+    @property
+    def max_retention(self) -> float:
+        """The upper retention limit: ``retention_max``, or when unset ``d2o_fraction`` (no
+        fully deuterated control holds more deuterium than the labelling buffer gives)."""
+        return self.d2o_fraction if self.retention_max is None else self.retention_max
 
     def to_dict(self) -> dict[str, Any]:
         out = {f.name: getattr(self, f.name) for f in fields(self)}
@@ -758,7 +769,7 @@ def fit_controls(
             # whatever the limits
             if ret <= 0 or ret < config.min_retention:
                 flags.append("retention_low")
-            elif ret > config.retention_max:
+            elif ret > config.max_retention:
                 flags.append("retention_high")
             elif np.isfinite(high) and mfd_meas < high - tol:
                 flags.append("fd_below_data")
@@ -826,6 +837,17 @@ def fit_controls(
     elif missing:
         log.info("%d of %d series have no undeuterated control: their undeuterated end is "
                  "taken as 0 D (m0_missing)", len(missing), len(corrected))
+    high = sum("retention_high" in f for f in corrected)
+    if high:
+        if config.retention_max is None:
+            log.warning("%d fully deuterated control(s) hold more deuterium than d2o_fraction "
+                        "%g allows and are rejected (retention_high); if your fully "
+                        "deuterated samples were made at a higher D fraction than the "
+                        "labelling, set [run.controls] retention_max", high,
+                        config.d2o_fraction)
+        else:
+            log.warning("%d fully deuterated control(s) above retention_max %g are rejected "
+                        "(retention_high)", high, config.retention_max)
     if pending and not accepted:
         log.warning("no fully deuterated control was accepted, so the %d series without one "
                     "take d2o_fraction (%g) as their retention: no back-exchange correction",
