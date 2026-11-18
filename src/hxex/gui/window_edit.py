@@ -159,7 +159,7 @@ def fit_preview(results, picked: Preview, *, threads: int | None = None, cancel=
         finally:
             torch.set_num_threads(before)
     if results.population_test is not None:
-        notes.append("K chosen by the criterion; the run chose K by the population test")
+        notes.append("K chosen by the criterion; the run chose K by the population test (self)")
     one_results = Results(measurements=measurements, fit=fitted, binned=binned,
                           spectra=picked.spectra, settings=settings, controls=results.controls,
                           figures=results.figures)

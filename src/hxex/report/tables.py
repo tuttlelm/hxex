@@ -368,15 +368,22 @@ def components_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     return out
 
 
-def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
+def spectra_table(results: Results, rows=None, *, analysis=None,
+                  sets="compute") -> dict[str, np.ndarray]:
     """One row per spectrum (``rows``: only those, by position in the fit, in that order; the
     columns are the same, so a few rows can be redone after a review decision): the index
     columns,
-    ``K``, ``centroid`` and ``centroid_corrected`` (the population-weighted mean of the
+    ``K``, ``set_K`` (the number of populations the population test (set) gives the spectrum's set,
+    every replicate and charge state of its peptide in its sample at its time, as ``hxex
+    analyse`` decides it with the analysis settings ``analysis``, its defaults when None,
+    :func:`hxex.analysis.set_test.spectrum_sets`; empty without the population test, or for
+    a spectrum in no set; information only: ``K`` stays the spectrum's own; ``sets``: those
+    sets already worked out, one per spectrum of the run, or None for none), ``centroid``
+    and ``centroid_corrected`` (the population-weighted mean of the
     components) and ``mean_<r>``, ``mean_corrected_<r>``, ``population_<r>``,
     ``population_se_<r>`` for each rank ``r`` up to the largest K (empty where the spectrum has
-    fewer components); with the population test (:mod:`hxex.population_test`), the K the
-    fit's criterion chose (``criterion_K``; ``K`` is then the test's), each step's p-value
+    fewer components); with the population test (self) (:mod:`hxex.population_test`), the K
+    the fit's criterion chose (``criterion_K``; ``K`` is then the test's), each step's p-value
     (``test_p_<K>``, K against K + 1; empty where untested) and how its null was made
     (``test_null_<K>``: ``simulated``, ``chi_square``, ``screened``, ``flat`` (every simulated
     draw the same: not tested), or empty: untested), ``narrow_component`` (the width
@@ -397,6 +404,7 @@ def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
     out = _index_columns(results, picked)
     m = len(picked)
     out["K"] = ks[picked].copy()
+    out["set_K"] = _set_column(results, picked, analysis, sets)
     centroid = np.full(m, np.nan)
     centroid_cor = np.full(m, np.nan)
     wide = {f"{n}_{r}": np.full(m, np.nan) for r in range(1, k_max + 1)
@@ -427,6 +435,23 @@ def spectra_table(results: Results, rows=None) -> dict[str, np.ndarray]:
         out[name] = (np.asarray(getattr(q, attr), dtype=np.float64)[picked] if q is not None
                      else np.full(len(picked), np.nan))
     out["same_measurement_as"] = _same_measurement_as(results, picked)
+    return out
+
+
+def _set_column(results: Results, picked, analysis, sets) -> np.ndarray:
+    """``set_K`` of the spectra at positions ``picked``: the set's number of populations, or
+    empty (:func:`spectra_table`)."""
+    from ..analysis.set_test import spectrum_sets
+
+    if isinstance(sets, str):  # "compute"
+        sets = spectrum_sets(results, analysis) if results.population_test is not None \
+            else None
+    out = np.full(len(picked), "", dtype=object)
+    if sets is not None:
+        for j, i in enumerate(picked):
+            t = sets[int(i)]
+            if t is not None:
+                out[j] = int(t.K)
     return out
 
 
@@ -838,8 +863,8 @@ def flags_table(results: Results) -> dict[str, np.ndarray]:
     return flags.table(counts, flags.setting_values(run), units=units)
 
 
-def write_tables(results: Results, directory: str | Path, *, created: str | None = None
-                 ) -> list[Path]:
+def write_tables(results: Results, directory: str | Path, *, created: str | None = None,
+                 analysis=None) -> list[Path]:
     """Write ``series.csv``, ``spectra.csv``, ``components.csv`` and ``uptake.csv`` into
     ``directory``, ``review.csv`` when the review layer (or an exclusion rule) has entries,
     ``retention_suggestions.csv`` when the read searched for retention times
@@ -848,9 +873,12 @@ def write_tables(results: Results, directory: str | Path, *, created: str | None
     listing, :func:`hxex.io.replace_outputs`: a ``review.csv`` with nothing left to list goes)
     and never a file of your own. The listing
     records the results they were made from (``created``, the bundle's stamp; default the
-    results' own), so ``hxex info`` can tell when they are out of date."""
+    results' own), so ``hxex info`` can tell when they are out of date. ``analysis``: the
+    analysis settings (:class:`hxex.analysis.AnalysisConfig`; its defaults when None) that
+    decide the sets of ``spectra.csv``'s ``set_K``, as ``hxex analyse`` decides them."""
     directory = Path(directory)
-    tables = {"series.csv": series_table, "spectra.csv": spectra_table,
+    tables = {"series.csv": series_table,
+              "spectra.csv": lambda r: spectra_table(r, analysis=analysis),
               "components.csv": components_table, "uptake.csv": uptake_table}
     if results.review is not None and len(results.review):
         tables["review.csv"] = review_table

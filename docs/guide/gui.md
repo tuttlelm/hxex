@@ -227,7 +227,14 @@ the replicates (`rep 1`, `rep 2`). Each row
 counts its spectra, how many have a quality flag, how many are rejected, how many the analysis
 leaves out, and how many have more than one population; a time point lists the K of its
 spectra. A spectrum's row says "yes" when it is flagged or rejected, why the analysis
-leaves it out, its K, its review status, and its flags. Rest the pointer on a column's header
+leaves it out, its K, its review status, and its flags. With the
+[population test](population-test.md), a K written `K = 1 (self), K = 2 (set)` differs from the
+number of populations of its set, all the spectra of its peptide in its sample at that time
+(the analysis uses the set's), and the time point's row then ends with `(set 2)`: the spectrum
+keeps its own K (hover the K
+for the set's chance; [details](population-test.md#when-a-spectrum-and-its-peptide-disagree)).
+The sets' numbers are worked out with the "left out" column, and its **Update** button brings
+both up to date after review decisions. Rest the pointer on a column's header
 to see what it counts, and on a flag or a reason it is left out to see what it means (every one
 is in [Flags and reasons](flags.md)). The same works in the List tab and in every table shown
 in the window.
@@ -286,18 +293,23 @@ quicker). On a spectra page, and on the fits at each K, click a spectrum's panel
 that spectrum in the tree (the **?** by the buttons says so).
 
 Each panel of the fits at each K says above its fit why that K was or was not chosen:
-`selected by the population test` or `selected (lowest ΔBIC)` on the chosen one; a smallest
+`selected by the population test (self)` or `selected (lowest ΔBIC)` on the chosen one; a smallest
 population below the fit's minimum (`[run.fit] min_population`) or the test's
 (`[run.population_test] min_population`), such as `population 8 % < test minimum 10 %`; and,
 with the [population test](population-test.md), its step from one K fewer, such as
-`population test p-value 1.5e-21 < 0.01 not selected`: a step passes when its p-value is
+`population test (self) p-value 1.5e-21 < 0.01 not selected`: a step passes when its p-value is
 below `significance` and its smallest population passes the test's minimum (otherwise the line
 above names the minimum it failed); the K the test chose says `selected`, a passing step below it
 `passed`. The p-value is the chance that the spectrum would gain this
 much fit from a population it does not have; values far below 0.01 only mean far beyond what
 noise alone produced (see [How it decides](population-test.md#how-it-decides)). A K
 the fit's minimum rules out keeps its ΔBIC, marked `(ruled out)`, so you can see what the
-criterion alone would have chosen.
+criterion alone would have chosen. Where the spectrum's set has another number of populations
+than the spectrum, the panel at the set's number adds "population test (set)
+p-value 6.9e-04 < 0.01: K = 1 (self), K = 2 (set)". "(self)" is the test of this spectrum
+alone, "(set)" the test of its set, every replicate and charge state of the peptide in its sample at that time,
+which the analysis uses: the spectrum keeps its own K
+(see [When a spectrum and its peptide disagree](population-test.md#when-a-spectrum-and-its-peptide-disagree)).
 
 Results picked with the profile fit (`[run.picker] pick = "profile_fit"`) also have a
 **picking check** tab on a replicate: the raw profile, the peptide's fitted peaks (dark), the
@@ -384,7 +396,8 @@ uses the run's settings and noise
 curve, but not its bootstrap, population test, or controls, and nothing in the results
 changes. Now and then the run's own fit, which tries more starting points, settles on another
 K than the preview did. The line above the figure says it is a preview; hover over it to
-see how this preview differs from a run (for example, K chosen without the population test).
+see how this preview differs from a run (for example, K chosen by the fit's criterion, not by
+the population test (self)).
 A review decision on the spectrum (a status, a K, a note) keeps the window you are editing
 and its preview; selecting another spectrum drops them. A window far from the trace (typed,
 or saved earlier) is pointed to at the edge of the trace instead of shrinking the trace to

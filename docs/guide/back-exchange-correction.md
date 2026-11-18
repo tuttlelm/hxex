@@ -243,8 +243,9 @@ hxex resume hxex.toml
 This works the controls out again from the fits already made, with the new settings, and writes
 the tables again; nothing is refitted, so it takes seconds, not the time of a run. The D₂O
 fraction changes the corrected values only of peptides without a measured fully deuterated
-control (and the `narrow_component` flag of the [population test](population-test.md); add
-`[run.population_test]` to the resume to make the test again).
+control (and the `narrow_component` flag of the [population test (self)](population-test.md),
+the test of each spectrum alone; add `[run.population_test]` to the resume to make the test
+again).
 
 Results made without a correction take one the same way: `hxex resume hxex.toml` works the
 controls out when the project now asks for them, either with a `[run.controls]` table or, without

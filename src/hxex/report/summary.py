@@ -77,7 +77,7 @@ SHOWN = {
 }
 
 _RULES = {
-    "population_test": ("population test", "the population test of each peptide set (all "
+    "population_test": ("population test", "the population test (set), of each peptide set (all "
                         "replicates and charge states of a peptide at one time; simulated null)"),
     "best_set": ("best set", "the information criterion pooled over each peptide set "
                  "(best_set_K)"),

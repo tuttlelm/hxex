@@ -67,14 +67,17 @@ FILTERS = {"all": ("all spectra", "every spectrum"),
            "left_out": ("left out", "spectra the analysis settings leave out")}
 
 
-def list_rows(results, left: list[str] | None = None, rows=None) -> tuple[list[str], list[dict]]:
+def list_rows(results, left: list[str] | None = None, rows=None, *,
+              sets=None) -> tuple[list[str], list[dict]]:
     """The list's columns and rows: ``spectra.csv``'s (:func:`hxex.report.tables.spectra_table`;
-    ``rows``: only those spectra, by position), and ``left_out`` (``left``, the tree's reasons)
-    after the review columns. Each row also carries its position (``_index``, not shown)."""
+    ``rows``: only those spectra, by position; ``sets``: the test of each spectrum's set,
+    :func:`hxex.analysis.set_test.spectrum_sets`, for ``set_K``, None for none), and
+    ``left_out`` (``left``, the tree's reasons) after the review columns. Each row also carries
+    its position (``_index``, not shown)."""
     from ..report.series import time_text
     from ..report.tables import spectra_table
 
-    table = spectra_table(results, rows=rows)
+    table = spectra_table(results, rows=rows, sets=sets)
     picked = range(len(results.fit)) if rows is None else rows
     columns = list(table)
     at = columns.index("note") + 1 if "note" in columns else len(columns)

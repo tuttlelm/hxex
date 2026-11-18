@@ -1453,7 +1453,8 @@ def cmd_run(args) -> int:
         if keep_previous:  # not moved along with a bundle: kept on its own
             prepare_output(tables, keep_previous=True)
         write_tables(apply_view(Results.from_run(result), project.review), tables,
-                     created=(bundle_manifest(bundle) or {}).get("created", ""))
+                     created=(bundle_manifest(bundle) or {}).get("created", ""),
+                     analysis=project.analysis)
     _summary(result.fit, bundle, tables=tables)
     _warn_stale_outputs(bundle, args.project_file, out.overwrite)
     return 0
@@ -1656,7 +1657,8 @@ def cmd_resume(args) -> int:
         from .review_table import apply_view
 
         write_tables(apply_view(Results.from_run(result), review), tables,
-                     created=(bundle_manifest(bundle) or {}).get("created", ""))
+                     created=(bundle_manifest(bundle) or {}).get("created", ""),
+                     analysis=project.analysis if project is not None else None)
         log.info("tables in %s", tables)
     _summary(result.fit, bundle)
     _warn_stale_outputs(Path(bundle), args.bundle, bool(flags.get("overwrite")))
@@ -1747,6 +1749,7 @@ def cmd_report(args) -> int:
     from .report.tables import TABLE_NAMES
 
     bundle, review, plots = Path(args.bundle), None, PlotConfig()
+    analysis = None  # the [analysis] settings that decide spectra.csv's set_K (defaults)
     overwrite, keep_previous = args.overwrite, args.keep_previous
     own_tables: Path | bool = True  # the project's [output] tables (a bundle alone: beside it)
     if problem := _bundle_problem(bundle, "report"):
@@ -1760,6 +1763,7 @@ def cmd_report(args) -> int:
             log.error("%s names no [output] bundle to report on", bundle)
             return EXIT_ERROR
         bundle, review = project.output.bundle, project.review
+        analysis = project.analysis
         plots = project.figures or plots
         overwrite = overwrite or project.output.overwrite
         keep_previous = keep_previous or project.output.keep_previous
@@ -1839,7 +1843,8 @@ def cmd_report(args) -> int:
                 prepare_output(folder, keep_previous=True)
         said = []
         if tables is not None:
-            written = write_tables(results, tables, created=b.manifest.get("created", ""))
+            written = write_tables(results, tables, created=b.manifest.get("created", ""),
+                                   analysis=analysis)
             said.append(f"{len(written)} table(s) in {tables}{_review_text(results)}")
         if figures is not None:
             if args.k is not None:

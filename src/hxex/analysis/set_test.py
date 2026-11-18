@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The population test of sets of spectra (docs/ANALYSIS.md "The population test").
+"""The population test (set): the population test of sets of spectra (docs/ANALYSIS.md "The
+population test").
 
 A set is a species at one time point or control (run, sample, peptide, modification, residues,
 point): its replicates and charge states, the spectra of the molecules at that point. The run
@@ -32,6 +33,8 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
+import weakref
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -115,7 +118,7 @@ def _run_rows(name: str, r, state, filters, exclude_flagged: bool, controls) -> 
 
     fit, b = r.fit, r.binned
     if b is None:
-        raise ValueError("the population test of sets needs the picked table (results.binned)")
+        raise ValueError("the population test (set) needs the picked table (results.binned)")
     test = r.population_test
     if test is None:
         raise ValueError(f"run {name or '(the run)'} has no population test: add "
@@ -221,6 +224,16 @@ def set_tests(results, *, filters=None, exclude_flagged: bool = False,
     ``filters`` (:class:`hxex.analysis.SpeciesFilters`) and ``controls`` decide the spectra
     kept, as in the tables; ``undeuterated_cap`` as in the module docstring. Every run must have
     the population test, made with the same settings."""
+    return _tests_and_runs(results, filters=filters, exclude_flagged=exclude_flagged,
+                           controls=controls, undeuterated_cap=undeuterated_cap,
+                           quiet=quiet)[0]
+
+
+def _tests_and_runs(results, *, filters=None, exclude_flagged: bool = False,
+                    controls: Mapping[str, Any] | None = None, undeuterated_cap: bool = False,
+                    quiet: bool = False) -> tuple[dict[tuple, SetTest], list[_Run]]:
+    """:func:`set_tests`, with each run's spectra (:class:`_Run`: their set keys and which
+    of them the sets use)."""
     from .runs import RunSet
 
     if isinstance(results, RunSet):
@@ -258,21 +271,106 @@ def set_tests(results, *, filters=None, exclude_flagged: bool = False,
                 result[key] = dataclasses.replace(result[key], undeuterated_two=True)
     if not quiet:
         n_two = sum(t.K >= 2 for t in result.values())
-        log.info("population test: %d of %d sets have two populations or more", n_two,
+        log.info("population test (set): %d of %d sets have two populations or more", n_two,
                  len(result))
         n_more = sum(t.more_populations_possible for t in result.values())
         if n_more:
-            log.info("population test: %d sets may hold more populations than the %d the test "
-                     "decides (more_populations_possible in species_uptake.csv; a flag only: "
+            log.info("population test (set): %d sets may hold more populations than the %d the "
+                     "test decides (more_populations_possible in species_uptake.csv; a flag only: "
                      "a run with a larger decide_up_to decides)", n_more, config.decide_up_to)
         if flagged:
-            log.warning("population test: %d peptides have two populations or more in an "
+            log.warning("population test (set): %d peptides have two populations or more in an "
                         "undeuterated set (another species: undeuterated_two in "
                         "species_uptake.csv); %s", len(flagged),
                         "their labelled and fully deuterated spectra are kept at one "
                         "population ([analysis.filters] undeuterated_cap)" if undeuterated_cap
                         else "their other sets are tested as they are")
-    return result
+    return result, runs
+
+
+# the sets of each spectrum, by results (weakly held) and the analysis settings that decide
+# them: the window asks for them at every selection
+_SPECTRUM_SETS: dict[tuple, tuple[weakref.ref, list | None]] = {}
+
+
+def spectrum_sets(results, config=None) -> list[SetTest | None] | None:
+    """The test of the set each spectrum of ``results`` (one run) belongs to (:class:`SetTest`,
+    :func:`set_tests`), one entry per row of the fit, as ``hxex analyse`` decides the sets with
+    the analysis settings ``config`` (:class:`hxex.analysis.AnalysisConfig`; its defaults when
+    None): ``filters``, ``exclude_flagged``, ``controls`` and ``exclude_times``. None for a
+    spectrum in no set (rejected by the review, left out by the filters, at a time left out);
+    None for the whole run when its analysis does not decide the sets by the population test
+    (the run has no test, ``populations`` names another rule, or there is no picked table).
+    Information only (owner, 2026-11-17): a spectrum's own K never changes with its set's.
+    Worked out once per results and settings."""
+    from . import AnalysisConfig
+    from .runs import RunSet
+    from .settings import population_rule
+
+    if isinstance(results, RunSet) or getattr(results, "binned", None) is None:
+        return None
+    config = config if config is not None else AnalysisConfig()
+    try:
+        if population_rule(config.populations, results) != "population_test":
+            return None
+    except ValueError:
+        return None
+    filters = config.filters
+    key = (id(results), repr(filters), bool(config.exclude_flagged),
+           repr(sorted((str(k), repr(v)) for k, v in (config.controls or {}).items())),
+           tuple(config.exclude_times))
+    held = _SPECTRUM_SETS.get(key)
+    if held is not None and held[0]() is results:
+        return held[1]
+    tests, runs = _tests_and_runs(
+        results, filters=filters, exclude_flagged=config.exclude_flagged,
+        controls=config.controls,
+        undeuterated_cap=filters is not None and filters.undeuterated_cap, quiet=True)
+    run = runs[0]
+    out: list[SetTest | None] = [tests.get(k) if used else None
+                                 for k, used in zip(run.keys, run.use, strict=True)]
+    time = np.asarray(results.fit.time, dtype=float)
+    for t in config.exclude_times:  # a time the analysis leaves out has no sets
+        for i in np.flatnonzero(np.isclose(time, t, rtol=1e-9, atol=1e-6)):
+            out[i] = None
+    for k, (ref, _) in list(_SPECTRUM_SETS.items()):  # a copy: other threads may add
+        if ref() is None:
+            _SPECTRUM_SETS.pop(k, None)
+    _SPECTRUM_SETS[key] = (weakref.ref(results), out)
+    return out
+
+
+def set_ks(sets: list[SetTest | None] | None, n: int) -> np.ndarray:
+    """The number of populations of each spectrum's set (:func:`spectrum_sets`), 0 where it
+    is in none (or ``sets`` is None); ``n``: the number of spectra."""
+    if sets is None:
+        return np.zeros(n, dtype=np.int64)
+    return np.array([t.K if t is not None else 0 for t in sets], dtype=np.int64)
+
+
+def set_step(t: SetTest) -> tuple[float, float]:
+    """The p-value and mean added population of the step that decided ``t``: the step that
+    added its last population, else the first (NaN where untested)."""
+    at = max(t.K - 2, 0)
+    if at >= len(t.p):
+        return math.nan, math.nan
+    return float(t.p[at]), float(t.added[at])
+
+
+def set_words(t: SetTest, significance: float | None = None) -> str:
+    """``2 populations (p 1.0e-85)``: a set's number of populations and the p-value of the
+    step that decided it (:func:`set_step`); a set at one whose first step passed the
+    significance (``significance``) names the share that was too small; ``(not tested)``
+    when nothing was tested."""
+    p, added = set_step(t)
+    head = f"{t.K} population{'s' if t.K != 1 else ''}"
+    if not np.isfinite(p):
+        return f"{head} (not tested)"
+    text = (f"p {p:.2g}" if p >= 1e-3 else f"p {p:.1e}" if p > 0
+            else "p < 1e-300")  # below the smallest number a float holds
+    if t.K == 1 and significance is not None and p < significance and np.isfinite(added):
+        text += f", population {100 * added:.0f} %"
+    return f"{head} ({text})"
 
 
 def _one_set(rows, runs, config: PopulationTestConfig, steps, capped=frozenset()) -> SetTest:
@@ -312,8 +410,8 @@ def _one_set(rows, runs, config: PopulationTestConfig, steps, capped=frozenset()
                   "(undeuterated_cap)" if is_capped else "no spectrum to test: one population")
     else:
         at = max(k - 2, 0)  # the last step that added a population, else the first
-        reason = (f"set test: {words.get(k, str(k))} (p = {p[at]:.2g}, added population "
-                  f"{mean_added[at]:.2f})")
+        reason = (f"population test (set): {words.get(k, str(k))} (p = {p[at]:.2g}, added "
+                  f"population {mean_added[at]:.2f})")
         if more:
             reason += (f"; more populations possible (the chi-square reference above "
                        f"decide_up_to {config.decide_up_to}: a flag only)")

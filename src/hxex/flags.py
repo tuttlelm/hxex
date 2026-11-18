@@ -40,8 +40,10 @@ FAMILIES = {
     "population": (
         "Population test flags", "population test flag",
         "Signs that an extra population may be another species, or that more populations may "
-        "be there, from the population test (`[run.population_test]`). Flags only: no number "
-        "of populations changes."),
+        "be there, from the population test (`[run.population_test]`): the population test "
+        "(self), of each spectrum alone, and the population test (set), of every replicate and "
+        "charge state of a peptide in one sample at one time. Flags only: no number of "
+        "populations changes."),
     "screen": (
         "Spectrum quality screens", "spectrum quality score",
         "Scores from 0 to 1, in the last columns of `spectra.csv`: the share of the intensity "
@@ -433,13 +435,15 @@ _add("narrow_component", "population", "spectrum", "`spectra.csv` `narrow_compon
      "The fit at the spectrum's number of populations has a population narrower than deuterium "
      "allows.",
      FLAG_ONLY,
-     "The narrowest width is set by the peptide's amides and the D2O fraction "
-     "({run.controls.d2o_fraction}). Much narrower may be another species, or a spike.",
+     "A flag of the population test (self). The narrowest width is set by the peptide's amides "
+     "and the D2O fraction ({run.controls.d2o_fraction}). Much narrower may be another "
+     "species, or a spike.",
      "Look at the spectrum.",
      "population-test.md#two-flags-for-other-species")
 _add("undeuterated_two", "population", "peptide, on every row in every sample",
      "`species_uptake.csv` `undeuterated_two`",
-     "The peptide's undeuterated spectra read two populations: something else is there.",
+     "The population test (set) of the peptide's undeuterated spectra reads two populations: "
+     "something else is there.",
      "Flag only, unless `{analysis.filters.undeuterated_cap}`: the peptide's labelled spectra "
      "then stay at one population.",
      "Whether the labelled spectra share the other species is not known.",
@@ -447,7 +451,8 @@ _add("undeuterated_two", "population", "peptide, on every row in every sample",
      "population-test.md#two-flags-for-other-species")
 _add("more_populations_possible", "population", "spectrum, and peptide and time",
      "`spectra.csv` and `species_uptake.csv` `more_populations_possible`",
-     "The test's quick step above `decide_up_to` would add a population.",
+     "The quick step above `decide_up_to` would add a population: of the population test "
+     "(self) for a spectrum, of the population test (set) for a peptide and time.",
      FLAG_ONLY,
      "Set with `{run.population_test.decide_up_to}`; a run that decides more populations tells.",
      guide="population-test.md#turning-it-on")

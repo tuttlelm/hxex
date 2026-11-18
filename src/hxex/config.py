@@ -1907,7 +1907,8 @@ _COMMENTS: dict[str, str] = {
                     "sample, peptide, charge, replicate, time, role)",
     "run.fit.screen": "fit K > 1 only where it could be selected: about a third of the time, "
                       "but the skipped fits are missing from fixed-K analyses (with "
-                      "[run.population_test]: only where the test could find it)",
+                      "[run.population_test]: only where the population test (self) could "
+                      "find it)",
     "run.fit.noise.model": '"gaussian" or "poisson"',
     "run.fit.noise.sd": "gaussian: the sd in intensity units (false: percent instead)",
     "run.fit.noise.percent": "sd (or poisson scale) as percent of the tallest peak of the "
@@ -1945,16 +1946,20 @@ _COMMENTS: dict[str, str] = {
                                 "without them keep their bootstrap",
     "run.bootstrap.curve_band": "also the band of the total uptake curve",
     "run.bootstrap.set_k": "with the population test, also bootstrap each spectrum at the K "
-                           "its set's values come from (the set's number of populations, and "
+                           "its set's values come from (the number of populations the "
+                           "population test (set) gives the set, and "
                            "1 for sets at one or two) where it was selected at another: the "
                            "error of every set's average (else the replicates' scatter); a "
                            "few spectra",
     "run.population_test.simulations": "simulated spectra per spectrum and step for the test's "
-                                       "reference (20; time grows with it)",
+                                       "reference (20; time grows with it); used by both "
+                                       "the population test (self) and (set)",
     "run.population_test.significance": "a further population counts when the chance of "
-                                        "seeing the evidence without it is below this",
+                                        "seeing the evidence without it is below this; used "
+                                        "by both the population test (self) and (set)",
     "run.population_test.min_population": "... and the further population is at least this "
-                                          "share of the molecules",
+                                          "share of the molecules (for a set, its mean share); "
+                                          "used by both the population test (self) and (set)",
     "run.population_test.null": '"simulated", or "chi_square" for a quick first look without '
                                 "simulations (less exact)",
     "run.population_test.seed": "seed of the simulations",
@@ -2127,9 +2132,12 @@ _SECTION_COMMENTS: dict[str, str] = {
     "run.fit.backend": "Where the fit runs: the CPU, or a CUDA graphics card when there is one.",
     "run.bootstrap": "Standard errors and intervals from resampled refits of every "
                      "measurement (guide: statistics.md). Slow: most of a run's time.",
-    "run.population_test": "Tests how many populations each spectrum, and each set of "
-                           "replicates and charge states, holds against simulated spectra "
-                           "(guide: population-test.md). Each spectrum's K is then the test's; "
+    "run.population_test": "Tests, against simulated spectra, how many populations each "
+                           "spectrum holds alone, the population test (self) of the run, and "
+                           "how many each set holds, every replicate and charge state of a "
+                           "peptide in one sample at one time, the population test (set) of "
+                           "hxex analyse (guide: population-test.md). Each spectrum's K is then "
+                           "that of the population test (self); "
                            "needs k_min = 1. Slow: ten to twenty times the fit per step.",
     "run.controls": "Back-exchange correction from the undeuterated and fully deuterated "
                     "controls, fitted at K=1 (guide: back-exchange-correction.md). Without "
@@ -2535,9 +2543,9 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# max_fD_se = 0.25                # ... every population's fD error below this,",
         "# max_fD = 1.1                    # ... no population beyond this fraction of amides,",
         "# k1_between_ranks = true         # ... and the K=1 value between the two",
-        "# undeuterated_cap = false        # population test: keep a peptide whose undeuterated",
-        "#                                 # set has two populations at one in every sample",
-        "#                                 # (off: flagged only, undeuterated_two)",
+        "# undeuterated_cap = false        # population test (set): keep a peptide whose",
+        "#                                 # undeuterated set has two populations at one in",
+        "#                                 # every sample (off: flagged only, undeuterated_two)",
         "# [analysis.choice]               # the choice between one and two populations",
         '# confidence = 0.5                # 0.95 with populations = "bootstrap"',
         "# max_fD_se = 0.25",

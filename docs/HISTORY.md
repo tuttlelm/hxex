@@ -10807,3 +10807,57 @@ CSVs or mzML if wanted.
     `test_a_control_read_for_two_samples_counts_once_in_the_whole_calibration`,
     `test_runs_or_samples_holding_the_same_measurements_are_warned_about`,
     `test_check_finds_a_copied_spectrum_file_or_run_of_one_sample`.
+
+412. **A spectrum whose K differs from its set's shows the set's number, values unchanged
+    (owner, 2026-11-17: "show the set's decision on a spectrum that disagrees with its set").**
+    With the population test, a spectrum's K comes from its own test and the peptide's at each
+    time from the test of its set (every replicate and charge state of the peptide in one sample
+    at one time, `set_test_K`); they can disagree. The case behind it, on the intact-peptide
+    benchmark: one 30 min replicate added a population of 8.5 % with p 1.5e-21, below the test's
+    `min_population` 0.10, so it stayed at one while the other three replicates took two, and
+    the set clearly had two (p 1e-85, average share 20 %). Of the options put to the owner
+    (show the set's decision; make the spectrum follow its set; a lower spectrum limit), the
+    first was chosen: information only, no K, value, refit, or analysis number moves. Built:
+    `hxex.analysis.set_test.spectrum_sets` (the test of each spectrum's set, as `hxex analyse`
+    decides the sets with the analysis settings: `filters`, `exclude_flagged`, `controls`,
+    `exclude_times`; None without the test or with another `populations` rule; held once per
+    results and settings), `set_words`; `spectra.csv` gains `set_K` beside `K` (empty without
+    the test or for a spectrum in no set: rejected, left out by the filters, at a time left
+    out); `hxex run`, `hxex resume` and `hxex report hxex.toml` take the project's `[analysis]`
+    settings for it (`write_tables(analysis=)`), a bundle reported on its own and Python the
+    defaults. The fits at each K add, on the panel at the set's number, "population test (set)
+    p-value 6.9e-04 < 0.01: K = 1 (self), K = 2 (set)" above the K line (`set_note`), and the
+    spectrum's own line reads "population test (self) ..." (owner, 2026-11-18: the two tests
+    named apart, "(self)" for the spectrum alone, "(set)" for its set); the window's tree writes
+    the spectrum's K as `K = 1 (self), K = 2 (set)` with both verdicts in the tooltip (owner,
+    after the build: on its own the spectrum cannot quite support two populations, but the set
+    adds the confidence to call it two; writing both loses nothing, where making the spectrum
+    follow its set would hide a split one replicate shows), and a time point's row ends with
+    `(set 2)` when one of its replicates differs; the List and the data tab show `set_K`. In the
+    window the sets are worked out with the "left out" column (in the load's thread, then held)
+    and, like it, are brought up to date after review decisions by its Update button. On the
+    per-bin benchmark run (26,191 spectra) the sets took 4.5 s; 2,668 of the 22,620 spectra in a
+    set differ from it (2,184 at one in a set at two, 484 the other way). Guide
+    population-test.md ("When a spectrum and its peptide disagree"), gui.md, outputs.md. Tests:
+    tests/test_set_mark.py. A terminology pass followed (owner, 2026-11-18): wherever a text
+    reports, explains, or refers to one of the two tests, it says "population test (self)" (the
+    run's test of each spectrum alone) or "population test (set)" (the analysis's test of every
+    replicate and charge state of a peptide in one sample at one time); "population test" alone
+    stays for the feature (`[run.population_test]`, its settings, presets, "with the test on").
+    Changed: the log lines of the run's test and of the sets, the progress stages of the run
+    ("population test (self)"), `best_set_reason` ("population test (set): two (p = ...)", was
+    "set test: two"), the left-out summary's stage, the analysis's rule line, the summary
+    table's note, the tier figure's title and catalogue entry, the window's preview note, the
+    flag dictionary (`narrow_component` self, `undeuterated_two` set,
+    `more_populations_possible` both), the settings' descriptions (`significance`,
+    `min_population`, and `simulations` used by both; `screen`, `set_k`, `populations`, `tier`,
+    `max_fD`, `undeuterated_cap`, `borderline_evidence`), and the guide (population-test.md
+    names the two at its start and in its steps; statistics.md, outputs.md, tutorial-fits.md,
+    back-exchange-correction.md, gui.md); settings.md, flags.md, and figures.md regenerated.
+    The guide's population-test.md gains "The numbers behind it" (owner, 2026-11-18): the loss
+    (½ Σ [(pred − obs)²/v + ln v], the per-bin variance max(z b1 I + (m pred)², (0.005
+    I_max)²)), the statistic T = 2 Δloss, the gamma null from the simulated copies' mean and
+    variance, the population test (set) adding up T, μ, and σ² (spectra never fitted together:
+    not a global fit), its mean share, and what follows (a weak spectrum dilutes but does not
+    veto; one strong spectrum can carry a set, the mean share being the guard); statistics.md
+    points to it.

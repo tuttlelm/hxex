@@ -817,7 +817,7 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
     if filters is not None and population_test:
         from .set_test import above_max_fd
 
-        stage = "analysis: population test (the spectrum stays, at one population)"
+        stage = "analysis: population test (set): the spectrum stays, at one population"
         for name, r in runs:
             if getattr(r, "population_test", None) is None:
                 continue

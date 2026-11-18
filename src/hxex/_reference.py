@@ -243,12 +243,14 @@ _DESCRIPTIONS: dict[str, str] = {
                                     "borderline unless the two-population side's summed "
                                     "criterion is at least this far below 0 and the other's "
                                     "above 0 (with populations = \"population_test\" the "
-                                    "test's p-values decide instead: below significance / 10 "
+                                    "p-values of the population test (set) decide instead: "
+                                    "below significance / 10 "
                                     "on the side with "
                                     "more populations, above significance x 10 on the other)",
     "analysis.populations": 'how the number of populations is decided: "population_test" '
-                            "(the population test of each peptide's spectra together, made by "
-                            "[run.population_test]; the default when the run has it), "
+                            "(the population test (set), of each peptide's spectra together, "
+                            "made from [run.population_test]; the default when the run has "
+                            "it), "
                             '"best_set" (where a '
                             'peptide\'s spectra together are best described by two; a residue '
                             'where such peptides carry half its weight; K=2 compared where both '
@@ -280,7 +282,7 @@ _DESCRIPTIONS: dict[str, str] = {
                                        "1 - min_population]",
     "analysis.filters.max_fD": "no population deuterated beyond this fraction of the amides "
                                "(with the population test, such a spectrum also leaves the "
-                               "test, at one population)",
+                               "population test (set), at one population)",
     "analysis.filters.max_fD_se": "every population's fD standard error below this",
     "analysis.filters.k1_between_ranks": "the K=1 value lies between the two populations' values",
     "analysis.filters.replicate_outlier": "leave out a spectrum whose K=1 fD lies more than "
@@ -300,9 +302,10 @@ _DESCRIPTIONS: dict[str, str] = {
                                           "same peptide's control in another sample; pooled "
                                           "sequences head to head are tested only where both "
                                           "have their own controls, whatever this says",
-    "analysis.filters.undeuterated_cap": "with the population test: keep the other spectra of a "
-                                         "peptide whose undeuterated set has two populations "
-                                         "or more at one population, in every sample (off: "
+    "analysis.filters.undeuterated_cap": "with the population test: where the population test "
+                                         "(set) finds two populations or more in a peptide's "
+                                         "undeuterated set, keep the peptide's other spectra "
+                                         "at one population, in every sample (off: "
                                          "the peptide is only flagged, undeuterated_two)",
     "analysis.filters.spectrum_quality_filtering": '"loose", "strict", or "none": what the '
                                                    "spectrum quality screens do: leave out "
@@ -320,7 +323,8 @@ _DESCRIPTIONS: dict[str, str] = {
                                       "[min_population, 1 - min_population]; default 0.05 "
                                       'with populations = "best_set", 0.10 with "bootstrap"',
     "analysis.choice.tier": 'with populations = "population_test": the least residue tier '
-                            'with two populations, "two" (strong evidence and a third of the '
+                            "(from the population test (set)) with two populations, "
+                            '"two" (strong evidence and a third of the '
                             'covering weight agrees) or "localised" (half); the other limits '
                             "of this table do not apply then",
     "analysis.regions.name": "the region's name",

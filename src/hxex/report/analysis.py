@@ -1422,7 +1422,7 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
     _check_names(results, config)
     rule = population_rule(config.populations, results)
     if config.populations is None:
-        log.info("the number of populations: %s", "the population test of the sets"
+        log.info("the number of populations: %s", "the population test (set)"
                  if rule == "population_test" else "best_set_K (the run has no population test)")
     config = dataclasses.replace(config, populations=rule)
     runs = results.runs if isinstance(results, RunSet) else {"": results}

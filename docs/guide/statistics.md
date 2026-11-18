@@ -29,8 +29,11 @@ Without any bootstrap, *hxex* gives you:
   second is `best_set_K` in `species_uptake.csv`: all the spectra of one peptide at one time in
   one sample, replicates and charge states together, are asked whether two populations describe
   them better than one. This is the decision the residue plots and the population comparisons
-  are built on. The optional [population test](population-test.md) makes this decision by a
-  calibrated test instead, from spectrum to residue.
+  are built on. The optional [population test](population-test.md) makes these decisions by a
+  calibrated test instead: the population test (self) for each spectrum alone, the population
+  test (set) for all the spectra of a peptide at one time in one sample, and the residues from
+  the sets ([the numbers behind it](population-test.md#the-numbers-behind-it): the loss, the
+  statistic, and how a set adds up its spectra's evidence without fitting them together).
 - **The deuterium uptake** of every population of every spectrum, and the corrected values
   when the back-exchange correction runs (by itself when the data hold undeuterated and fully
   deuterated controls). The correction uses the controls' fits only.
@@ -91,15 +94,16 @@ the one-population fit then settles on one of them, and which one can change fro
 replicate. On simulated data with two equal populations a whole amide count apart, the K = 1
 value missed the true average by a third to two thirds of a deuteron.
 
-So where a peptide's spectra at a time are best described by two populations or more (`best_set_K` 2 or more,
-or the population test's decision) and the two lie at least 2 deuterons apart, *hxex* takes that
-peptide's average from the two populations instead: the share-weighted mean of their positions,
-for each spectrum. Those rows have `average_K` 2 in `species_uptake.csv`, and the
-values feed everything built on the K = 1 values, including the comparisons and the residue
-values. The populations' shares are reliable in exactly these cases, because the two are far
-enough apart to be fitted well. On simulated data this brought the averages of such peptides
-five times closer to the truth; on two real datasets it switched a fifth to a quarter of the peptides and
-times, changing their values by 0.02 fD in the median.
+So where a peptide's spectra at a time are best described by two populations or more
+(`best_set_K` 2 or more, or the decision of the population test (set), the test of those spectra
+together) and the two lie at least 2 deuterons apart, *hxex* takes that peptide's average from
+the two populations instead: the share-weighted mean of their positions, for each spectrum.
+Those rows have `average_K` 2 in `species_uptake.csv`, and the values feed everything built on
+the K = 1 values, including the comparisons and the residue values. The populations' shares are
+reliable in exactly these cases, because the two are far enough apart to be fitted well. On
+simulated data this brought the averages of such peptides five times closer to the truth; on two
+real datasets it switched a fifth to a quarter of the peptides and times, changing their values
+by 0.02 fD in the median.
 
 The error of that average comes from the bootstrap, which measures how much the average itself
 varies over its resamples: within one fit the positions and the shares trade off, and the
@@ -111,30 +115,29 @@ often (on simulated data 7 to 16 percentage points fewer); run its bootstrap aga
 resume`) to use the right error. On simulated data with the right error, these peptides' small
 differences were found as often as before the switch, with no more false ones.
 
-Where the population test finds three populations or more in a peptide's spectra at a time,
-the one-population fit describes the envelope badly whatever the distances, so *hxex* takes
-the average from the description at that number: for each spectrum, the share-weighted mean
-of its populations at the set's number (at three, the three-population fit), whether or not
-that spectrum on its own chose that many. Every spectrum the analysis keeps counts, and one
-the review keeps at one population gives its one-population value. Those rows have `average_K`
-3 (or more) in `species_uptake.csv`, and these values too feed the comparisons and the residue
-values. On the known-answer test data with three true populations, this average missed the
-truth by 0.28 deuterons (median) where the one-population value missed it by 2.8; on two real
-datasets it concerned 15 and 3 peptides and times, mostly at the shortest labelling time, and
-moved them by 0.1 to 0.3 deuterons. Its error comes from a bootstrap at that number of
-populations. Without that bootstrap the error is the scatter of the replicates, and `hxex
-analyse` warns, naming the peptides and times.
+Where the population test (set) finds three populations or more in a peptide's spectra at a
+time, the one-population fit describes the envelope badly whatever the distances, so *hxex*
+takes the average from the description at that number: for each spectrum, the share-weighted
+mean of its populations at the set's number (at three, the three-population fit), whether or not
+that spectrum on its own chose that many. Every spectrum the analysis keeps counts, and one the
+review keeps at one population gives its one-population value. Those rows have `average_K` 3 (or
+more) in `species_uptake.csv`, and these values too feed the comparisons and the residue values.
+On the known-answer test data with three true populations, this average missed the truth by 0.28
+deuterons (median) where the one-population value missed it by 2.8; on two real datasets it
+concerned 15 and 3 peptides and times, mostly at the shortest labelling time, and moved them by
+0.1 to 0.3 deuterons. Its error comes from a bootstrap at that number of populations. Without
+that bootstrap the error is the scatter of the replicates, and `hxex analyse` warns, naming the
+peptides and times.
 
 The same rule holds for every peptide and time: its spectra are bootstrapped at the number of
 populations its values come from, whatever number each spectrum chose on its own. That is the
-number the population test gives the set, and also one population where the set has one or
+number the population test (set) gives the set, and also one population where the set has one or
 two, since such a set's average is the one-population value unless its two populations lie far
-apart. `hxex run` makes these bootstraps on its own (`set_k` in `[run.bootstrap]`, on unless
-you switch it off; the log says how many spectra it bootstrapped, and `hxex info` lists them
-under `bootstrap`). They are few: most spectra chose the number their set has, and their own
-bootstrap already serves. So every average, and every one-population comparison built on the
-averages, has a bootstrap error. `hxex resume hxex.toml` adds these bootstraps to results made
-without them.
+apart. `hxex run` makes these bootstraps on its own (`set_k` in `[run.bootstrap]`, on unless you
+switch it off; the log says how many spectra it bootstrapped, and `hxex info` lists them under
+`bootstrap`). They are few: most spectra chose the number their set has, and their own bootstrap
+already serves. So every average, and every one-population comparison built on the averages, has
+a bootstrap error. `hxex resume hxex.toml` adds these bootstraps to results made without them.
 
 The two-population comparisons between samples (the populations' positions and shares, at
 the peptides and the residues) need more: a bootstrap of every spectrum at two populations,

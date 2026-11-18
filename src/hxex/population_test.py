@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The population test: whether a spectrum, or a set of spectra, holds K + 1 populations rather
-than K (docs/ANALYSIS.md "The population test").
+than K (docs/ANALYSIS.md "The population test"). The run makes the population test (self), of
+each spectrum alone, here; the analysis the population test (set), of every replicate and charge
+state of a peptide in one sample at one time (:mod:`hxex.analysis.set_test`).
 
 The statistic of a spectrum at step K (K against K + 1) is ``T = 2 (nll_K - nll_K+1)`` from its
 own fits, 0 where negative or below the precision of the losses (:func:`statistic_of`). Its
@@ -355,7 +357,7 @@ def population_test(
             plans.append((s, k, np.flatnonzero(both)))
         else:
             if s >= n_decided and both.any():
-                log.info("population test, %d against %d: the chi-square reference for %d "
+                log.info("population test (self), %d against %d: the chi-square reference for %d "
                          "spectra (above decide_up_to %d: a flag only, "
                          "more_populations_possible)", k, k + 1, int(both.sum()),
                          config.decide_up_to)
@@ -368,16 +370,16 @@ def population_test(
         at, ps = rows[kept], previous.column(k)
         null_mean[at, s], null_var[at, s] = previous.null_mean[at, ps], previous.null_var[at, ps]
         kind[at, s], draws[at, s] = previous.null_kind[at, ps], previous.null_draws[at, ps]
-        log.info("population test, %d against %d: the null simulations of %d spectra kept from "
-                 "the earlier test", k, k + 1, len(at))
+        log.info("population test (self), %d against %d: the null simulations of %d spectra "
+                 "kept from the earlier test", k, k + 1, len(at))
         plans[j] = (s, k, rows[~kept])
     total = sum(len(rows) for _, _, rows in plans) * n_sim
     done = 0
     for s, k, rows in plans:
         if not len(rows):
             continue
-        log.info("population test, %d against %d: %d null simulations of %d spectra", k, k + 1,
-                 n_sim, len(rows))
+        log.info("population test (self), %d against %d: %d null simulations of %d spectra",
+                 k, k + 1, n_sim, len(rows))
 
         def tick(n: int) -> None:
             nonlocal done
@@ -395,15 +397,16 @@ def population_test(
         # gamma has no shape, and p would be 0 for any statistic above it
         flat = enough & ~(var > 0)
         if flat.any():
-            log.info("population test, %d against %d: the null simulations of %d spectra have "
-                     "no spread; they are not tested at this step", k, k + 1, int(flat.sum()))
+            log.info("population test (self), %d against %d: the null simulations of %d spectra "
+                     "have no spread; they are not tested at this step", k, k + 1,
+                     int(flat.sum()))
         kind[rows[flat], s] = FLAT  # said so in spectra.csv (audit 2026-11-01 Low 58)
         enough &= ~flat
         good = rows[enough]
         null_mean[good, s], null_var[good, s] = mean[enough], var[enough]
         kind[good, s] = SIMULATED
         if (~enough & ~flat).any():
-            log.warning("population test, %d against %d: the null simulations failed for %d "
+            log.warning("population test (self), %d against %d: the null simulations failed for %d "
                         "spectra, which are not tested at this step", k, k + 1,
                         int((~enough & ~flat).sum()))
     tested = ~np.isin(kind.astype(str), NOT_TESTED)
@@ -413,16 +416,16 @@ def population_test(
     selected, more = decided_and_flag(p, added, usable, config, n_decided)
     criterion = np.asarray(fit.selected_K, dtype=np.int64)
     if narrow.any():
-        log.info("population test: %d spectra have a component narrower than deuterium "
+        log.info("population test (self): %d spectra have a component narrower than deuterium "
                  "allows (narrow_component in spectra.csv; a flag only)",
                  int(narrow.any(axis=1).sum()))
-    log.info("population test: %d spectra read one population, %d two%s (the criterion: %d, "
+    log.info("population test (self): %d spectra read one population, %d two%s (the criterion: %d, "
              "%d)", int((selected == 1).sum()), int((selected == 2).sum()),
              "" if n_steps < 2 else f", {int((selected >= 3).sum())} three or more",
              int((criterion == 1).sum()), int((criterion == 2).sum()))
     if n_decided < n_steps:
-        log.info("population test: %d spectra may hold more populations than the %d the test "
-                 "decides (more_populations_possible in spectra.csv; a flag only)",
+        log.info("population test (self): %d spectra may hold more populations than the %d "
+                 "the test decides (more_populations_possible in spectra.csv; a flag only)",
                  int(more.sum()), config.decide_up_to)
     return PopulationTest(
         config=config, steps=steps, statistic=statistic, null_mean=null_mean, null_var=null_var,

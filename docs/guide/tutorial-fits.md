@@ -173,8 +173,9 @@ So far the number of populations of each spectrum was chosen by a criterion that
 better fit of more populations against their number, and the analysis combined the spectra of a
 peptide and time with the same kind of criterion (`best_set_K`). The *population test* asks the
 question more strictly: is a further population needed, judged against simulated spectra that
-have the same noise but no such population? It tests every spectrum, and the spectra of each
-peptide and time together ([The population test](population-test.md)).
+have the same noise but no such population? It is made twice: the *population test (self)*
+tests each spectrum alone, and the *population test (set)* the spectra of each peptide and time
+together, its replicates and charge states ([The population test](population-test.md)).
 
 The test is switched off in the template; setting its number of simulated spectra (20, also
 its default) switches it on:
@@ -193,13 +194,14 @@ hxex analyse hxex.toml
 ```
 
 `hxex resume` keeps the fits and adds the test: about 40 minutes on eight cores of a workstation,
-up to an hour or more on a laptop, and 15 minutes with a GPU. Each spectrum's number of populations is now the test's (`selected K: 1: 3218, 2: 654,
-3: 2`, against 2983, 875, and 16 before), and the analysis uses the test: `species_uptake.csv`
-gains `set_test_K`, the test's verdict for each peptide and time, and `best_set_reason` says how
-it was reached (`set test: two (p = ..., added population ...)`).
+up to an hour or more on a laptop, and 15 minutes with a GPU. Each spectrum's number of populations is now that of the population test (self) (`selected K: 1: 3218, 2: 654,
+3: 2`, against 2983, 875, and 16 before), and the analysis uses the population test (set):
+`species_uptake.csv` gains `set_test_K`, its verdict for each peptide and time, and
+`best_set_reason` says how it was reached
+(`population test (set): two (p = ..., added population ...)`).
 
 Most decisions stay as they were. One that changes is WT 42-54 at 30 min of step 4: the
-test finds the evidence for the small population strong (p = 2.6 × 10⁻¹⁴), but its share,
+population test (set) finds the evidence for the small population strong (p = 2.6 × 10⁻¹⁴), but its share,
 0.09, is below the 0.10 the test asks of a population (`min_population`), so the test reads
 one population there. Both readings are defensible; the test is the stricter one, and the one
 to report if you use it.

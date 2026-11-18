@@ -41,6 +41,45 @@ class Spectrum:
     status: str  # review status: "", "accepted" or "rejected"
     flags: str  # quality flags, ";"-separated
     left_out: str = ""  # why the analysis settings leave it out ('' when they keep it)
+    # its set's number of populations by the population test of the set (every replicate and
+    # charge state at this time, :func:`hxex.analysis.set_test.spectrum_sets`), 0 for none,
+    # and the set's verdict in words ('2 populations (p 1.0e-85)')
+    set_K: int = 0
+    set_words: str = ""
+
+    @property
+    def differs(self) -> bool:
+        """Whether its set has another number of populations than its K (owner, 2026-11-17:
+        shown, the K unchanged)."""
+        return bool(self.set_K) and self.set_K != self.K
+
+    @property
+    def k_text(self) -> str:
+        """The K column: ``1``, or ``K = 1 (self), K = 2 (set)`` where the set's differs."""
+        return k_text(self.K, self.set_K)
+
+    @property
+    def k_tip(self) -> str:
+        """The K cell's tooltip where the set has another number (empty otherwise)."""
+        return set_tip(self.K, self.set_words) if self.differs else ""
+
+
+SET_MARK_TIP = ("population test (self), this spectrum alone: K = {k}; population test (set), "
+                "every replicate and charge state of this peptide in this sample at this "
+                "time: {words}, as hxex analyse decides it. The analysis uses the set's; the "
+                "spectrum keeps its own fit and K")
+
+
+def k_text(k: int, set_k: int) -> str:
+    """A spectrum's K as the tree writes it: ``1``, or ``K = 1 (self), K = 2 (set)`` where its set
+    (by the population test of the set) has another number of populations (owner,
+    2026-11-17: the set's evidence can support a K the spectrum alone cannot)."""
+    return f"K = {k} (self), K = {set_k} (set)" if set_k and set_k != k else str(k)
+
+
+def set_tip(k: int, words: str) -> str:
+    """Why a K is marked ``K = 1 (self), K = N (set)``: the spectrum's K and the set's verdict."""
+    return SET_MARK_TIP.format(words=words, k=k)
 
 
 @dataclass
@@ -51,7 +90,24 @@ class Point:
 
     @property
     def ks(self) -> str:
-        return " ".join(str(s.K) for s in self.spectra)
+        """Its replicates' K, and ``(set N)`` when one of them differs from their set."""
+        return point_ks([s.K for s in self.spectra], self.set_K if self.differs else 0)
+
+    @property
+    def set_K(self) -> int:
+        """The set's number of populations (one set holds a time point's spectra), 0 for none."""
+        return next((s.set_K for s in self.spectra if s.set_K), 0)
+
+    @property
+    def differs(self) -> bool:
+        return any(s.differs for s in self.spectra)
+
+
+def point_ks(ks, set_k: int = 0) -> str:
+    """A time point's K column: its replicates' K (``1 2 2 2``), then ``(set N)`` when one of
+    them differs from their set's ``set_k`` (0: none differs)."""
+    text = " ".join(str(k) for k in ks)
+    return f"{text} (set {set_k})" if set_k else text
 
 
 @dataclass
@@ -229,6 +285,18 @@ def _reviewed(results) -> dict[int, int]:
     return out
 
 
+def spectrum_sets(results, config=None) -> list | None:
+    """The test of each spectrum's set (:func:`hxex.analysis.set_test.spectrum_sets`) with the
+    analysis settings ``config`` (its defaults when None), worked out with the log quiet; None
+    without the population test."""
+    from ..analysis.set_test import spectrum_sets as sets_of
+
+    if getattr(results, "population_test", None) is None:
+        return None
+    with _quiet_here():
+        return sets_of(results, config)
+
+
 def left_out(results, config=None) -> list[str]:
     """Why the analysis settings ``config`` (:class:`hxex.analysis.AnalysisConfig`; its
     defaults when None) leave each spectrum of ``results`` out, '' for the ones kept: the
@@ -275,9 +343,12 @@ def left_out_counts(results, left: list[str] | None) -> dict[int, int]:
     return out
 
 
-def points(results, data_id: int, left: list[str] | None = None) -> list[Point]:
+def points(results, data_id: int, left: list[str] | None = None,
+           sets: list | None = None) -> list[Point]:
     """The time points of a series, in its order, each with its spectra by replicate
-    (``left``: :func:`left_out` of the results)."""
+    (``left``: :func:`left_out` of the results; ``sets``: :func:`spectrum_sets` of the
+    results, the test of each spectrum's set, or None)."""
+    from ..analysis.set_test import set_words
     from ..report.series import series_info, time_text
 
     info = series_info(results, data_id)
@@ -292,10 +363,15 @@ def points(results, data_id: int, left: list[str] | None = None) -> list[Point]:
             label = time_text(float(info["times"][pos]), str(info["roles"][pos]),
                                results.time_scale)
             point = by_point[order] = Point(label, order)
+        found = sets[int(i)] if sets is not None else None
+        sig = (results.population_test.config.significance
+               if results.population_test is not None else None)
         point.spectra.append(Spectrum(
             int(i), str(results.fit.spectrum_id[i]), int(info["reps"][pos]), int(ks[i]),
             str(status[i]) if status[i] not in ("", "None", "unreviewed") else "",
-            flags[i], left[i] if left is not None else ""))
+            flags[i], left[i] if left is not None else "",
+            int(found.K) if found is not None else 0,
+            set_words(found, sig) if found is not None else ""))
     for point in by_point.values():
         point.spectra.sort(key=lambda s: s.rep)
     return [by_point[k] for k in sorted(by_point)]

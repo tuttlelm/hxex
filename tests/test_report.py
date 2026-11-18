@@ -364,6 +364,8 @@ def test_tables_have_the_documented_columns_and_values(results):
     assert list(spec)[-11:] == [*SCREEN_SCORES, *MZ_CHECK_COLUMNS, "spectrum_offset_ppm",
                                 "spectrum_offset_limit_ppm", "same_measurement_as"]
     assert set(spec["same_measurement_as"]) == {""}  # no spectrum read twice here
+    # the set's K beside the spectrum's: empty without the population test
+    assert list(spec)[list(spec).index("K") + 1] == "set_K" and set(spec["set_K"]) == {""}
     i = 8
     sel = comp["spectrum_id"] == spec["spectrum_id"][i]
     assert np.isclose(spec["centroid"][i], (comp["mean"][sel] * comp["population"][sel]).sum())

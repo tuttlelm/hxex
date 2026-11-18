@@ -40,7 +40,17 @@ from PySide6.QtWidgets import (
 from .data_table import DataPanel, cell_text, flag_tip
 from .figure_view import HINT, FigurePanel
 from .order import natural_key
-from .results_tree import FILTERS, Peptide, left_out, left_out_counts, peptides, points, shown
+from .results_tree import (
+    FILTERS,
+    Peptide,
+    left_out,
+    left_out_counts,
+    peptides,
+    point_ks,
+    points,
+    shown,
+    spectrum_sets,
+)
 from .review_panel import ReviewPanel
 from .spectra_list import SpectraList, list_rows
 from .tasks import Latest
@@ -82,7 +92,12 @@ COLUMN_TIPS = {
                 "lists them); accepting one in the review keeps it; 'kept at K = 1' not "
                 "counted",
     "K > 1": "spectra fitted with more than one population (rejected ones not counted)",
-    "K": "the number of populations of each replicate's fit",
+    "K": "the number of populations of each replicate's fit; 'K = 1 (self), K = 2 (set)': the "
+         "population test (set), of every replicate and charge state at this time, gives "
+         "another number than the population test (self) of the spectrum alone, as hxex "
+         "analyse decides it (the analysis uses the set's; the spectrum keeps its K; worked "
+         "out with the 'left out' column); '(set 2)' on a time point: one of its replicates "
+         "differs",
     "review": "the review's decision: accepted, rejected, or none yet",
     "flags": "the quality flags of the spectrum (hover one for its meaning; the guide's "
              "flags.md, or hxex explain NAME, has them all)"}
@@ -162,6 +177,9 @@ class ResultsWorkspace(QWidget):
         self.window = window
         self.results = None
         self.left: list[str] | None = None  # why the analysis settings leave each spectrum out
+        # the test of each spectrum's set (with the population test; None without), worked out
+        # with the 'left out' column and as stale as it after a decision
+        self.sets: list | None = None
         self.analysis_config = None  # the settings that says so
         self._left_task = Latest(self)
         self.tree_data: list[Peptide] = []
@@ -548,6 +566,8 @@ class ResultsWorkspace(QWidget):
         if results is not None and left is None:
             left = left_out_or_none(results, analysis)
         self.left = left
+        # the load worked them out already (the same results and settings: held)
+        self.sets = sets_or_none(results, analysis) if results is not None else None
         self.left_bar.hide()  # worked out as the results were read
         if results is not None and (path is None or Path(path).suffix != ".toml"):
             # a bundle on its own: no project file to take the settings from (audit of
@@ -798,7 +818,7 @@ class ResultsWorkspace(QWidget):
         self.show_results(None, None)
         self._overview_of, self._overview_figures = None, {}
         self._spectra_job, self._pending_draws = None, {}
-        self.left, self.analysis_config = None, None
+        self.left, self.sets, self.analysis_config = None, None, None
         self.table_view.clear()
         self.list.set_rows([], [])
         if self.window_editor is not None:
@@ -1018,7 +1038,7 @@ class ResultsWorkspace(QWidget):
         self._table_for, self._table_results = key, self.results
         results, series = self.results, payload[1]
         if kind == "spectrum":
-            table = spectra_table(results, rows=[payload[3].index])
+            table = spectra_table(results, rows=[payload[3].index], sets=self.sets)
             rows = [{"column": name, "value": _plain_value(values[0])}
                     for name, values in table.items()]
             self.table_view.show_rows(["column", "value"], rows,
@@ -1026,7 +1046,8 @@ class ResultsWorkspace(QWidget):
             self._data_count(1)
             self.table_view.set_note("spectra.csv: this spectrum's row, as hxex report writes it")
         elif kind == "point":
-            table = spectra_table(results, rows=[s.index for s in payload[2].spectra])
+            table = spectra_table(results, rows=[s.index for s in payload[2].spectra],
+                                  sets=self.sets)
             self._show_columns(table, f"{series.own_range or payload[0].peptide_range}"
                                       f"_z{series.charge}_"
                                       f"{payload[2].label}_spectra")
@@ -1059,7 +1080,8 @@ class ResultsWorkspace(QWidget):
                                    f"{stem}_components")
                 what = f"{whose} populations, one row per spectrum and population"
             elif chosen == "spectra.csv":
-                self._show_columns(spectra_table(results, rows=spectra), f"{stem}_spectra")
+                self._show_columns(spectra_table(results, rows=spectra, sets=self.sets),
+                                   f"{stem}_spectra")
                 what = f"{whose} spectra"
             else:
                 self._show_columns(uptake_table(results, data_ids=ids), f"{stem}_uptake")
@@ -1198,13 +1220,13 @@ class ResultsWorkspace(QWidget):
     def _build_list(self) -> None:
         """The list's rows, made in the background (seconds on a large run; the tree is ready
         meanwhile)."""
-        results, left = self.results, self.left
+        results, left, sets = self.results, self.left, self.sets
         self._list_tables = {}
         if results is None:
             self.list.clear("No results open.")
             return
         self.list.clear("Building the list…")
-        self._list_task.submit(lambda: list_rows(results, left),
+        self._list_task.submit(lambda: list_rows(results, left, sets=sets),
                                lambda made: self._list_built(results, "spectra", made),
                                lambda message: self.list.clear(
                                    f"The list could not be made: {message}"))
@@ -1233,9 +1255,9 @@ class ResultsWorkspace(QWidget):
                 self.list.mark_stale()
             return
         self.list.clear(f"Making {table}.csv…")
-        left = self.left
+        left, sets = self.left, self.sets
         task = self._list_task if table == "spectra" else self._table_task
-        task.submit(lambda: _table_rows(results, table, left),
+        task.submit(lambda: _table_rows(results, table, left, sets),
                                lambda made: self._list_built(results, table, made),
                                lambda message: self.list.clear(
                                    f"{table}.csv could not be made: {message}"))
@@ -1470,17 +1492,21 @@ class ResultsWorkspace(QWidget):
         if item.data(0, KIND) != "series" or item.childCount():
             return
         pep, series = item.data(0, PAYLOAD)
-        for point in points(self.results, series.data_id, self.left):
+        for point in points(self.results, series.data_id, self.left, self.sets):
             child = QTreeWidgetItem([""] * len(COLUMNS))
             child.setText(0, point.label)
             child.setText(COLUMN["spectra"], str(len(point.spectra)))
             child.setText(COLUMN["K"], point.ks)
+            if point.differs:
+                child.setToolTip(COLUMN["K"], tip(
+                    "a replicate's K differs from its set's, the number of populations the "
+                    "population test (set) gives (information only)"))
             child.setData(0, KIND, "point")
             child.setData(0, PAYLOAD, (pep, series, point))
             for spectrum in point.spectra:
                 leaf = QTreeWidgetItem([f"rep {spectrum.rep}"] + [""] * (len(COLUMNS) - 1))
                 leaf.setText(COLUMN["flagged"], "yes" if spectrum.flags else "")
-                leaf.setText(COLUMN["K"], str(spectrum.K))
+                self._show_k(leaf, spectrum)
                 leaf.setText(COLUMN["flags"], spectrum.flags.replace(";", ", "))
                 leaf.setToolTip(COLUMN["flags"], flag_tip(spectrum.flags))
                 leaf.setData(0, KIND, "spectrum")
@@ -1672,8 +1698,9 @@ class ResultsWorkspace(QWidget):
             ids = [s.spectrum_id for s in point.spectra]
             labels = [f"rep {s.rep}" for s in point.spectra]
             title = f"{payload[0].sample} {payload[0].label} {series.name}, {point.label}"
+            sets = self.sets
             self._draw_panel("fits at each K", lambda: plot_k_comparisons(
-                ids, results, labels=labels, title=title, mz_range=mz_range))
+                ids, results, labels=labels, title=title, mz_range=mz_range, sets=sets))
             self._draw_panel("uptake", uptake)
         else:
             spectrum = payload[3]
@@ -1681,8 +1708,9 @@ class ResultsWorkspace(QWidget):
             self._draw_panel("spectrum", lambda: plot_spectrum(
                 sid, results, show=config.show, k=config.k, corrected=config.corrected,
                 mz_range=mz_range))
+            sets = self.sets
             self._draw_panel("fits at each K", lambda: plot_k_comparison(
-                sid, results, mz_range=mz_range))
+                sid, results, mz_range=mz_range, sets=sets))
             if self._profile_fitted():
                 if self._profile_fit_of(sid):
                     self._draw_panel("picking check", lambda: plot_picking_check(
@@ -1812,15 +1840,15 @@ class ResultsWorkspace(QWidget):
         status = np.asarray(results.review_status).astype(str)
         ks = results.effective_K
         series_ids = {int(results.fit.data_id[i]) for i in changed}
-        k = COLUMN["K"]
         for i in changed:
             leaf = self._leaves.get(int(i))
             if leaf is not None:
-                leaf.setText(k, str(int(ks[i])))
+                spectrum = leaf.data(0, PAYLOAD)[3]
+                spectrum.K = int(ks[i])
+                self._show_k(leaf, spectrum)
                 self._show_status(leaf, status[i])
                 point = leaf.parent()
-                point.setText(k, " ".join(point.child(j).text(k)
-                                          for j in range(point.childCount())))
+                self._show_point_k(point)
                 self._sum_children(point)
         for data_id in series_ids:
             rejected, multi = series_counts(results, data_id)
@@ -1839,7 +1867,8 @@ class ResultsWorkspace(QWidget):
         self._redraw()
         kept = self._list_tables.get("spectra")
         if kept is not None:  # the decided spectra's rows, made again (K, populations, review)
-            fresh = list_rows(results, self.left, rows=sorted(int(i) for i in changed))[1]
+            fresh = list_rows(results, self.left, rows=sorted(int(i) for i in changed),
+                              sets=self.sets)[1]
             by_index = {r["_index"]: r for r in fresh}
             for row in kept[2]:
                 row.update(by_index.get(row["_index"], {}))
@@ -1880,8 +1909,9 @@ class ResultsWorkspace(QWidget):
             return
         self.left_note.setText("Working out the 'left out' column…")
         self.left_update.setEnabled(False)
-        self._left_task.submit(lambda: left_out_or_none(results, config),
-                               lambda left: self._left_out_known(results, left),
+        self._left_task.submit(lambda: (left_out_or_none(results, config),
+                                        sets_or_none(results, config)),
+                               lambda made: self._left_out_known(results, *made),
                                self._left_failed)
 
     def _left_failed(self, message: str) -> None:
@@ -1889,28 +1919,39 @@ class ResultsWorkspace(QWidget):
         self.left_note.setText(f"The 'left out' column could not be worked out: {message}")
         self.left_update.setEnabled(True)
 
-    def _left_out_known(self, results, left: list[str] | None) -> None:
-        """What the analysis leaves out, worked out again after a decision: shown on every row
-        made so far."""
+    def _left_out_known(self, results, left: list[str] | None, sets=None) -> None:
+        """What the analysis leaves out, and the sets' K, worked out again after a decision:
+        shown on every row made so far."""
         if results is not self.results:  # newer decisions since: still out of date
             self._left_stale("your latest review decisions")
             return
         self.left_bar.hide()
-        self.left = left
+        self.left, self.sets = left, sets
         if self.list.rows:
-            self.list.update_rows([{**row, "left_out": left[row["_index"]] if left else ""}
-                                   for row in self.list.rows])
+            self.list.update_rows([
+                {**row, "left_out": left[row["_index"]] if left else "",
+                 **({"set_K": _set_k_cell(sets, row["_index"])} if "set_K" in row else {})}
+                for row in self.list.rows])
         n_left = left_out_counts(results, left)
         for pep in self.tree_data:
             for series in pep.series:
                 series.n_left_out = n_left.get(series.data_id, 0)
+        from ..analysis.set_test import set_words
+
+        significance = (results.population_test.config.significance
+                        if results.population_test is not None else None)
         for i, leaf in self._leaves.items():
             spectrum = leaf.data(0, PAYLOAD)[3]
             spectrum.left_out = left[i] if left is not None else ""
             self._show_left_out(leaf, spectrum.left_out)
+            found = sets[i] if sets is not None else None
+            spectrum.set_K = int(found.K) if found is not None else 0
+            spectrum.set_words = set_words(found, significance) if found is not None else ""
+            self._show_k(leaf, spectrum)
         points = {id(leaf.parent()): leaf.parent() for leaf in self._leaves.values()}
         for point in points.values():
             self._sum_children(point, ("left out",))
+            self._show_point_k(point)
         for data_id, item in self._series_items.items():
             item.setText(COLUMN["left out"], str(n_left.get(data_id, 0) or ""))
         for t in range(self.tree.topLevelItemCount()):
@@ -1921,6 +1962,24 @@ class ResultsWorkspace(QWidget):
         status = "" if status in ("", "unreviewed", "None") else status
         leaf.setText(COLUMN["review"], status)
         leaf.setText(COLUMN["rejected"], "yes" if status == "rejected" else "")
+
+    @staticmethod
+    def _show_k(leaf: QTreeWidgetItem, spectrum) -> None:
+        """A spectrum's K, marked ``K = 1 (self), K = N (set)`` where its set has another number
+        (owner, 2026-11-17: shown, the K unchanged), with why in the tooltip."""
+        leaf.setText(COLUMN["K"], spectrum.k_text)
+        leaf.setToolTip(COLUMN["K"], tip(spectrum.k_tip) if spectrum.differs else "")
+
+    @staticmethod
+    def _show_point_k(point: QTreeWidgetItem) -> None:
+        """A time point's K: its replicates', and ``(set N)`` when one differs from the set."""
+        spectra = [point.child(j).data(0, PAYLOAD)[3] for j in range(point.childCount())]
+        differs = [s for s in spectra if s.differs]
+        point.setText(COLUMN["K"], point_ks([s.K for s in spectra],
+                                            differs[0].set_K if differs else 0))
+        point.setToolTip(COLUMN["K"], tip(
+            "a replicate's K differs from its set's, the number of populations the population "
+            "test (set) gives (information only)") if differs else "")
 
     @staticmethod
     def _show_left_out(leaf: QTreeWidgetItem, why: str) -> None:
@@ -2088,13 +2147,13 @@ def _residues(peptide_range: str) -> tuple[int, int] | None:
         return None
 
 
-def _table_rows(results, table: str, left) -> tuple[list[str], list[dict]]:
+def _table_rows(results, table: str, left, sets=None) -> tuple[list[str], list[dict]]:
     """A report table's columns and rows for the list (``spectra``: :func:`list_rows`)."""
     from ..report.tables import components_table, series_table, uptake_table
     from .spectra_list import _plain
 
     if table == "spectra":
-        return list_rows(results, left)
+        return list_rows(results, left, sets=sets)
     made = {"series": series_table, "components": components_table,
             "uptake": uptake_table}[table](results)
     columns = list(made)
@@ -2145,6 +2204,22 @@ def _same_record(a, b) -> bool:
         return a.settings.spectra_source is b.settings.spectra_source
     except AttributeError:
         return False
+
+
+def sets_or_none(results, config) -> list | None:
+    """:func:`~hxex.gui.results_tree.spectrum_sets`, or None (said in the log) when the results
+    do not allow it: the tree is still useful without the sets' K."""
+    try:
+        return spectrum_sets(results, config)
+    except Exception as exc:  # noqa: BLE001 - information only
+        log.warning("the sets' number of populations is not known: %s", exc)
+        return None
+
+
+def _set_k_cell(sets, index: int):
+    """``set_K`` of the list's row at fit position ``index``: the set's K, or empty."""
+    found = sets[index] if sets is not None else None
+    return int(found.K) if found is not None else ""
 
 
 def left_out_or_none(results, config) -> list[str] | None:

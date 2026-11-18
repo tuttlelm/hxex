@@ -673,7 +673,7 @@ def _fit_part(
                           cancel=cancel,
                           test_screen=testing, noise_curve=noise_curve, required_k=required)
         if testing:
-            start_stage(progress, f"population test{chunk}", mid, b)
+            start_stage(progress, f"population test (self){chunk}", mid, b)
             test = population_test(sub, part, config.population_test,
                                    d2o_fraction=_d2o_fraction(config), test_screen=True,
                                    progress=_Span(progress, mid, b), cancel=cancel)
@@ -916,8 +916,8 @@ def _set_k_part(result: RunResult, review, analysis, progress, cancel) -> RunRes
     start_stage(progress, "bootstrap set K", *_EXTRA)
     if wanted:
         total += sum(len(r) for r in wanted.values())
-        log.info("bootstrapping %d spectra of the population test's %d sets at their set's "
-                 "number of populations, where they were selected at another (%s): the "
+        log.info("bootstrapping %d spectra of the %d sets of the population test (set) at their "
+                 "set's number of populations, where they were selected at another (%s): the "
                  "errors of every set's description and average ([run.bootstrap] set_k)",
                  total, n_sets, ", ".join(f"K={k}: {len(r)}" for k, r in sorted(wanted.items())))
         result = dataclasses.replace(result, bootstrap_by_k=_bootstrap_at(
@@ -936,8 +936,8 @@ def _set_k_part(result: RunResult, review, analysis, progress, cancel) -> RunRes
             result.config, result.measurements, result.fit, result.bootstrap_by_k, second,
             cancel, progress=progress))
     if not total:
-        log.info("the %d spectra of the %d sets of the population test have a bootstrap at the "
-                 "K their set's values come from", n_spectra, n_sets)
+        log.info("the %d spectra of the %d sets of the population test (set) have a bootstrap "
+                 "at the K their set's values come from", n_spectra, n_sets)
     return result
 
 
@@ -1041,8 +1041,8 @@ def _test_screened(data: Measurements, fit: FitResult, chosen: Mapping[str, int]
     if not differ.any():
         return fit
     rows = np.flatnonzero(np.isin(fit.data_id, np.unique(fit.data_id[differ])))
-    log.info("population test: the fits were made with the criterion's screen; %d series whose "
-             "fits the test's screen makes differently are fitted again with it",
+    log.info("population test (self): the fits were made with the criterion's screen; %d "
+             "series whose fits the test's screen makes differently are fitted again with it",
              len(np.unique(fit.data_id[rows])))
     refit = fit_models(data.select(rows), fit.config, test_screen=True, cancel=cancel,
                        noise_curve=fit.noise_curve,
@@ -1099,7 +1099,7 @@ def _test_part(data: Measurements, config: RunConfig, fit: FitResult, progress, 
     (:func:`hxex.population_test.population_test`)."""
     plan = _plan(data, config, progress_range, record)
     fit = dataclasses.replace(fit, selected_K=_criterion_K(fit))
-    start_stage(progress, "population test", plan.lo, plan.hi)
+    start_stage(progress, "population test (self)", plan.lo, plan.hi)
     tests = []
     for j, (rows, sub) in enumerate(zip(plan.chunks, plan.subs, strict=True)):
         check_cancel(cancel)
@@ -2098,9 +2098,9 @@ def resume_bootstrap(
             outdated = False
         if test is not None and not testing and (stored_controls is None or (
                 stored_controls.d2o_fraction != config.controls.d2o_fraction)):
-            log.warning("%s: the population test's narrow_component flags used the former "
-                        "d2o_fraction; add [run.population_test] to make the test again with "
-                        "the new one", path)
+            log.warning("%s: the narrow_component flags of the population test (self) used the "
+                        "former d2o_fraction; add [run.population_test] to make the test again "
+                        "with the new one", path)
         controls = controls_table
         provenance = _resumed(provenance, "controls", project_file is not None)
         if project_file is not None:

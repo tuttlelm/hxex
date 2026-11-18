@@ -264,7 +264,7 @@ The fit of k_min to k_max populations to every spectrum, the number chosen by th
 | `grad_clip` | text | `"per_measurement"` | "per_measurement" (each fit on its own) or "global" gradient clipping |
 | `polish_steps` | integer | `40` | Levenberg-Marquardt iterations per measurement after the restarts (0: none) |
 | `seed` | integer | `0` | seed of everything random (each spectrum is also seeded by what it is: sample, peptide, charge, replicate, time, role) |
-| `screen` | true/false | `false` | fit K > 1 only where it could be selected: about a third of the time, but the skipped fits are missing from fixed-K analyses (with [run.population_test]: only where the test could find it) |
+| `screen` | true/false | `false` | fit K > 1 only where it could be selected: about a third of the time, but the skipped fits are missing from fixed-K analyses (with [run.population_test]: only where the population test (self) could find it) |
 
 ## `[run.fit.noise]`
 
@@ -310,17 +310,17 @@ Standard errors and intervals from resampled refits of every measurement (guide:
 | `keep_draws` | true/false | `true` | keep every resample's fit in the bundle (the cloud of points on the populations page; about a tenth more bundle); changing it never makes a bootstrap again: results made without them keep their bootstrap |
 | `curve_band` | true/false | `true` | also the band of the total uptake curve |
 | `ks` | text or list | `"selected"` | "selected" (each measurement at its own K), "all" fitted K, or a list of K (fixed-K bootstraps for the analysis) |
-| `set_k` | true/false | `true` | with the population test, also bootstrap each spectrum at the K its set's values come from (the set's number of populations, and 1 for sets at one or two) where it was selected at another: the error of every set's average (else the replicates' scatter); a few spectra |
+| `set_k` | true/false | `true` | with the population test, also bootstrap each spectrum at the K its set's values come from (the number of populations the population test (set) gives the set, and 1 for sets at one or two) where it was selected at another: the error of every set's average (else the replicates' scatter); a few spectra |
 
 ## `[run.population_test]`
 
-Tests how many populations each spectrum, and each set of replicates and charge states, holds against simulated spectra (guide: population-test.md). Each spectrum's K is then the test's; needs k_min = 1. Slow: ten to twenty times the fit per step.
+Tests, against simulated spectra, how many populations each spectrum holds alone, the population test (self) of the run, and how many each set holds, every replicate and charge state of a peptide in one sample at one time, the population test (set) of hxex analyse (guide: population-test.md). Each spectrum's K is then that of the population test (self); needs k_min = 1. Slow: ten to twenty times the fit per step.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `simulations` | integer | `20` | simulated spectra per spectrum and step for the test's reference (20; time grows with it) |
-| `significance` | number | `0.01` | a further population counts when the chance of seeing the evidence without it is below this |
-| `min_population` | number | `0.1` | ... and the further population is at least this share of the molecules |
+| `simulations` | integer | `20` | simulated spectra per spectrum and step for the test's reference (20; time grows with it); used by both the population test (self) and (set) |
+| `significance` | number | `0.01` | a further population counts when the chance of seeing the evidence without it is below this; used by both the population test (self) and (set) |
+| `min_population` | number | `0.1` | ... and the further population is at least this share of the molecules (for a set, its mean share); used by both the population test (self) and (set) |
 | `null` | text | `"simulated"` | "simulated", or "chi_square" for a quick first look without simulations (less exact) |
 | `seed` | integer | `0` | seed of the simulations |
 | `decide_up_to` | integer | unset | the most populations the test decides (false: up to [run.fit] k_max); the steps above it use the chi-square reference without simulations and only flag more_populations_possible |
@@ -448,8 +448,8 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 | `overlay_two_only` | true/false | `true` | draw K=2 values only where the choice keeps two populations |
 | `peptide_match` | text | `"auto"` | which peptides are compared: "range" (the same residues, mutated or not) or "sequence" (identical sequences); "auto": sequence for pooled data (two sequences at one range are different proteins), else range |
 | `head_to_head` | text or true/false or list | `"auto"` | pooled data: the ranges of the head-to-head figure and compare_sequences.csv: "auto" (every range with several sequences of one class, and every isoform's sequence on its own), a list of ranges such as ["27-52"], or false for none |
-| `populations` | text | unset | how the number of populations is decided: "population_test" (the population test of each peptide's spectra together, made by [run.population_test]; the default when the run has it), "best_set" (where a peptide's spectra together are best described by two; a residue where such peptides carry half its weight; K=2 compared where both samples have two; the default without the test) or "bootstrap" (the residue's K=2 positions and their bootstrap errors, with [analysis.choice]'s limits) |
-| `borderline_evidence` | number | `10.0` | where the number of populations differs between samples: borderline unless the two-population side's summed criterion is at least this far below 0 and the other's above 0 (with populations = "population_test" the test's p-values decide instead: below significance / 10 on the side with more populations, above significance x 10 on the other) |
+| `populations` | text | unset | how the number of populations is decided: "population_test" (the population test (set), of each peptide's spectra together, made from [run.population_test]; the default when the run has it), "best_set" (where a peptide's spectra together are best described by two; a residue where such peptides carry half its weight; K=2 compared where both samples have two; the default without the test) or "bootstrap" (the residue's K=2 positions and their bootstrap errors, with [analysis.choice]'s limits) |
+| `borderline_evidence` | number | `10.0` | where the number of populations differs between samples: borderline unless the two-population side's summed criterion is at least this far below 0 and the other's above 0 (with populations = "population_test" the p-values of the population test (set) decide instead: below significance / 10 on the side with more populations, above significance x 10 on the other) |
 | `modified_peptides` | text | `"separate"` | "separate" (modified forms as states of their own) or "combined" (averaged with the sample) |
 | `protection` | true/false | `false` | opt in to the peptides' protection factors (needs [analysis.labelling]) |
 | `summary` | table | unset | what only you know for the HDX data summary table (summary.csv, summary.md): [analysis.summary] (below) |
@@ -462,14 +462,14 @@ Which spectra and K=2 descriptions the analysis trusts. Whole spectra: spectrum_
 |---|---|---|---|
 | `min_population` | number | `0.05` | every population of a spectrum within [min_population, 1 - min_population] |
 | `max_fD_se` | number | `0.25` | every population's fD standard error below this |
-| `max_fD` | number | `1.1` | no population deuterated beyond this fraction of the amides (with the population test, such a spectrum also leaves the test, at one population) |
+| `max_fD` | number | `1.1` | no population deuterated beyond this fraction of the amides (with the population test, such a spectrum also leaves the population test (set), at one population) |
 | `k1_between_ranks` | true/false | `true` | the K=1 value lies between the two populations' values |
 | `replicate_outlier` | number | `6.0` | leave out a spectrum whose K=1 fD lies more than this many typical replicate standard deviations from the median of its replicates (same charge state, three or more; not assessed in a run with fewer than five replicated series and times); unset: off |
 | `above_amides` | true/false | `true` | leave out a spectrum whose K=1 mean exceeds the amide count before the back-exchange correction |
 | `stand_in_controls` | text | `"exclude"` | "exclude" or "include" the series whose fully deuterated control is a stand-in (a sample with no measured control keeps them) or whose undeuterated control read above [run.controls] m0_max (m0_high: another species); "other_sample" excludes them but keeps the series that took the same peptide's control in another sample; pooled sequences head to head are tested only where both have their own controls, whatever this says |
 | `spectrum_quality_filtering` | text | `"loose"` | "loose", "strict", or "none": what the spectrum quality screens do: leave out spectra showing another species, keep one population only, or warn (fragments are not screened) |
 | `off_mz` | true/false | `true` | leave out every spectrum, controls included, of a series flagged off_mz (its undeuterated envelope sits away from its m/z: most likely another species; [run.picker] off_mz_sd) |
-| `undeuterated_cap` | true/false | `false` | with the population test: keep the other spectra of a peptide whose undeuterated set has two populations or more at one population, in every sample (off: the peptide is only flagged, undeuterated_two) |
+| `undeuterated_cap` | true/false | `false` | with the population test: where the population test (set) finds two populations or more in a peptide's undeuterated set, keep the peptide's other spectra at one population, in every sample (off: the peptide is only flagged, undeuterated_two) |
 
 ## `[analysis.choice]`
 
@@ -480,7 +480,7 @@ The limits of the choice between one and two populations. With populations = "bo
 | `confidence` | number | `0.5` | a fraction (0.5: 50 %): the interval that must separate the two K=2 values; default 0.5 with populations = "best_set", 0.95 with "bootstrap" |
 | `max_fD_se` | number | `0.25` | both K=2 standard errors below this |
 | `min_population` | number | `0.05` | the low-D population (lever rule) within [min_population, 1 - min_population]; default 0.05 with populations = "best_set", 0.10 with "bootstrap" |
-| `tier` | text | `"two"` | with populations = "population_test": the least residue tier with two populations, "two" (strong evidence and a third of the covering weight agrees) or "localised" (half); the other limits of this table do not apply then |
+| `tier` | text | `"two"` | with populations = "population_test": the least residue tier (from the population test (set)) with two populations, "two" (strong evidence and a third of the covering weight agrees) or "localised" (half); the other limits of this table do not apply then |
 
 ## `[analysis.fasta]`
 

@@ -66,13 +66,13 @@ Why a series' undeuterated or fully deuterated value is what it is, in `series.c
 
 ## Population test flags
 
-Signs that an extra population may be another species, or that more populations may be there, from the population test (`[run.population_test]`). Flags only: no number of populations changes.
+Signs that an extra population may be another species, or that more populations may be there, from the population test (`[run.population_test]`): the population test (self), of each spectrum alone, and the population test (set), of every replicate and charge state of a peptide in one sample at one time. Flags only: no number of populations changes.
 
 | Name | Where | Meaning | What *hxex* does | What to look at |
 |---|---|---|---|---|
-| [`narrow_component`](population-test.md#two-flags-for-other-species) | `spectra.csv` `narrow_component` (spectrum) | The fit at the spectrum's number of populations has a population narrower than deuterium allows. The narrowest width is set by the peptide's amides and the D2O fraction (`d2o_fraction` (0.9)). Much narrower may be another species, or a spike. | Flag only: nothing is left out or changed. | Look at the spectrum. |
-| [`undeuterated_two`](population-test.md#two-flags-for-other-species) | `species_uptake.csv` `undeuterated_two` (peptide, on every row in every sample) | The peptide's undeuterated spectra read two populations: something else is there. Whether the labelled spectra share the other species is not known. | Flag only, unless `undeuterated_cap = false`: the peptide's labelled spectra then stay at one population. | Look at the undeuterated spectra. |
-| [`more_populations_possible`](population-test.md#turning-it-on) | `spectra.csv` and `species_uptake.csv` `more_populations_possible` (spectrum, and peptide and time) | The test's quick step above `decide_up_to` would add a population. Set with `decide_up_to = off`; a run that decides more populations tells. | Flag only: nothing is left out or changed. | — |
+| [`narrow_component`](population-test.md#two-flags-for-other-species) | `spectra.csv` `narrow_component` (spectrum) | The fit at the spectrum's number of populations has a population narrower than deuterium allows. A flag of the population test (self). The narrowest width is set by the peptide's amides and the D2O fraction (`d2o_fraction` (0.9)). Much narrower may be another species, or a spike. | Flag only: nothing is left out or changed. | Look at the spectrum. |
+| [`undeuterated_two`](population-test.md#two-flags-for-other-species) | `species_uptake.csv` `undeuterated_two` (peptide, on every row in every sample) | The population test (set) of the peptide's undeuterated spectra reads two populations: something else is there. Whether the labelled spectra share the other species is not known. | Flag only, unless `undeuterated_cap = false`: the peptide's labelled spectra then stay at one population. | Look at the undeuterated spectra. |
+| [`more_populations_possible`](population-test.md#turning-it-on) | `spectra.csv` and `species_uptake.csv` `more_populations_possible` (spectrum, and peptide and time) | The quick step above `decide_up_to` would add a population: of the population test (self) for a spectrum, of the population test (set) for a peptide and time. Set with `decide_up_to = off`; a run that decides more populations tells. | Flag only: nothing is left out or changed. | — |
 
 ## Spectrum quality screens
 

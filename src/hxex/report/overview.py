@@ -82,7 +82,8 @@ QUALITY_LABELS = {
 
 # --- K comparison of one spectrum -----------------------------------------------------------
 
-def k_comparison_data(spectrum_id: str, results: Results) -> dict:
+def k_comparison_data(spectrum_id: str, results: Results, *, analysis=None,
+                      sets="compute") -> dict:
     """The fit of one spectrum at every K tried: ``k_values``, ``nll``, ``bic``, ``aic``, the
     selection ``score`` (the configured criterion, inf where the minimum-population rule rejected
     that K), ``delta`` (score minus the best score), ``criterion_delta`` (the criterion minus the
@@ -93,7 +94,14 @@ def k_comparison_data(spectrum_id: str, results: Results) -> dict:
     ``selected``), ``k`` (the test's K), ``significance``, ``min_population`` and, per K above
     one, ``steps[K]``: the step from K - 1 (``p``, ``added`` (the smallest population of the K
     fit), ``kind`` (how its null was made), ``decides`` (False above ``decide_up_to``), ``adds``
-    (its p and share pass) and ``reached`` (every step below it adds a population))."""
+    (its p and share pass) and ``reached`` (every step below it adds a population)), and
+    ``set``: the population test of the spectrum's set (:class:`hxex.analysis.set_test.SetTest`:
+    every replicate and charge state of its peptide in its sample at its time, as ``hxex
+    analyse`` decides the sets with the analysis settings ``analysis``, its defaults when None;
+    ``sets``: those already worked out, one per spectrum, :func:`~hxex.analysis.set_test.
+    spectrum_sets`), None without the test or for a spectrum in no set."""
+    from ..analysis.set_test import spectrum_sets
+
     i = results.find(spectrum_id)
     fit = results.fit
     ks = tuple(fit.k_values)
@@ -113,7 +121,42 @@ def k_comparison_data(spectrum_id: str, results: Results) -> dict:
         "criterion": fit.config.criterion, "selected": int(fit.selected_K[i]),
         "effective": int(results.effective_K[i]),
         "test": _test_steps(results, i),
+        "set": _set_of(results, i, analysis, sets, spectrum_sets),
     }
+
+
+def _set_of(results: Results, i: int, analysis, sets, spectrum_sets):
+    """The set test of fit row ``i`` (:func:`k_comparison_data`), or None."""
+    if results.population_test is None:
+        return None
+    if isinstance(sets, str):  # "compute"
+        sets = spectrum_sets(results, analysis)
+    return sets[i] if sets is not None else None
+
+
+def set_note(d: dict) -> str | None:
+    """The line a K comparison adds where the spectrum's K (the K in effect) differs from its
+    set's (:func:`k_comparison_data`): ``population test (set) p-value 6.9e-04 < 0.01: K = 1
+    (self), K = 2 (set)``; None where they agree or there is no set. "(set)": the test of
+    every replicate and charge state of the peptide in its sample at that time, as against
+    the spectrum's own, "(self)" (owner, 2026-11-18). Information only (owner, 2026-11-17):
+    the spectrum keeps its own K; the analysis uses the set's."""
+    from ..analysis.set_test import set_step
+
+    t = d.get("set")
+    if t is None or int(t.K) == int(d["effective"]):
+        return None
+    tail = f"K = {int(d['effective'])} (self), K = {int(t.K)} (set)"
+    p, added = set_step(t)
+    if not np.isfinite(p):
+        return f"population test (set): not tested; {tail}"
+    test = d.get("test") or {}
+    sig = test.get("significance", 0.01)
+    text = f"population test (set) p-value {_p_text(p)} {'<' if p < sig else '≥'} {sig:g}"
+    least = test.get("min_population")
+    if int(t.K) == 1 and p < sig and np.isfinite(added) and least is not None:
+        text += f", population {_share(added)} < {_share(least)}"
+    return f"{text}: {tail}"
 
 
 def _test_steps(results: Results, i: int) -> dict | None:
@@ -174,8 +217,8 @@ def k_comparison_notes(d: dict, k: int) -> list[str]:
     if step is None:
         return notes
     if not tested:
-        notes.append("population test: screened" if step["kind"] == SCREENED
-                     else "population test: not tested")
+        notes.append("population test (self): screened" if step["kind"] == SCREENED
+                     else "population test (self): not tested")
         return notes
     sig = test["significance"]
     if not step["reached"]:
@@ -187,7 +230,7 @@ def k_comparison_notes(d: dict, k: int) -> list[str]:
         outcome = "not selected"
     else:  # a step below the chosen K passed; only the chosen K says selected
         outcome = "selected" if k == test["k"] else "passed"
-    notes.append(f"population test p-value {_p_text(step['p'])} "
+    notes.append(f"population test (self) p-value {_p_text(step['p'])} "
                  f"{'<' if step['p'] < sig else '≥'} {sig:g} {outcome}")
     return notes
 
@@ -215,14 +258,19 @@ def plot_k_comparison(
     ks: Sequence[int] | None = None,
     show: Sequence[str] = ("picked", "fit"),
     cell: tuple[float, float] = (4.6, 3.6),
+    analysis=None,
+    sets="compute",
     **kwargs,
 ) -> Figure:
     """One spectrum fitted at each K side by side (default: every K tried), each panel with its
     loss, its selection score relative to the best and whether the minimum-population rule
     rejected it; the selected K is marked, and the reviewer's K if it differs. A K the screen
-    skipped for the spectrum shows the picked spectrum alone. Keyword arguments go to
-    :func:`plot_spectrum`."""
-    fig = plot_k_comparisons([spectrum_id], results, ks=ks, show=show, cell=cell, **kwargs)
+    skipped for the spectrum shows the picked spectrum alone. Where the spectrum's set (with
+    the population test) has another number of populations than the spectrum's K, the
+    panel at the set's number says so (:func:`set_note`; ``analysis`` and ``sets`` as in
+    :func:`k_comparison_data`). Keyword arguments go to :func:`plot_spectrum`."""
+    fig = plot_k_comparisons([spectrum_id], results, ks=ks, show=show, cell=cell,
+                             analysis=analysis, sets=sets, **kwargs)
     # constrained layout places it with the legends; a fragment's long id on two lines
     fig.suptitle(wrap_title(spectrum_id, fig.get_figwidth() - 0.4, 9), fontsize=9)
     return fig
@@ -237,14 +285,23 @@ def plot_k_comparisons(
     show: Sequence[str] = ("picked", "fit"),
     cell: tuple[float, float] = (4.6, 3.6),
     title: str | None = None,
+    analysis=None,
+    sets="compute",
     **kwargs,
 ) -> Figure:
     """Several spectra fitted at each K: a row of :func:`plot_k_comparison` per spectrum (the
     replicates of a time point, say), each row's titles starting with its label (``labels``,
-    default the spectrum id) and its chosen K framed. ``ks`` default: every K tried."""
+    default the spectrum id) and its chosen K framed. ``ks`` default: every K tried.
+    ``analysis`` and ``sets``: as in :func:`k_comparison_data` (the set's line,
+    :func:`set_note`)."""
     if not len(spectrum_ids):
         raise ValueError("no spectra to compare")
-    rows = [k_comparison_data(sid, results) for sid in spectrum_ids]
+    if isinstance(sets, str) and results.population_test is not None:  # worked out once
+        from ..analysis.set_test import spectrum_sets
+
+        sets = spectrum_sets(results, analysis)
+    rows = [k_comparison_data(sid, results, analysis=analysis, sets=sets)
+            for sid in spectrum_ids]
     ks = list(rows[0]["k_values"] if ks is None else ks)
     bad = [k for k in ks if k not in rows[0]["k_values"]]
     if bad:
@@ -263,6 +320,11 @@ def plot_k_comparisons(
     for r, (sid, d) in enumerate(zip(spectrum_ids, rows, strict=True)):
         fitted = {k: bool(results.fit.fitted(k)[d["index"]]) for k in ks}
         lead = f"{labels[r]}: " if many else ""
+        # the set's line: on the panel at the set's number of populations, else on the K in
+        # effect's (a set at a K the panels do not show, or the screen skipped)
+        set_line = set_note(d)
+        set_at = (int(d["set"].K) if set_line and fitted.get(int(d["set"].K))
+                  else int(d["effective"]))
         for ax, k in zip(axes[r], ks, strict=True):
             j = d["k_values"].index(k)
             if not fitted[k]:  # the screen skipped it: the spectrum alone
@@ -276,7 +338,7 @@ def plot_k_comparisons(
             marks = []
             if k == d["selected"]:
                 if d["test"] is not None and d["test"]["by"]:
-                    marks.append("selected by the population test")
+                    marks.append("selected by the population test (self)")
                 else:
                     marks.append(f"selected (lowest Δ{d['criterion'].upper()})")
             if k == d["effective"] and d["effective"] != d["selected"]:
@@ -287,6 +349,8 @@ def plot_k_comparisons(
             if not np.isfinite(d["delta"][j]) and np.isfinite(raw):
                 score_text += " (ruled out)"
             notes = k_comparison_notes(d, k)
+            if set_line and k == set_at:  # the test on a line, the two numbers on the next
+                notes.extend(set_line.rsplit(": ", 1))
             # the marks ("selected", ...) and the reasons above the K line, so every panel's K
             # line sits at the same height (a title grows upwards from its axes; owner)
             ax.set_title(wrap_title("".join(f"{line}\n" for line in

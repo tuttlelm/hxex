@@ -55,7 +55,7 @@ from PySide6.QtWidgets import (
 from .analysis_workspace import AnalysisWorkspace
 from .fonts import fixed_font
 from .project_state import ProjectState
-from .results_workspace import ResultsWorkspace, left_out_or_none
+from .results_workspace import ResultsWorkspace, left_out_or_none, sets_or_none
 from .review import table_stamp
 from .run_workspace import RunWorkspace
 from .sequence_view import SequenceView
@@ -745,7 +745,9 @@ class MainWindow(QMainWindow):
             # review panel says so; the commands refuse it: audit of 2026-11-15, D-9)
             results = load_results(path, unfitted="keep")
             analysis = state.analysis  # the state as the load started (immutable)
-            return results, analysis, left_out_or_none(results, analysis), stamp
+            left = left_out_or_none(results, analysis)
+            sets_or_none(results, analysis)  # the sets' K, held for the tree (cached)
+            return results, analysis, left, stamp
 
         self._loading.submit(load, lambda loaded: self._results_loaded(*loaded, path, before),
                              lambda message: self._results_failed(path, message))

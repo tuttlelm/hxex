@@ -67,7 +67,7 @@ def plot_population_tiers(
     k1 = (residues.K == 1) & (residues.population_tier != "")
     if not k1.any():
         raise ValueError("the residue map has no population tiers (made without the "
-                         "population test)")
+                         "population test (set))")
     if samples is None:
         samples = list(dict.fromkeys(str(s) for s in residues.sample[k1]))
     code_of = {name: j for j, name in enumerate(TIERS)}
@@ -164,7 +164,7 @@ def plot_population_tiers(
         handles.append(BorderHandle())
     fig.legend(handles=handles, frameon=False, loc="lower center", ncol=3 if three else 5,
                fontsize=7, handler_map={BorderHandle: BorderHandler()})
-    ax.set_title("Population test by residue: strong = combined p of the covering peptides "
+    ax.set_title("Population test (set) by residue: strong = combined p of the covering peptides "
                  "below 0.01; agreement = share of their weight with the populations "
                  "(undeuterated rows should show none)", fontsize=8, loc="left")
     fig.tight_layout(rect=(0, 0.07 if three else 0.05, 1, 1))

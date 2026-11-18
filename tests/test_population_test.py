@@ -256,7 +256,7 @@ def test_the_run_takes_each_spectrum_k_from_the_test_and_stores_it(tmp_path):
     # the fits and the test's null are stages of their own, one after the other (one stage,
     # the fits were its first few percent: 0 % for minutes)
     at = stages.names.index("fit")
-    assert stages.names[at + 1] == "population test"
+    assert stages.names[at + 1] == "population test (self)"
     assert stages.spans[at][1] == stages.spans[at + 1][0]
     test = res.population_test
     assert test is not None and len(test) == len(res.fit)
@@ -274,9 +274,11 @@ def test_the_run_takes_each_spectrum_k_from_the_test_and_stores_it(tmp_path):
     # chunking does not change it
     stages = Stages()
     small = run(raw, dataclasses.replace(cfg, max_chunk=1), progress=stages)
-    chunks = [x for x in stages.names if x.startswith(("fit, chunk", "population test, chunk"))]
+    chunks = [x for x in stages.names
+              if x.startswith(("fit, chunk", "population test (self), chunk"))]
     n = len(chunks) // 2
-    assert n > 1 and chunks[:2] == [f"fit, chunk 1 of {n}", f"population test, chunk 1 of {n}"]
+    assert n > 1 and chunks[:2] == [f"fit, chunk 1 of {n}",
+                                    f"population test (self), chunk 1 of {n}"]
     np.testing.assert_allclose(small.population_test.null_draws, test.null_draws, rtol=1e-3,
                                atol=1e-3)
     np.testing.assert_array_equal(small.population_test.selected_K, test.selected_K)
@@ -332,12 +334,12 @@ def test_the_sets_take_their_k_from_the_test(tested_run):
     up = species_uptake(res, populations="population_test")
     assert np.isfinite(up.set_p_1).all() and np.isnan(up.set_p_2).all()
     assert (up.best_set_K == 1).all()
-    assert all(r.startswith("set test: one") for r in up.best_set_reason)
+    assert all(r.startswith("population test (set): one") for r in up.best_set_reason)
     # the labelled spectra reading two make their sets two
     labelled = np.flatnonzero(res.fit.role == "")
     up = species_uptake(_forced(res, labelled), populations="population_test")
     k, reason = _set_k(up, "", 60.0)
-    assert (k == 2).all() and all(r.startswith("set test: two") for r in reason)
+    assert (k == 2).all() and all(r.startswith("population test (set): two") for r in reason)
     assert (_set_k(up, "undeut")[0] == 1).all()
     # the width check is a flag only: the sets keep their two
     up = species_uptake(_forced(res, labelled, narrow=True), populations="population_test")
@@ -389,7 +391,7 @@ def test_a_time_point_promoted_to_a_control_keeps_its_test(tested_run):
         rows = up.where(K=1, rank=1) & (up.time == 60.0)
         assert rows.any() and set(up.role[rows]) == {role}
         assert np.isfinite(up.set_p_1[rows]).all()
-        assert all(r.startswith("set test: two") for r in up.best_set_reason[rows])
+        assert all(r.startswith("population test (set): two") for r in up.best_set_reason[rows])
     # a promoted undeuterated set reading two is the peptide's undeuterated_two
     up = species_uptake(forced, populations="population_test", controls=alone, filters=keep)
     assert up.undeuterated_two.all()
@@ -520,7 +522,7 @@ def test_the_analysis_uses_the_test_and_draws_the_tiers(tested_run, tmp_path):
     assert not any((p.get_gid() or "").startswith("block:") for p in plain.axes[0].patches)
     with open(tmp_path / "a" / "species_uptake.csv") as fh:
         row = next(csv.DictReader(fh))
-    assert row["set_p_1"] != "" and row["best_set_reason"].startswith("set test")
+    assert row["set_p_1"] != "" and row["best_set_reason"].startswith("population test (set)")
     with open(tmp_path / "a" / "residues.csv") as fh:
         tiers = {r["population_tier"] for r in csv.DictReader(fh) if r["K"] == "1"}
     assert "no sign" in tiers
@@ -558,7 +560,7 @@ def test_a_set_at_three_keeps_its_k_beside_the_described_two(tested_run):
     keys = {_set_key(*(cols[n][i] for n in ("run", "sample", "peptide", "modification", "start",
                                              "end", "time", "role"))) for i in range(len(up))}
     three = SetTest(K=3, p=(1e-9, 1e-5), added=(0.3, 0.2), n_spectra=3, n_tested=3,
-                    undeuterated_two=False, reason="set test: three")
+                    undeuterated_two=False, reason="population test (set): three")
     out = test_set(cols, {key: three for key in keys})
     assert (out["set_test_K"] == 3).all() and (out["best_set_K"] == 2).all()
     assert all("K = 3 not kept" in r for r in out["best_set_reason"])
@@ -743,7 +745,8 @@ def test_sets_with_three_populations_are_bootstrapped_at_their_number(tmp_path, 
     monkeypatch.setattr(set_test, "set_k_spectra", three)
     with caplog.at_level(logging.INFO, logger="hxex"):
         res = run(raw, cfg)
-    assert "of the population test's 1 sets at their set's number of populations" in caplog.text
+    assert ("of the 1 sets of the population test (set) at their set's number of populations"
+            in caplog.text)
     assert calls and calls[0]["filters"] is not None  # the analysis's default filters
     want = [i for i in rows if res.fit.selected_K[i] != 3]  # K = 3 chosen: its own bootstrap
     assert want
@@ -1001,21 +1004,21 @@ def test_the_fits_at_each_k_say_what_the_test_decided(tested_run):
 
     # the case that hid its reason: significant, but the share below the test's minimum
     assert notes(1e-21, 0.08) == ["population 8 % < test minimum 10 %",
-                                  "population test p-value 1.0e-21 < 0.01 not selected"]
-    assert notes(1e-21, 0.3) == ["population test p-value 1.0e-21 < 0.01 selected"]
-    assert notes(0.2, 0.3) == ["population test p-value 0.2 ≥ 0.01 not selected"]
-    assert notes(np.nan, np.nan, kind="") == ["population test: not tested"]
+                                  "population test (self) p-value 1.0e-21 < 0.01 not selected"]
+    assert notes(1e-21, 0.3) == ["population test (self) p-value 1.0e-21 < 0.01 selected"]
+    assert notes(0.2, 0.3) == ["population test (self) p-value 0.2 ≥ 0.01 not selected"]
+    assert notes(np.nan, np.nan, kind="") == ["population test (self): not tested"]
     # a passing step below the K the test chose says passed, not selected
     d = k_comparison_data(sid, results)
     steps = {2: {**d["test"]["steps"][2], "p": 1e-9, "added": 0.3, "kind": "simulated",
                  "adds": True, "reached": True, "decides": True}}
     three = {**d, "passes": np.ones(len(d["k_values"]), dtype=bool),
              "test": {**d["test"], "k": 3, "steps": steps}}
-    assert k_comparison_notes(three, 2) == ["population test p-value 1.0e-09 < 0.01 passed"]
+    assert k_comparison_notes(three, 2) == ["population test (self) p-value 1.0e-09 < 0.01 passed"]
     assert k_comparison_notes({**three, "test": {**three["test"], "k": 2}}, 2) == [
-        "population test p-value 1.0e-09 < 0.01 selected"]
+        "population test (self) p-value 1.0e-09 < 0.01 selected"]
     d = k_comparison_data(sid, results)
     assert d["test"]["by"] and set(d["test"]["steps"]) == {2}
     title = plot_k_comparison(sid, results).axes[d["k_values"].index(d["selected"])].get_title()
-    assert title.startswith("selected by the population test")
+    assert title.startswith("selected by the population test (self)")
     assert title.splitlines()[-1].startswith(f"K={d['selected']}")

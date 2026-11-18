@@ -161,8 +161,8 @@ def fit_models(
         elif floor is not None and k > 1:
             if test_screen:
                 passed = can_exceed(fits[k - 1].nll, floor)
-                log.info("screen: the population test can find K=%d for %d of %d measurements",
-                         k, int(passed.sum()), m)
+                log.info("screen: the population test (self) can find K=%d for %d of %d "
+                         "measurements", k, int(passed.sum()), m)
             else:
                 passed = can_win(config.criterion, k, sizes, floor, best)
                 log.info("screen: K=%d can be selected for %d of %d measurements", k,
