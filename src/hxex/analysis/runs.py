@@ -289,6 +289,60 @@ def compare_settings(runs: RunSet | Mapping[str, object], *, quiet: bool = False
         values=np.array([r[2] for r in rows], dtype=object).reshape(len(rows), len(runs.names)))
 
 
+def shared_measurements(results, *, quiet: bool = False) -> dict[str, int]:
+    """Spectra that are one measurement read twice where the analysis compares them
+    (:func:`hxex.picking.measurement_keys`: the same ion with identical picked peaks): for a
+    :class:`RunSet`, each later run's spectra that are an earlier run's (``{run: count}``; the
+    runs then compare a measurement with itself, and a merged sample counts it twice); for one
+    run, the labelled spectra read for more than one sample (``{'': count}``; the comparisons
+    between those samples compare a measurement with itself). Controls shared by samples (a
+    pooled project's) are left out of the second count: the controls count each once. A
+    warning names each count, unless ``quiet``; runs or results without picked spectra are
+    skipped."""
+    from ..picking import measurement_keys
+
+    out: dict[str, int] = {}
+    if isinstance(results, RunSet):
+        earlier: dict[bytes, str] = {}
+        for name, r in results.runs.items():
+            binned = getattr(r, "binned", None)
+            if binned is None:
+                continue
+            keys = measurement_keys(binned)
+            hits = [earlier[k] for k in keys if k is not None and k in earlier]
+            if hits:
+                out[name] = len(hits)
+                if not quiet:
+                    first = max(set(hits), key=hits.count)
+                    log.warning("%d spectra of run %s are the same measurements as spectra of run "
+                                "%s (the same files read in both, picked alike): comparing the "
+                                "runs compares those measurements with themselves, and a merged "
+                                "sample counts each twice", len(hits), name, first)
+            for k in keys:
+                if k is not None:
+                    earlier.setdefault(k, name)
+        return out
+    binned = getattr(results, "binned", None)
+    if binned is None:
+        return out
+    role = (np.asarray(binned.role, dtype=str) if binned.role is not None
+            else np.full(len(binned), "", dtype=str))
+    keys = [k if r == "" else None for k, r in zip(measurement_keys(binned), role, strict=True)]
+    samples: dict[bytes, set[str]] = {}
+    for k, s in zip(keys, np.asarray(binned.sample, dtype=str), strict=True):
+        if k is not None:
+            samples.setdefault(k, set()).add(str(s))
+    shared = sum(k is not None and len(samples[k]) > 1 for k in keys)
+    if shared:
+        out[""] = shared
+        if not quiet:
+            names = sorted({s for v in samples.values() if len(v) > 1 for s in v})
+            log.warning("%d labelled spectra are one measurement read for several samples (%s: "
+                        "the same file under each sample's name): comparing those samples "
+                        "compares the measurements with themselves", shared, ", ".join(names))
+    return out
+
+
 @dataclass(frozen=True)
 class IdentityCheck:
     """Species (``peptide`` and ``modification``) found in several runs whose position or

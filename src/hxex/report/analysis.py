@@ -77,7 +77,7 @@ from ..analysis import (
 )
 from ..analysis.residues import NoPeptideAtTime, residue_level_states
 from ..analysis.residues import states as _states
-from ..analysis.runs import display_labels, label, resolve_sample
+from ..analysis.runs import display_labels, label, resolve_sample, shared_measurements
 from ..analysis.settings import (
     ALL_REFERENCES,
     OVERLAY_VALUES,
@@ -477,6 +477,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None):
     residues_d = _display(residues, labels) if residues is not None else None
     coverage_d = _display(coverage, labels) if coverage is not None else None
     choice_d = _display(choice, labels) if choice is not None else None
+    shared_measurements(results)  # the same files read twice: warned, never refused
     if isinstance(results, RunSet):
         tables["run_settings"] = compare_settings(results).columns()
         # the identity check compares the runs, so merged samples are looked at run by run

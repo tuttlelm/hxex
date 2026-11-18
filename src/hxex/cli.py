@@ -646,6 +646,7 @@ def cmd_check(args) -> int:
                 problems += _pooled_identity_lines(project, entries)
             problems += _check_peptides(project, entries)
             problems += _check_folder_files(project, entries)
+            problems += _check_copied_files(project, entries)
             problems += _check_controls_present(project, roles)
             if len(problems) == before and _has_rules(project):
                 from .io import spectrum_index
@@ -663,6 +664,7 @@ def cmd_check(args) -> int:
         rows: list[dict] = []
         before = len(problems)
         problems += _check_scan_files(project, rows)
+        problems += _check_copied_runs(project)
         if inp.pooled_fasta is not None and inp.peptides.is_file():  # raw files of a pool
             from .io import read_peptide_table
             from .io.entries import SCAN_REQUIRED
@@ -977,6 +979,101 @@ def _check_folder_files(project, entries) -> list[str]:
         problems += folder_name_disagreements(entries, inp.format,
                                               registry=project.run.registry,
                                               data_dir=inp.data_dir)
+    return problems
+
+
+def _same_content(paths: list[Path]) -> list[tuple[Path, Path]]:
+    """The pairs ``(first, copy)`` of ``paths`` whose files are identical byte for byte (a copy,
+    a link, or one file reached by two names); only files of equal size are read, and empty
+    files are never copies."""
+    import hashlib
+
+    def digest(path: Path) -> bytes:
+        h = hashlib.blake2b(digest_size=16)
+        with open(path, "rb") as f:
+            while chunk := f.read(1 << 22):
+                h.update(chunk)
+        return h.digest()
+
+    by_size: dict[int, list[Path]] = {}
+    for p in paths:
+        try:
+            size = p.stat().st_size
+        except OSError:  # a missing file is another check's problem
+            continue
+        if size:  # an empty file holds no spectrum
+            by_size.setdefault(size, []).append(p)
+    out = []
+    for group in by_size.values():
+        if len(group) < 2:
+            continue
+        first: dict[bytes, Path] = {}
+        for p in group:
+            try:
+                other = first.setdefault(digest(p), p)
+            except OSError:
+                continue
+            if other is not p:
+                out.append((other, p))
+    return out
+
+
+_COPY_FIX = ("two replicates (or a replicate and a control) of one injection; remove the copy, or "
+             "leave one out with an [[input.exclude]] rule (one file read for several samples "
+             "is allowed)")
+
+
+def _check_copied_files(project, entries) -> list[str]:
+    """One problem per spectrum file of a SpecExport or pooled folder that is a copy of another
+    file of the same peptide, charge, and sample (identical bytes; a time point or replicate
+    copied under another name), which hxex run refuses after picking
+    (:func:`hxex.pipeline.refuse_copies`). Only files of equal size are read. HX-Express sheets
+    (spectra are columns of one file) are not assessed here."""
+    inp = project.input
+    if inp.format == "hxexpress":
+        return []
+    from .io import ReadError
+    from .io.read import _input_path
+    from .io.specexport import specexport_points
+
+    problems = []
+    for entry in entries:
+        folder = inp.data_dir / _input_path(inp.format, entry)
+        if not folder.is_dir():
+            continue
+        try:
+            points = specexport_points(folder, entry)
+        except ReadError:  # _check_folder_files says so
+            continue
+        for a, b in _same_content([p[3] for p in points]):
+            problems.append(f"{b} is a copy of {a} (identical files for sample "
+                            f"{entry.sample or '(no sample)'}, charge {entry.charge}): "
+                            + _COPY_FIX)
+    return problems
+
+
+def _check_copied_runs(project) -> list[str]:
+    """One problem per scan file listed for a sample that is a copy of another file of that
+    sample (identical bytes, or one file under two names): its spectra would be replicates of
+    one injection (hxex run refuses those it reads alike, :func:`hxex.pipeline.refuse_copies`;
+    a copy read with another window would get through it).
+    Only files of equal size are read; a file read as one spectrum (a time point or a control)
+    is compared only with other such files, and a kinetics run (every scan its own time) with
+    other kinetics runs, since only those give the same spectra. Two conditions whose scan
+    filters select the same scans of one file are found by the run only."""
+    inp = project.input
+    by_sample: dict[tuple[str, bool], list[Path]] = {}
+    for run in inp.runs:
+        path = Path(run.path)
+        path = path if path.is_absolute() else inp.data_root / path
+        paths = by_sample.setdefault((run.sample, run.fixed), [])
+        if path not in paths:  # the same name twice: the read says so
+            paths.append(path)
+    problems = []
+    for (sample, _), paths in sorted(by_sample.items()):
+        for a, b in _same_content(paths):
+            problems.append(f"run {b} is a copy of {a} (identical files for sample {sample}): "
+                            + _COPY_FIX)
     return problems
 
 

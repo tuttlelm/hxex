@@ -106,6 +106,44 @@ def test_bright_distorted_controls_are_left_out_above_the_onset():
 
 
 
+def test_a_control_read_for_several_samples_counts_once_in_the_curve():
+    """One file of undeuterated controls read for three samples (a pooled project's shared
+    controls): with ``measurement`` the bundle's curve, its error, its counts, and its onset
+    are those of the controls read once; each sample's own curve keeps its own controls."""
+    bins, observed, shapes, role, charge, data_id, _ = controls(n_series=40)
+    once = controls_noise(bins, observed, shapes, role, charge, data_id, model_error=0.09)
+    m = len(bins)
+    copies = [list(x) * 3 for x in (bins, observed, shapes, role, charge)]
+    ids = [d + 1000 * k for k in range(3) for d in data_id]  # each sample its own series
+    samples = [name for name in "ABC" for _ in range(m)]
+    measurement = [i for _ in range(3) for i in range(m)]
+    curve = controls_noise(*copies, ids, model_error=0.09, sample=samples,
+                           measurement=measurement)
+    assert curve.b1 == pytest.approx(once.b1) and curve.b1_se == pytest.approx(once.b1_se)
+    assert (curve.n_controls, curve.n_series) == (once.n_controls, once.n_series) == (120, 40)
+    assert [(s.sample, s.n_series) for s in curve.by_sample] == [("A", 40), ("B", 40),
+                                                                  ("C", 40)]
+    assert all(s.b1 == pytest.approx(once.b1) for s in curve.by_sample)
+    # counted three times, the copies would claim three times the series and a smaller error
+    thrice = controls_noise(*copies, ids, model_error=0.09)
+    assert (thrice.n_controls, thrice.n_series) == (360, 120)
+    # a band of bright, compressed controls made of 5 controls read 3 times: no onset once
+    # they count once (a band needs 10 controls)
+    rng = np.random.default_rng(5)
+    bright = []
+    for _ in range(5):
+        mean = 3e6 * SHAPE / SHAPE.max()
+        mean[0] *= 0.7
+        bright.append(mean + rng.standard_normal(len(mean)) * np.sqrt(8 * mean))
+    dim = [observed[i] for i in range(12)]
+    obs = dim + bright * 3
+    n = len(obs)
+    args = ([np.arange(len(SHAPE), dtype=float)] * n, obs, [SHAPE] * n, ["undeut"] * n)
+    assert distortion_onset(*args) == 2e6
+    same = list(range(12)) + [12 + j for _ in range(3) for j in range(5)]
+    assert np.isinf(distortion_onset(*args, same))
+
+
 def test_dim_controls_that_read_flattened_are_no_onset():
     # picked noise lifts a dim control's small heavy-side peaks: the dimmest band departs, but
     # distortion cannot start at no brightness, so only a departure above a matching band counts
@@ -220,6 +258,10 @@ PEPTIDE = "RDKVQKEYAL"
 
 
 def raw_with_counting_noise(n_series=6):
+    return SpectrumSet.from_spectra(counting_spectra(n_series))
+
+
+def counting_spectra(n_series=6):
     plan = plan_bins(PEPTIDE, 2, config=PICK)
     shape = chem.isotope_clusters(PEPTIDE)[0]
     shape = shape / shape.max()
@@ -239,7 +281,7 @@ def raw_with_counting_noise(n_series=6):
             spectra_.append(Spectrum(mz, y, entry, np.nan if t == 0.0 else t, rep, data_id=s,
                                      label=f"s{s}c{k}", spectrum_id=f"p:f{s}.xlsx#{k + 1}",
                                      role="undeut" if t == 0.0 else ""))
-    return SpectrumSet.from_spectra(spectra_)
+    return spectra_
 
 
 def test_a_run_measures_the_curve_once_and_the_bundle_keeps_it(tmp_path):
@@ -264,6 +306,33 @@ def test_a_run_measures_the_curve_once_and_the_bundle_keeps_it(tmp_path):
     old = dataclasses.replace(curve, model_error_at="observed")
     assert _noise_curve_text(dataclasses.replace(res.fit, noise_curve=old)).startswith(
         "per bin, z x b1 x I + (9 % of I)^2")
+
+
+def test_a_copied_replicate_is_refused_and_shared_controls_count_once():
+    """A replicate copied under another name in one series is refused after picking, naming
+    both spectra; a second sample that reads the first's files (one file listed for both) is
+    allowed, and the per-bin noise counts its undeuterated controls once."""
+    from hxex.io import ReadError
+
+    cfg = RunConfig(picker=PICK, fit=FitConfig(k_max=1, adam_steps=30, n_restarts=1,
+                                               backend=CPU), bootstrap=None, controls=None)
+    spectra_ = counting_spectra(6)
+    copy = dataclasses.replace(spectra_[3], rep=3, label="copy", spectrum_id="p:copy.xlsx#1")
+    with pytest.raises(ReadError) as err:
+        run(SpectrumSet.from_spectra([*spectra_, copy]), cfg)
+    text = str(err.value)
+    assert text.startswith("1 spectrum of sample S is the same measurement as another")
+    assert "p:copy.xlsx#1 (file f0.xlsx) and p:f0.xlsx#4 (file f0.xlsx)" in text
+    assert "[[input.exclude]]" in text
+    # the same files read for a second sample: allowed, the controls counted once
+    other = [dataclasses.replace(
+        x, entry=dataclasses.replace(x.entry, sample="T"), data_id=x.data_id + 6,
+        spectrum_id=x.spectrum_id.replace("p:", "q:")) for x in spectra_]
+    alone = run(SpectrumSet.from_spectra(spectra_), cfg).fit.noise_curve
+    both = run(SpectrumSet.from_spectra([*spectra_, *other]), cfg).fit.noise_curve
+    assert (both.n_series, both.n_controls) == (alone.n_series, alone.n_controls) == (6, 18)
+    assert both.b1 == pytest.approx(alone.b1)
+    assert [s.sample for s in both.by_sample] == ["S", "T"]
 
 
 def test_per_bin_noise_is_the_default_and_needs_no_noise_reference(tmp_path, caplog):

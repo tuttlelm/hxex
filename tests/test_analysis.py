@@ -1351,6 +1351,36 @@ def test_runs_are_analysed_like_samples(results):
             RunSet(bad)
 
 
+def test_runs_or_samples_holding_the_same_measurements_are_warned_about(results, caplog):
+    """Two runs read from the same files (the same spectra, picked alike) compare measurements
+    with themselves: a warning names the count, never a refusal; within one run, labelled
+    spectra read for two samples are named the same way (shared controls are not)."""
+    import dataclasses
+    import types
+
+    from hxex.analysis import RunSet, shared_measurements
+    from hxex.picking import pick_spectra
+
+    n = int(sum((results.binned.intensity[a:b] > 0).any() for a, b in zip(
+        results.binned.offsets[:-1], results.binned.offsets[1:], strict=True)))
+    with caplog.at_level("WARNING", logger="hxex.analysis.runs"):
+        got = shared_measurements(RunSet({"A": results, "B": results}))
+    assert got == {"B": n}
+    assert f"{n} spectra of run B are the same measurements as spectra of run A" in caplog.text
+    assert shared_measurements(results) == {}  # one sample, no copies
+    from test_picking import CFG, make_set
+
+    picked = pick_spectra(make_set(), CFG)  # spectra 0 to 2 are one measurement; 3 is empty
+    two = types.SimpleNamespace(binned=dataclasses.replace(
+        picked, sample=np.array(["S", "T", "S", "S"], dtype=object)))
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="hxex.analysis.runs"):
+        assert shared_measurements(two) == {"": 3}
+    assert "3 labelled spectra are one measurement read for several samples (S, T" in caplog.text
+    controls = dataclasses.replace(two.binned, role=np.array(["undeut"] * 3 + [""]))
+    assert shared_measurements(types.SimpleNamespace(binned=controls)) == {}
+
+
 def test_settings_that_matter_are_reported(results, caplog):
     from hxex.analysis import RunSet, compare_settings
 

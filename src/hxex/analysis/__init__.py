@@ -15,7 +15,8 @@ and :func:`closure_table` checks that complementary fragments add up to the prec
 a :class:`RunSet` of several runs is analysed like one run, the run a ``run`` column beside
 ``sample`` in every table (:func:`display_labels`, :func:`resolve_sample` and
 :func:`sample_setting` name states for the figures and the settings; :func:`compare_settings`,
-:func:`check_identity` and :func:`compare_choices` check the runs against each other).
+:func:`check_identity`, :func:`compare_choices` and :func:`shared_measurements` check the runs
+against each other).
 """
 
 from .compare import (
@@ -100,6 +101,7 @@ from .runs import (
     display_labels,
     resolve_sample,
     sample_setting,
+    shared_measurements,
 )
 from .settings import AnalysisConfig
 from .species import (
@@ -161,6 +163,7 @@ __all__ = [
     "display_labels",
     "resolve_sample",
     "sample_setting",
+    "shared_measurements",
     "PeptideComparison",
     "PopulationCountComparison",
     "Region",

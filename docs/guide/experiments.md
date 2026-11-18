@@ -183,8 +183,11 @@ and y ions are scrambled and are not suited to residue values.
 **The envelope.** ETD spectra of one fragment can hold several ion types a hydrogen apart (c-1,
 c, c+1). `[run.envelope] mode = "mixed"` fits their mixture to the undeuterated references;
 `share = true` lets conditions that differ only in their scan filters or label (in-source
-energy) share one envelope, after checking that they agree. A fragment whose envelope could not
-be measured well is flagged `poor_envelope`: its deuteration can be off by up to a hydrogen.
+energy) share one envelope, after checking that they agree. Conditions whose undeuterated
+spectra are the same measurement (one undeuterated file read for each, as when the in-source
+energy was varied only in the labelled runs) count as one condition in that check: they cannot
+confirm each other. A fragment whose envelope could not be measured well is flagged
+`poor_envelope`: its deuteration can be off by up to a hydrogen.
 
 **Amide counts.** A fragment's exchangeable amides are counted by its position in the parent.
 Whether the amide at the cleavage site counts depends on the ion type (c, x and y keep it; a, b

@@ -10744,3 +10744,66 @@ CSVs or mzML if wanted.
     noisy data the filter costs a third to two thirds of the fragment spectra. Guide
     experiments.md (fragments), fragment-residues.md, outputs.md; settings.md and flags.md
     regenerated. Test: `test_flagged_fragment_spectra_are_left_out_of_the_fragment_analysis`.
+
+411. **One measurement read twice counts once in the per-bin noise, the shared envelopes
+    and the m/z check; a copy within one series is refused; analyses of runs or samples holding
+    the same measurements warn (owner, 2026-11-17: steps 3 and 4 after item 409).** The copies
+    are found by content, as in item 409: `hxex.picking.measurement_keys` hashes the ion and the
+    picked bins (`same_measurement` now uses it), and `hxex.picking.binned.raw_keys` does the
+    same with the raw m/z and intensity arrays for the stages before picking (envelopes, m/z
+    check); a spectrum without signal is never a copy. (1) Per-bin noise:
+    `controls_noise(measurement=)` and `distortion_onset(measurement=)` count each undeuterated
+    measurement once in `b1`, its standard error, the onset, and the counts; a sample's own `b1`
+    keeps every control read for it. The run computes `same_measurement` once after picking and
+    passes it to the noise, the controls, and the refusal. Recomputed from the bundles (current
+    code, d2o and settings as stored): the private pooled dataset (SpecExport), 5,721 of its
+    undeuterated spectra are 1,159 measurements read for two to five samples: `b1` 9.62 +- 0.31
+    from 5,361 controls of 1,553 series with an onset at 200,000 became 9.54 +- 0.68 from 1,089
+    controls of 320 series and no onset (the 200,000-400,000 band held 20 controls, 4
+    measurements, below the 10 a band needs); its raw-file run 10.37 +- 0.36 (5,020 controls,
+    1,464 series, onset 200,000; the band 20 controls, 8 measurements) became 10.77 +- 0.43
+    (2,523 controls, 1,329 series, no onset); a published two-sample dataset sharing 300
+    undeuterated spectra 14.2 +- 7.5 (402 controls) became 13.7 +- 15.1 (261); the benchmark
+    and the tutorial share none and do not change. (2) Shared envelopes (`[run.envelope] share`):
+    a condition whose undeuterated references are the same raw spectra as another's (one
+    undeuterated file read for gentle and harsh, or scan filters selecting the same scans) does
+    not vote in the agreement check, its references enter the shared envelope once, and it
+    takes its original's envelope and verdict; before, two such copies agreed with residual 0
+    and outvoted a third, real condition. The projects of the private fragment dataset read one
+    undeuterated file for both in-source conditions (in the one run checked, all 34
+    two-condition groups); with two conditions only, the envelopes and flags with share = true
+    are identical before and after.
+    (3) The m/z check's calibration from every control (runs with fewer than 10 controls) counts
+    each control once; on both pooled runs every injection has its own 10 or more, so nothing
+    changed. (4) `hxex run` refuses, after picking and before fitting, spectra of one series
+    (sample, ion, and condition) that are one measurement (`hxex.pipeline.refuse_copies`,
+    `hxex.picking.copies_in_one_series`): a ReadError naming the first five pairs by spectrum
+    id and file, and saying to remove the copy, list the file once, or leave one out with
+    `[[input.exclude]]`. The owner's wording was "the same sample"; the rule is the series,
+    because every project of the private fragment dataset reads one undeuterated file for two
+    conditions of a sample (17 to 207 pairs per bundle, always undeuterated, always two
+    conditions): refused by sample, none of them would run. Of
+    289 private bundles read, copies within a series are found only in the known-answer set:
+    in its one-population (LO) workbooks the 4 s and 8 s columns are identical (9 or 13 pairs,
+    one per workbook), so `hxex run` now refuses that project until one of each pair is left
+    out. `hxex check` finds byte-identical spectrum files of one peptide folder (SpecExport,
+    pooled) and byte-identical scan files listed for one sample (fixed runs compared with fixed
+    runs, kinetics with kinetics; only files of equal size are read, empty files never count);
+    HX-Express columns and conditions reading the same scans are found by the run only. (5)
+    `hxex analyse` warns (`hxex.analysis.shared_measurements`) when a run of `[analysis.runs]`
+    holds spectra of an earlier run, or when labelled spectra of one run are read for several
+    samples (shared controls are not named); none of the private bundles has labelled spectra
+    shared. Other pools checked and left: the low-intensity injection scales (replicates within
+    a series), the population test's null (per spectrum), the undeuterated cap (any sample
+    testing two, not a count), the analysis's replicate filters and charge combining (within a
+    sample), and fragment traces (each condition apart, no averaging across conditions or
+    samples). Guide inputs.md "Copied files", noise-model.md, experiments.md (envelopes),
+    comparing-runs.md. Five synthetic test fixtures that wrote two noiseless runs or files of one
+    sample with the same intensities were given different ones. Tests:
+    `test_a_control_read_for_several_samples_counts_once_in_the_curve`,
+    `test_a_copied_replicate_is_refused_and_shared_controls_count_once`,
+    `test_copies_are_listed_within_a_series_only`,
+    `test_a_condition_reading_the_same_scans_as_another_does_not_vote`,
+    `test_a_control_read_for_two_samples_counts_once_in_the_whole_calibration`,
+    `test_runs_or_samples_holding_the_same_measurements_are_warned_about`,
+    `test_check_finds_a_copied_spectrum_file_or_run_of_one_sample`.

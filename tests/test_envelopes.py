@@ -198,6 +198,36 @@ def test_three_conditions_agreeing_with_the_core_share_its_envelope():
     assert np.isfinite(pair.own_residual[[1, 2]]).all()
 
 
+def test_a_condition_reading_the_same_scans_as_another_does_not_vote():
+    """Two conditions whose references are the same spectra (one undeuterated file read for
+    both, or scan filters selecting the same scans) are one condition: the copy does not agree
+    with its original and outvote a third condition, nor add its references twice; it takes
+    the original's envelope and verdict."""
+    cfg = EnvelopeConfig(mode="mixed", components=2, share=True)
+    a = mixture_spectrum(TRUE_WEIGHTS, 0.0)
+    other = mixture_spectrum(np.array([0.9, 0.1]), 0.0)
+    s = SpectrumSet.from_spectra(series([(0.0, a)], 0) + series([(0.0, a)], 1)
+                                 + series([(0.0, other)], 2))
+    groups = {0: "ion", 1: "ion", 2: "ion"}
+    table, by = series_envelopes(s, config=cfg, picker=PICK, groups=groups)
+    # a and other disagree, and there is no telling which is right: every condition is marked,
+    # and the envelope is fitted to the two measurements, a once
+    assert table.agrees.tolist() == [False, False, False]
+    assert table.poor.all()
+    assert by[0] is by[1] is by[2] and by[0].n_reference == 2
+    assert table.own_residual[1] == table.own_residual[0]
+    assert table.n_reference.tolist() == [1, 1, 1]
+    # with a real third condition that agrees, the copy takes its original's verdict
+    s = SpectrumSet.from_spectra(series([(0.0, a)], 0) + series([(0.0, a)], 1)
+                                 + series([(0.0, mixture_spectrum(TRUE_WEIGHTS, 0.0, height=6e4))],
+                                          2)
+                                 + series([(0.0, other)], 3))
+    table, by = series_envelopes(s, config=cfg, picker=PICK,
+                                 groups={0: "ion", 1: "ion", 2: "ion", 3: "ion"})
+    assert table.agrees.tolist() == [True, True, True, False]
+    assert by[0].n_reference == 2  # a once, and the third condition's reference
+
+
 def test_envelopes_report_progress_and_stop_on_cancel(tmp_path):
     from hxex.hooks import Cancelled
 

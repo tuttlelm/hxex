@@ -28,16 +28,18 @@ OFF = 20.0  # ppm: the off series' envelope, beyond the run's calibration
 CALIBRATION = 1.0  # ppm: the run's own offset
 
 
-def spectra_set(n=12, off=OFF, labelled=True, samples=False, moved=()) -> SpectrumSet:
+def spectra_set(n=12, off=OFF, labelled=True, samples=False, moved=(), sample="S",
+                spectra_only=False):
     """An undeuterated control and a labelled spectrum for each of ``n`` series of one run
     (``samples``: each series in a sample of its own, so each run has one control); series 0
     sits ``off`` ppm from the others, which scatter by about 0.5 ppm. The controls of the
     series in ``moved`` have their monoisotopic peak 25 ppm lighter (its top, still within the
-    search, then disagrees with M+1 and M+2)."""
+    search, then disagrees with M+1 and M+2). ``sample`` names the one sample; with
+    ``spectra_only`` the list of spectra is returned."""
     rng = np.random.default_rng(1)
     out = []
     for s in range(n):
-        entry = PeptideEntry("f", f"S{s}" if samples else "S", PEPTIDE,
+        entry = PeptideEntry("f", f"S{s}" if samples else sample, PEPTIDE,
                              f"{s + 1:04d}-{s + 10:04d}", s + 1, s + 10, Z)
         shift = CALIBRATION + rng.normal(0, 0.5) + (off if s == 0 else 0.0)
         for level, time, role in ((0.0, np.nan, "undeut"), (2.0, 60.0, "")):
@@ -49,7 +51,7 @@ def spectra_set(n=12, off=OFF, labelled=True, samples=False, moved=()) -> Spectr
                 pos[0] *= 1 - 25e-6
             out.append(Spectrum(*profile((pos, h)), entry, time, 1,
                                 data_id=s, spectrum_id=f"{s}:{level}", role=role))
-    return SpectrumSet.from_spectra(out)
+    return out if spectra_only else SpectrumSet.from_spectra(out)
 
 
 def series_rows(b: BinnedSet, s: int) -> np.ndarray:
@@ -230,6 +232,19 @@ def test_fewer_than_five_controls_give_no_scatter(caplog):
     assert np.isnan(b.envelope_offset_ppm).all() and np.isnan(b.envelope_offset_limit_ppm).all()
     five = series_offsets(spectra_set(n=5), NARROW)
     assert five.off.tolist() == [True, False, False, False, False]
+
+
+def test_a_control_read_for_two_samples_counts_once_in_the_whole_calibration():
+    """Four controls read for a second sample (the same files) are still four: the line and
+    scatter of every control count each measurement once, so they give no scatter."""
+    one = spectra_set(n=4, spectra_only=True)
+    copies = [dataclasses.replace(x, data_id=x.data_id + 4, spectrum_id="T" + x.spectrum_id,
+                                  entry=dataclasses.replace(x.entry, sample="T"))
+              for x in one]
+    assert np.isnan(series_offsets(SpectrumSet.from_spectra(one), NARROW).limit_ppm).all()
+    both = SpectrumSet.from_spectra(one + copies)
+    checked = series_offsets(both, NARROW)
+    assert len(checked.data_id) == 8 and np.isnan(checked.limit_ppm).all()
 
 
 def test_a_scan_file_is_its_own_injection():

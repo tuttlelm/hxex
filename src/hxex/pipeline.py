@@ -81,6 +81,7 @@ from .picking import (
     PeakMeasure,
     PickerConfig,
     choose_measure,
+    copies_in_one_series,
     pick_spectra,
     same_measurement,
     series_envelopes,
@@ -463,14 +464,15 @@ _BOOTSTRAP_WEIGHT = 7.0 / 3.0
 _MEASURE = object()  # _fit_part's noise_curve when none was measured before it
 
 
-def bundle_noise(picked, meas: Measurements, config: RunConfig):
+def bundle_noise(picked, meas: Measurements, config: RunConfig, measurement=None):
     """The bundle's per-bin noise (``[run.fit.noise] estimate = "controls"``,
     :func:`hxex.noise.controls_noise`) from the undeuterated controls that every picker screen
     passes at the loose level (a control not assessed counts as passing), with ``b1`` per
     sample; a warning names the samples whose own ``b1`` differs from the bundle's (more than
     three standard errors), which a bundle mixing instruments or settings would show. None when
     the setting is off or there are too few controls (the fit then uses one sd per
-    spectrum)."""
+    spectrum). ``measurement`` (:func:`hxex.picking.same_measurement`; computed from ``picked``
+    when not given): a control file read for several samples counts once."""
     from .analysis.screening import THRESHOLDS
     from .noise import controls_noise
     noise = config.fit.noise
@@ -484,7 +486,9 @@ def bundle_noise(picked, meas: Measurements, config: RunConfig):
                 usable &= ~(np.asarray(score, dtype=np.float64) >= limit)
     curve = controls_noise(meas.bins, meas.observed, meas.shapes, meas.role, meas.charges(),
                            meas.data_id, model_error=noise.model_error / 100.0, usable=usable,
-                           sample=picked.sample)
+                           sample=picked.sample,
+                           measurement=(same_measurement(picked) if measurement is None
+                                        else measurement))
     if curve is None:
         log.info("per-bin noise not measured (fewer than 5 series of usable undeuterated "
                  "controls, or no counting term found): one sd per spectrum")
@@ -632,7 +636,8 @@ def _fit_part(
     ``deamidation``: the fully deuterated controls' deamidation
     (:func:`hxex.deamidation.deamidation_from_picked`), with ``[run.controls] deamidation``.
     ``measurement``: which spectra are one measurement read twice
-    (:func:`hxex.picking.same_measurement`), counted once by the controls. ``reused``
+    (:func:`hxex.picking.same_measurement`), counted once by the controls (and by the per-bin
+    noise measured here). ``reused``
     (:class:`hxex.reuse.Reused`): the previous results' fits (and tests) of the measurements
     ``plan`` leaves out, merged with those fitted here. ``injection``: every
     measurement's injection for ``low_intensity`` (:func:`hxex.quality.injection_keys`)."""
@@ -643,7 +648,8 @@ def _fit_part(
             from .noise import controls_noise
             noise_curve = controls_noise(data.bins, data.observed, data.shapes, data.role,
                                          data.charges(), data.data_id,
-                                         model_error=config.fit.noise.model_error / 100.0)
+                                         model_error=config.fit.noise.model_error / 100.0,
+                                         measurement=measurement)
     fits: list[FitResult] = []
     tests: list[PopulationTest] = []
     testing = config.population_test is not None
@@ -1236,12 +1242,45 @@ def bundle_controls(path: str | Path, controls) -> tuple[ControlConfig | None, C
     return config.controls, choice
 
 
+def refuse_copies(picked: BinnedSet, measurement=None, *, shown: int = 5) -> None:
+    """Refuse (:class:`hxex.io.ReadError`) spectra of one series (sample, ion, and condition)
+    that are one measurement (:func:`hxex.picking.copies_in_one_series`: identical picked
+    peaks): a file copied under another name, or one file read twice for a sample, would count
+    as two replicates (or a replicate and a control) and shrink the errors. The message names
+    the first ``shown`` pairs by spectrum id and file. One file read for several samples (a
+    pooled project's shared controls), or one undeuterated file read for several conditions of
+    a sample, is allowed: each counts once where those are pooled."""
+    pairs = copies_in_one_series(picked, measurement)
+    if not pairs:
+        return
+    from .io.errors import ReadError
+
+    def name(i: int) -> str:
+        file = str(picked.file[i])
+        return f"{picked.spectrum_id[i]}" + (f" (file {file})" if file else "")
+
+    lines = [f"  {name(i)} and {name(j)}" for i, j in pairs[:shown]]
+    more = len(pairs) - shown
+    samples = sorted({str(picked.sample[i]) for i, _ in pairs})
+    raise ReadError(
+        f"{len(pairs)} spectr{'um' if len(pairs) == 1 else 'a'} of sample "
+        f"{', '.join(samples)} {'is' if len(pairs) == 1 else 'are'} the same measurement as "
+        "another spectrum of the same series (the same ion and condition, with identical "
+        "picked peaks): a file copied under another name, or one file read twice for a "
+        "sample, as two replicates or a replicate and a control:\n" + "\n".join(lines)
+        + (f"\n  and {more} more" if more > 0 else "")
+        + "\nRemove the copy, list the file once for the sample, or leave one of each pair out "
+        "with an [[input.exclude]] rule (one file read for several samples, or one "
+        "undeuterated file for several conditions, is allowed).")
+
+
 def _control_inputs(picked: BinnedSet, measurements: Measurements, config: RunConfig,
-                    source: Mapping | None) -> dict[str, Any]:
+                    source: Mapping | None, measurement=None) -> dict[str, Any]:
     """What :func:`hxex.controls.fit_controls` takes besides the fit, as :func:`run` makes it
     from the picked spectra (``picked``, those measured) and the read record (``source``):
     ``rates``, ``rt``, ``groups``, ``charges``, ``fragments``, ``residues``, ``screened``,
-    ``deamidation`` and ``measurement`` (:func:`hxex.picking.same_measurement`).
+    ``deamidation`` and ``measurement`` (:func:`hxex.picking.same_measurement`; computed from
+    ``picked`` when not given).
     :func:`resume_bootstrap` makes them again from a bundle to recompute its controls."""
     from .analysis.screening import control_removal
     from .io.mzml import fragment_series
@@ -1268,7 +1307,8 @@ def _control_inputs(picked: BinnedSet, measurements: Measurements, config: RunCo
                                     picked.data_id),
             "charges": charges, "fragments": fragments, "residues": residues,
             "screened": screened, "deamidation": deamidation,
-            "measurement": same_measurement(picked)}
+            "measurement": (same_measurement(picked) if measurement is None
+                            else measurement)}
 
 
 def site_counts(binned: BinnedSet, config: RunConfig) -> np.ndarray:
@@ -1471,6 +1511,8 @@ def run(
                     int((~kept).sum()), len(kept), int((reason == "empty").sum()),
                     int((reason == "no_signal").sum()), int((reason == "no_bins").sum()))
     picked = binned.select(kept)
+    measurement = same_measurement(picked)
+    refuse_copies(picked, measurement)
     from .io.mzml import kinetics_spectra
 
     measurements = Measurements.from_binned(
@@ -1484,7 +1526,7 @@ def run(
 
         chosen_k = moved_choices(chosen_k, measurements.spectrum_id,
                                  None if raw is None else raw.source)
-    noise_curve = bundle_noise(picked, measurements, config)
+    noise_curve = bundle_noise(picked, measurements, config, measurement)
     if reuse and previous is not None:  # a curve hardly moved: the replaced bundle's kept
         from .reuse import kept_curve
 
@@ -1506,7 +1548,7 @@ def run(
 
     record = {} if raw is None or raw.source is None else raw.source
     inputs = _control_inputs(picked, measurements, config,
-                             None if raw is None else raw.source)
+                             None if raw is None else raw.source, measurement)
     poor = None if envelopes is None else envelopes.data_id[envelopes.poor]
     fits, fit, controls, quality, test = _fit_part(measurements, config, plan, progress, cancel,
                                              binned.mz_offset_ppm[kept], inputs["rates"],

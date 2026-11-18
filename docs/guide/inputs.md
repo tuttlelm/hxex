@@ -94,6 +94,37 @@ version of *hxex*), the rerun takes the picked spectra stored in the bundle inst
 again, which gives the same result. Otherwise everything is picked again, and the log says
 what differed.
 
+**Copied files.** *hxex* recognises one measurement read twice by its content: the same ion with
+identical picked peaks. Within one series (one sample, ion, and condition), two such spectra are a
+file copied under another name or listed twice, which would count as two replicates (or a
+replicate and a control) and make the errors look smaller than they are. `hxex run` refuses
+them after picking, before any fitting, naming both spectra and their files:
+
+```text
+1 spectrum of sample WT is the same measurement as another spectrum of the same series (the
+same ion and condition, with identical picked peaks): a file copied under another name, or one
+file read twice for a sample, as two replicates or a replicate and a control:
+  ...:WT/0001-0010-.../60s-1-z2.csv (file ...) and ...:WT/0001-0010-.../60s-2-z2.csv (file ...)
+Remove the copy, list the file once for the sample, or leave one of each pair out with an
+[[input.exclude]] rule (one file read for several samples, or one undeuterated file for
+several conditions, is allowed).
+```
+
+Remove the copy, or leave one of each pair out with an
+[`[[input.exclude]]`](excluding-spectra.md) rule. `hxex check` finds the same thing before the
+run where it can do so without reading the spectra: spectrum files of one peptide folder that
+are identical byte for byte (SpecExport and pooled folders), and scan files listed for one
+sample that are copies of each other (mzML and Thermo raw; only files of the same size are
+read). A copied column inside an HX-Express workbook, or two conditions whose scan filters pick
+the same scans, are found by the run only. One file read for several samples (a pooled project's
+shared controls) or one undeuterated file read for several conditions of a sample is allowed:
+the controls, the [noise](noise-model.md), the shared fragment envelopes, and the m/z check
+count it once, `spectra.csv` `same_measurement_as` names the other spectra, and `hxex info` says
+how many there are. In `hxex analyse`, two runs compared with each other
+([`[analysis.runs]`](comparing-runs.md)) that hold the same measurements, or labelled spectra read
+for two samples of one run, are named in a warning: their comparisons compare a measurement with
+itself.
+
 **Times that only order the points.** If the times are labels rather than labelling times (1, 2,
 3 for three conditions), set `[input] time_scale = "order"`. The uptake is then drawn by index,
 and the kinetic and protection analyses refuse to run.

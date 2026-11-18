@@ -571,7 +571,7 @@ def _natural_fit(bins, observed, shape) -> tuple[np.ndarray, np.ndarray] | None:
     return y, p
 
 
-def distortion_onset(bins, observed, shapes, role) -> float:
+def distortion_onset(bins, observed, shapes, role, measurement=None) -> float:
     """The tallest peak above which a run's undeuterated controls stop matching their
     natural-abundance shape: the lower edge of the first band of tops (30,000, 100,000, ...
     4,000,000) whose controls' median flattening index (the median observed/predicted ratio of
@@ -581,11 +581,17 @@ def distortion_onset(bins, observed, shapes, role) -> float:
     when no band departs. Detector compression reads above 1, a heavy-side deficit below
     (docs/HISTORY.md items 181 and 187). Dim controls can read above 1 too, from picked noise
     in their small heavy-side peaks: that is no onset, so a departure counts only once the
-    controls have matched (item 191)."""
+    controls have matched (item 191). ``measurement`` (:func:`hxex.picking.same_measurement`):
+    one measurement read for several samples counts once."""
     tops, flat = [], []
+    seen: set[int] = set()
     for i, r in enumerate(role):
         if r != UNDEUT:
             continue
+        if measurement is not None:
+            if int(measurement[i]) in seen:
+                continue
+            seen.add(int(measurement[i]))
         got = _natural_fit(bins[i], observed[i], shapes[i])
         if got is None:
             continue
@@ -685,6 +691,7 @@ def controls_noise(
     model_error: float,
     usable: Sequence[bool] | None = None,
     sample: Sequence[str] | None = None,
+    measurement: Sequence[int] | None = None,
     n_resample: int = 20,
     seed: int = 0,
 ) -> ControlsNoise | None:
@@ -699,14 +706,21 @@ def controls_noise(
     series (``data_id``), and with ``sample`` the same is measured for each sample alone. None
     when fewer than 5 series give residuals or no positive ``b1`` is found. Replicate pairs
     of controls give the same counting scale on the Q-TOF data (docs/HISTORY.md items 187 and
-    190)."""
+    190). ``measurement`` (:func:`hxex.picking.same_measurement`) says which spectra are one
+    measurement read more than once (one control file read for several samples): each counts
+    once in the bundle's curve, the onset, its standard error and the counts (the first met, in
+    the order given, stands for it); a sample's own curve takes every control read for it."""
     m = len(bins)
     role = np.asarray(role, dtype=str)
     charge = np.asarray(charge, dtype=np.float64)
     data_id = np.asarray(data_id)
     use = np.ones(m, dtype=bool) if usable is None else np.asarray(usable, dtype=bool)
-    onset = distortion_onset(bins, observed, shapes, role)
+    onset = distortion_onset(bins, observed, shapes, role, measurement)
+    # each series' blocks, and whether the block is the first of its measurement (only those
+    # make the bundle's curve; a sample's own curve takes all of its own)
     parts: dict[int, list[tuple[np.ndarray, ...]]] = {}
+    first: dict[int, list[bool]] = {}
+    seen: set[int] = set()
     n_controls = 0
     for i in np.flatnonzero((role == UNDEUT) & use):
         got = _natural_fit(bins[i], observed[i], shapes[i])
@@ -720,28 +734,33 @@ def controls_noise(
             continue
         h = float(np.sum(y[sel] * p[sel]) / np.sum(p[sel] ** 2))
         pred = h * p[sel]
+        new = measurement is None or int(measurement[i]) not in seen
+        if measurement is not None:
+            seen.add(int(measurement[i]))
         parts.setdefault(int(data_id[i]), []).append(
             (pred, y[sel] - pred, np.full(int(sel.sum()), charge[i]),
              _residual_design(p[sel], pred, float(charge[i]))))
-        n_controls += 1
+        first.setdefault(int(data_id[i]), []).append(new)
+        n_controls += new
 
-    def fit(keys) -> float | None:
-        blocks = [b for k in keys for b in parts[k]]
+    def fit(keys, own: bool) -> float | None:
+        blocks = [b for k in keys for b, f in zip(parts[k], first[k], strict=True) if own or f]
         if not blocks:
             return None
         return _curve_fit(*(np.concatenate([b[j] for b in blocks]) for j in range(4)))
 
-    def with_se(keys) -> tuple[float | None, float]:
+    def with_se(keys, own: bool = False) -> tuple[float | None, float]:
         keys = sorted(keys)
-        got = fit(keys) if len(keys) >= 5 else None
+        got = fit(keys, own) if len(keys) >= 5 else None
         if got is None:
             return None, float("nan")
         rng = np.random.default_rng(seed)
-        draws = [fit(list(rng.choice(keys, len(keys)))) for _ in range(n_resample)]
+        draws = [fit(list(rng.choice(keys, len(keys))), own) for _ in range(n_resample)]
         b = [d for d in draws if d is not None]
         return got, (float(np.std(b, ddof=1)) if len(b) >= 2 else float("nan"))
 
-    b1, se = with_se(parts)
+    measured = [k for k in parts if any(first[k])]  # series with a measurement of their own
+    b1, se = with_se(measured)
     if b1 is None or not b1 > 0:
         return None
     by_sample: list[SampleNoise] = []
@@ -750,12 +769,12 @@ def controls_noise(
         series_sample = {int(d): str(s) for d, s in zip(data_id, names, strict=True)}
         for name in sorted({series_sample[k] for k in parts}):
             keys = [k for k in parts if series_sample[k] == name]
-            s_b1, s_se = with_se(keys)
+            s_b1, s_se = with_se(keys, own=True)
             if s_b1 is None or not s_b1 > 0:  # too few controls, or no counting term found
                 s_b1, s_se = float("nan"), float("nan")
             by_sample.append(SampleNoise(name, s_b1, s_se, len(keys)))
     return ControlsNoise(b1=b1, model_error=model_error, onset=onset, n_controls=n_controls,
-                         n_series=len(parts), b1_se=se, by_sample=tuple(by_sample))
+                         n_series=len(measured), b1_se=se, by_sample=tuple(by_sample))
 
 
 def bin_variances(

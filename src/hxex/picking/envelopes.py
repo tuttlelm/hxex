@@ -27,7 +27,13 @@ both ways; how well the mixture fits at all is ``good``). The shared envelope is
 references of the conditions that agree with the most others; the rest (``agrees`` False) are left
 out of it and their series marked ``poor``. When none agrees with another (two conditions that
 disagree, say) there is no telling which is right: the envelope is fitted to all of them and all
-are marked. A condition without references of its own takes the shared envelope.
+are marked. A condition without references of its own takes the shared envelope. A condition
+whose references are the same spectra as another's (its scan filters select the same scans, or
+a copied file: the same ion with identical raw m/z and intensity arrays) is one condition: it
+neither votes in the comparison nor adds its references twice, and it takes the envelope and the
+verdict of the condition it repeats. Copies are found on the raw spectra, before any picking
+(:func:`hxex.picking.binned.raw_keys`); within one sample they are refused after picking
+(:func:`hxex.pipeline.refuse_copies`).
 
 This follows pyHXExpress's ``NA_envelope`` options (``mixedN`` and ``infer``), with two
 differences: the components are shifted by the hydrogen mass rather than by one ExMS step, and the
@@ -48,6 +54,7 @@ from scipy.optimize import nnls
 from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..spectra import UNDEUT, time_point
+from .binned import raw_keys
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig
 from .measure import PeakMeasure
 from .pick import pick_spectrum, plan_bins
@@ -298,6 +305,20 @@ class EnvelopeTable:
         return self.fit_shape[self.shape_offsets[i]:self.shape_offsets[i + 1]]
 
 
+def _distinct(rows, keys: Mapping[int, bytes | None]) -> list[int]:
+    """``rows`` with every spectrum whose raw key an earlier one has left out."""
+    seen: set[bytes] = set()
+    out = []
+    for i in rows:
+        k = keys.get(int(i))
+        if k is not None:
+            if k in seen:
+                continue
+            seen.add(k)
+        out.append(int(i))
+    return out
+
+
 def series_envelopes(
     spectra,
     *,
@@ -351,8 +372,22 @@ def series_envelopes(
                       "resolving_power_mz": float(spectra.resolving_power_mz[i]),
                       "measure": measure}) for i in sel]
 
-        def controls(d, rows=rows):
-            return taken(rows[d][spectra.role[rows[d]] == UNDEUT])
+        un = {d: rows[d][spectra.role[rows[d]] == UNDEUT] for d in group}
+        keys = raw_keys(spectra, np.concatenate([un[d] for d in group])) if len(group) > 1 else {}
+        # a condition whose references are another's (the same scans, or a copied file) is
+        # that condition: it does not vote, nor add its references again (module docstring)
+        copy_of: dict[int, int] = {}
+        if len(group) > 1:
+            by_refs: dict[frozenset, int] = {}
+            for d in group:
+                k = frozenset(keys[int(i)] for i in un[d] if keys[int(i)] is not None)
+                if k:
+                    copy_of[d] = by_refs.setdefault(k, d)
+            copy_of = {d: o for d, o in copy_of.items() if d != o}
+        distinct = [d for d in group if d not in copy_of]
+
+        def controls(d, un=un, keys=keys):
+            return taken(_distinct(un[d], keys))
 
         def at(t, d, rows=rows):
             return taken(rows[d][points[rows[d]] == time_point([t])[0]])
@@ -369,7 +404,7 @@ def series_envelopes(
 
         own = {d: controls(d) for d in group}
         chosen, source = None, "theory"
-        refs = [r for d in group for r in own[d]]
+        refs = taken(_distinct([i for d in distinct for i in un[d]], keys))
         if refs:
             chosen = estimate(refs)
             source = "reference" if len(group) == 1 else "shared"
@@ -377,7 +412,7 @@ def series_envelopes(
         agree = {d: True for d in group}
         alone: dict[int, Envelope] = {}
         if chosen is not None and len(group) > 1 and config.mode != "theory":
-            have = [d for d in group if own[d]]
+            have = [d for d in distinct if own[d]]
             if len(have) > 1:  # which conditions agree with which (see the module docstring)
                 alone = {d: estimate(own[d]) for d in have}
                 self_fit = {d: residual(own[d], alone[d]) for d in have}
@@ -399,9 +434,11 @@ def series_envelopes(
                         agree.update(dict.fromkeys(back, True))
                         core += [r for d in back for r in own[d]]
                         chosen = estimate(core)
-            res = {d: residual(own[d], chosen) if own[d] else float("nan") for d in group}
+            res = {d: residual(own[d], chosen) if own[d] else float("nan") for d in distinct}
+            for d, o in copy_of.items():  # a repeat takes its condition's verdict
+                res[d], agree[d] = res[o], agree[o]
         if (chosen is None or not chosen.good) and fallback_time is not None:
-            back = [r for d in group for r in at(fallback_time, d)]
+            back = [r for d in distinct for r in at(fallback_time, d)]
             if back:
                 other = estimate(back)
                 if chosen is None or other.good or other.residual < chosen.residual:
@@ -417,8 +454,9 @@ def series_envelopes(
             if len(group) == 1:
                 own_count[d] = chosen.n_reference
             else:  # the series' own references with signal, as for a series on its own
-                own_count[d] = (alone[d].n_reference if d in alone
-                                else estimate(own[d]).n_reference if own[d] else 0)
+                o = copy_of.get(d, d)
+                own_count[d] = (alone[o].n_reference if o in alone
+                                else estimate(own[o]).n_reference if own[o] else 0)
             # the pairwise comparison stays on record when the group then falls back
             own_residual[d] = res[d]
             agrees[d] = agree[d]

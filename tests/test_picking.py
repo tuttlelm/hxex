@@ -884,3 +884,22 @@ def test_one_measurement_read_twice_is_found_by_its_content():
     # numbered by the first in spectrum-id order, whatever the table's order
     swapped = dataclasses.replace(b, spectrum_id=np.array(["p:s2", "p:s1", "p:s0", "p:s3"]))
     assert same_measurement(swapped).tolist() == [2, 2, 2, 3]
+
+
+def test_copies_are_listed_within_a_series_only():
+    """copies_in_one_series pairs the spectra of one series that are one measurement (each
+    with the first of them); the same measurement in another series (a second sample or
+    condition reading the file) is not listed. raw_keys finds the copies before picking."""
+    from hxex.picking import copies_in_one_series, measurement_keys
+    from hxex.picking.binned import raw_keys
+
+    raw = make_set()  # spectra 0 to 2 have the same sticks, all in series 0; 3 is empty
+    b = pick_spectra(raw, CFG)
+    assert copies_in_one_series(b) == [(0, 1), (0, 2)]
+    keys = measurement_keys(b)
+    assert keys[0] == keys[1] == keys[2] and keys[3] is None
+    two = dataclasses.replace(b, data_id=np.array([0, 1, 1, 1]),
+                              sample=np.array(["S", "T", "T", "T"]))
+    assert copies_in_one_series(two) == [(1, 2)]  # the second sample's own copy only
+    k = raw_keys(raw, range(4))
+    assert k[0] == k[1] == k[2] and k[3] is None

@@ -1228,11 +1228,12 @@ def _peaks_at(pred, heights):
 
 
 def fragment_lc_run(fragments, apex=30.0, ms2_from=10.0, other=55.0, sigma=2.0, step=0.5,
-                    end=60.0):
+                    end=60.0, scale=1.0):
     """MS1 scans of the test peptide and ETD MS2 scans of its precursor every ``step`` s (the
     MS2 ones from ``ms2_from`` on: the instrument's schedule), the peptide eluting at ``apex``
     s; in the MS2 scans its ``fragments`` (targets) at their first three bins, and a taller
-    species on the first fragment's first bin at ``other`` s (None: none)."""
+    species on the first fragment's first bin at ``other`` s (None: none); ``scale`` multiplies
+    the peptide's intensity (two runs of one sample must differ: copies are refused)."""
     from hxex.fragments import parent_mz_range
 
     lo, _ = parent_mz_range(ENTRY)
@@ -1240,7 +1241,7 @@ def fragment_lc_run(fragments, apex=30.0, ms2_from=10.0, other=55.0, sigma=2.0, 
                        ).pred_mz[:3] for t in fragments]
     scans = []
     for t in np.arange(0.0, end + 1e-9, step):
-        h = 1e5 * np.exp(-0.5 * ((t - apex) / sigma) ** 2)
+        h = scale * 1e5 * np.exp(-0.5 * ((t - apex) / sigma) ** 2)
         mz, y = _envelope_at(CHARGE, max(h, 2.0))
         scans.append({"mz": mz, "intensity": y, "time": t, "unit": "s",
                       "filter": "FTMS + p ESI Full ms"})
@@ -1278,7 +1279,7 @@ def test_fragment_channels_find_their_peak_in_each_run(tmp_path, caplog):
     frags = fragment_targets(parent, "c:2-4:1", activation="ETD", rt_window=(34.0, 60.0))
     targets = [MzmlTarget(parent, rt_window=(34.0, 60.0))] + frags
     moved = write_mzml(tmp_path / "moved.mzML", fragment_lc_run(frags))
-    late = write_mzml(tmp_path / "late.mzML", fragment_lc_run(frags, ms2_from=29.5))
+    late = write_mzml(tmp_path / "late.mzML", fragment_lc_run(frags, ms2_from=29.5, scale=0.9))
     runs = [MzmlRun(path=str(moved), sample="S", time=60.0),
             MzmlRun(path=str(late), sample="S", time=120.0)]
     config = MzmlConfig(find_fragment_peak=True)
@@ -1726,15 +1727,15 @@ def test_each_files_mz_offset_is_taken_out(tmp_path, caplog):
 
     pred = plan_bins(PEPTIDE, CHARGE).pred_mz
 
-    def scans(ppm, n=12):  # undeuterated envelopes (deuterated peaks sit further apart)
+    def scans(ppm, n=12, scale=1.0):  # undeuterated envelopes (deuterated peaks further apart)
         shift = float(pred[0]) * ppm * 1e-6
         return [{"time": 0.5 + 0.5 * k, "filter": "Full ms",
                  **dict(zip(("mz", "intensity"),
-                            profile_envelope(1, 1.0, 1e5 * (1 + 0.1 * k), shift=shift),
+                            profile_envelope(1, 1.0, scale * 1e5 * (1 + 0.1 * k), shift=shift),
                             strict=True))} for k in range(n)]
 
     runs = [MzmlRun(write_mzml(tmp_path / "a.mzML", scans(30.0)), "WT"),
-            MzmlRun(write_mzml(tmp_path / "b.mzML", scans(-8.0)), "WT", rep=2)]
+            MzmlRun(write_mzml(tmp_path / "b.mzML", scans(-8.0, scale=1.07)), "WT", rep=2)]
     target = MzmlTarget(ENTRY)
     with caplog.at_level(logging.INFO, logger="hxex.io.mzml"):
         read = read_mzml(runs, [target], project="p")

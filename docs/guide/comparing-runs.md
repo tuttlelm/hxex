@@ -64,3 +64,11 @@ pooled: a merged sample's runs are drawn side by side in its figures, each serie
 `run:condition` where the same condition occurs in both runs, or by the run's own names from
 `[analysis.fragments.labels.<run>]`.
 
+
+**Runs read from the same files.** Two bundles made from the same spectra (the same files read
+again, picked the same way) hold the same measurements: comparing them compares each one with
+itself, and a merged sample counts it twice. `hxex analyse` warns when it finds such spectra,
+naming how many each run shares with an earlier one (found by their content, as in
+[Copied files](inputs.md#things-every-format-shares)). It does not refuse: comparing two
+settings on the same data is a fair use, as long as the differences are not read as
+differences between samples.

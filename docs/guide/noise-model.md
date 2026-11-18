@@ -66,6 +66,14 @@ distortion; *hxex* finds this brightness from the controls themselves and report
 five series need such controls; with fewer, *hxex* says so and uses one noise level per spectrum
 instead.
 
+**Controls shared by samples.** When several samples read the same undeuterated control file (a
+pooled project often does, and so may a copy or a link), *hxex* recognises the copies by their
+content and counts each measurement once: in `b1` and its error, in the brightness where the
+controls stop matching their natural isotope envelope, and in the counts `hxex info` shows. Each
+sample's own `b1` still uses every control read for that sample. Counted five times over, one
+file made the error of `b1` look about half its real size, and a handful of bright controls
+could set that brightness on their own.
+
 **Samples measured differently.** *hxex* also measures `b1` from each sample's controls alone.
 When a sample's own value differs from the run's by more than three standard errors, `hxex run`
 warns: its spectra may come from another instrument or another setting, and a run that mixes

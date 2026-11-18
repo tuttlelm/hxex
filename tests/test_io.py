@@ -657,8 +657,9 @@ def statedir(tmp_path):
                            "with partner": ["0001-0004-MKVL"]}.items():
         for name in folders:
             (root / state / name).mkdir(parents=True)
-            for f in ("Non-D-1-z2.csv", "4m-1-z2.csv", "4m-2-z2.csv"):
-                write_spec(root / state / name / f, [(100.0, 1.0), (101.0, 2.0)])
+            for k, f in enumerate(("Non-D-1-z2.csv", "4m-1-z2.csv", "4m-2-z2.csv")):
+                # each file its own measurement (copies within one series are refused)
+                write_spec(root / state / name / f, [(100.0, 1.0 + k), (101.0, 2.0)])
     (root / "notes").mkdir()  # holds no peptide folders: not a state
     (root / "pool.fasta").write_text(">A1\nMKVLGGG\n")
     return root

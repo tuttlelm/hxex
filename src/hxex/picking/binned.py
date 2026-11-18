@@ -164,6 +164,53 @@ class BinnedSet:
         )
 
 
+def _digest(ion, mz, intensity) -> bytes:
+    """The ion's parts and the m/z and intensity arrays (as float64), hashed."""
+    h = hashlib.blake2b(digest_size=16)
+    for part in ion:
+        h.update(str(part).encode())
+        h.update(b"\x1f")
+    h.update(np.ascontiguousarray(mz, dtype=np.float64).tobytes())
+    h.update(np.ascontiguousarray(intensity, dtype=np.float64).tobytes())
+    return h.digest()
+
+
+def measurement_keys(binned: BinnedSet) -> list[bytes | None]:
+    """What each spectrum of ``binned`` is as a measurement, ``(M,)`` digests: the ion
+    (peptide, modification and charge) and the picked bins' m/z and intensity, hashed to the
+    last bit; None for a spectrum without signal (every picked intensity 0), which is never the
+    same as another. Two spectra with one key are one measurement read twice
+    (:func:`same_measurement`); keys of two bundles can be compared the same way."""
+    out: list[bytes | None] = []
+    for i in range(len(binned)):
+        a, b = int(binned.offsets[i]), int(binned.offsets[i + 1])
+        intensity = np.asarray(binned.intensity[a:b], dtype=np.float64)
+        if not (intensity > 0).any():
+            out.append(None)
+            continue
+        out.append(_digest((binned.peptide[i], binned.modification[i], binned.charge[i]),
+                           binned.mz[a:b], intensity))
+    return out
+
+
+def raw_keys(spectra, rows) -> dict[int, bytes | None]:
+    """What each raw spectrum at ``rows`` of a :class:`~hxex.spectra.SpectrumSet` is as a
+    measurement: the ion (peptide, modification and charge) and its m/z and intensity arrays,
+    hashed to the last bit; None for a spectrum without signal (never the same as another). The
+    raw counterpart of :func:`measurement_keys`, for the stages before picking."""
+    out: dict[int, bytes | None] = {}
+    for i in rows:
+        i = int(i)
+        mz, y = spectra.spectrum(i)
+        y = np.asarray(y, dtype=np.float64)
+        if not (y > 0).any():
+            out[i] = None
+            continue
+        out[i] = _digest((spectra.peptide[i], spectra.modification[i], spectra.charge[i]),
+                         mz, y)
+    return out
+
+
 def same_measurement(binned: BinnedSet) -> np.ndarray:
     """Which spectra of ``binned`` are one measurement read more than once, ``(M,)`` integers:
     spectra of the same ion (peptide, modification and charge) whose picked bins are identical
@@ -171,21 +218,38 @@ def same_measurement(binned: BinnedSet) -> np.ndarray:
     spectrum-id order); every other spectrum has its own index. This is what two samples or
     conditions that read the same file (a copy, a link, or one scan file listed twice) give:
     the same raw data picked the same way. A spectrum without signal (every picked intensity 0)
-    is never the same as another."""
+    is never the same as another (:func:`measurement_keys`)."""
+    keys = measurement_keys(binned)
     order = np.argsort(np.asarray(binned.spectrum_id, dtype=str), kind="stable")
     out = np.arange(len(binned), dtype=np.int64)
     first: dict[bytes, int] = {}
     for i in order.tolist():
-        a, b = int(binned.offsets[i]), int(binned.offsets[i + 1])
-        intensity = np.asarray(binned.intensity[a:b], dtype=np.float64)
-        if not (intensity > 0).any():
-            continue
-        h = hashlib.blake2b(digest_size=16)
-        for part in (binned.peptide[i], binned.modification[i], binned.charge[i]):
-            h.update(str(part).encode())
-            h.update(b"\x1f")
-        h.update(np.ascontiguousarray(binned.mz[a:b], dtype=np.float64).tobytes())
-        h.update(intensity.tobytes())
-        out[i] = first.setdefault(h.digest(), i)
+        if keys[i] is not None:
+            out[i] = first.setdefault(keys[i], i)
     return out
 
+
+def copies_in_one_series(binned: BinnedSet, measurement: np.ndarray | None = None
+                         ) -> list[tuple[int, int]]:
+    """The pairs ``(first, copy)`` of spectra of ``binned`` (positions) that belong to the same
+    series (``data_id``: one sample, ion and condition) and are one measurement
+    (``measurement``, :func:`same_measurement`; computed when not given): two replicates, or a
+    replicate and a control, read from one file (a copy under another name, or one file listed
+    twice). Each copy is paired with the first spectrum of its measurement and series in
+    spectrum-id order; empty when there are none. Copies in different series are not listed: a
+    file read for several samples (a pooled project's controls), or one undeuterated file read
+    for several conditions of a sample (the in-source energies of a fragment list), is one
+    measurement used by each, which the controls, the per-bin noise, and the shared envelopes
+    count once."""
+    group = same_measurement(binned) if measurement is None else np.asarray(measurement)
+    series = np.asarray(binned.data_id)
+    shared = np.bincount(group, minlength=len(group))[group] > 1
+    first: dict[tuple, int] = {}
+    out = []
+    for i in np.argsort(np.asarray(binned.spectrum_id, dtype=str), kind="stable").tolist():
+        if not shared[i]:
+            continue
+        j = first.setdefault((int(group[i]), int(series[i])), i)
+        if j != i:
+            out.append((j, i))
+    return sorted(out)

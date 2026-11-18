@@ -1048,8 +1048,9 @@ def test_the_data_decide_the_correction_in_a_run_and_a_resume(tmp_path, capsys):
     stored fits (no refit), records that they were chosen automatically, and hxex info says
     so."""
     path = mzml_project(tmp_path)
-    for name in ("un.mzML", "fd.mzML"):
-        shutil.copy(tmp_path / "run1.mzML", tmp_path / name)
+    for name, scale in (("un.mzML", 0.9), ("fd.mzML", 1.1)):  # injections of their own
+        write_mzml(tmp_path / name, [{**s, "intensity": s["intensity"] * scale}
+                                     for s in time_course(n=6)])
     path.write_text(path.read_text()
                     + '\n[[input.runs]]\npath = "un.mzML"\nsample = "WT"\nrole = "undeut"\n'
                     '\n[[input.runs]]\npath = "fd.mzML"\nsample = "WT"\nrole = "fulldeut"\n')
@@ -1703,8 +1704,8 @@ def test_find_peak_in_a_project_and_a_runs_own_row(tmp_path, capsys):
     refuses a peptide without rt or a window, and a run column naming no run."""
     from test_mzml import lc_run, write_mzml
 
-    for name in ("a", "b"):
-        write_mzml(tmp_path / f"{name}.mzML", lc_run(charges=(2,)))
+    for seed, name in enumerate(("a", "b")):  # two injections: their noise differs
+        write_mzml(tmp_path / f"{name}.mzML", lc_run(charges=(2,), seed=seed))
     (tmp_path / "peptides.csv").write_text(
         "peptide,start_seq,end_seq,charge,rt,rt_start,rt_end,run\n"
         f"{PEPTIDE},1,10,2,0.5,,,\n"
@@ -2079,6 +2080,46 @@ def test_check_finds_what_the_read_of_a_specexport_folder_would_refuse(tmp_path,
     err = capsys.readouterr().err
     assert "[run.controls] is on" not in err and "no spectrum files" not in err
     assert "differs from the folder" in err
+
+
+def test_check_finds_a_copied_spectrum_file_or_run_of_one_sample(tmp_path, capsys):
+    """A spectrum file copied under another name in one peptide folder, or a scan file listed
+    for a sample under two names, is a problem of hxex check (the run refuses it after
+    picking); one file read for two samples is not, nor are empty files."""
+    data = tmp_path / "d"
+    folder = data / "WT" / f"0001-0010-{PEPTIDE}"
+    folder.mkdir(parents=True)
+    (data / "WT.fasta").write_text(f">WT\n{PEPTIDE}\n")
+    (folder / "Non-D-1-z2.csv").write_text("500.1,10\n500.6,5\n")
+    (folder / "60s-1-z2.csv").write_text("500.1,10\n500.6,9\n")
+    (folder / "60s-2-z2.csv").write_text("500.1,10\n500.6,9\n")  # a copy of replicate 1
+    (folder / "Full-D-1-z2.csv").write_text("")
+    (folder / "Full-D-2-z2.csv").write_text("")  # empty files are not copies
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "d"\n'
+                    '[output]\nbundle = "out"\n')
+    assert cli.main(["check", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "60s-2-z2.csv is a copy of" in err
+    assert "60s-1-z2.csv (identical files for sample WT" in err
+    assert "Full-D" not in err and "replicates (or a replicate and a control) of one" in err
+    (folder / "60s-2-z2.csv").write_text("500.1,10\n500.6,8\n")
+    assert cli.main(["check", str(path)]) == 0
+    # scan files: a copy listed for the same sample, and the same file for another sample
+    other = tmp_path / "s"
+    other.mkdir()
+    path = mzml_project(other)
+    shutil.copy(other / "run1.mzML", other / "copy.mzML")
+    text = path.read_text()
+    path.write_text(text.replace('[output]', '[[input.runs]]\npath = "run1.mzML"\n'
+                                             'sample = "KO"\n\n[output]'))
+    capsys.readouterr()
+    cli.main(["check", str(path)])
+    assert "is a copy of" not in capsys.readouterr().err
+    path.write_text(text.replace('[output]', '[[input.runs]]\npath = "copy.mzML"\n'
+                                             'sample = "WT"\n\n[output]'))
+    cli.main(["check", str(path)])
+    assert "copy.mzML is a copy of" in capsys.readouterr().err
 
 
 def test_a_mutants_table_sequence_agrees_with_its_fasta_not_the_folder_name(tmp_path, capsys):

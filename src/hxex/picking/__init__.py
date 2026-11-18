@@ -4,7 +4,7 @@ ladder, see docs/PEAK_PICKING.md), each bin a peak's height or area (:mod:`.meas
 envelope of each series (theory, an ion-type mixture or
 inferred from a reference)."""
 
-from .binned import BinnedSet, same_measurement
+from .binned import BinnedSet, copies_in_one_series, measurement_keys, same_measurement
 from .config import DEFAULT_PICKER_CONFIG, PickerConfig, reference_mz
 from .envelopes import (
     Envelope,
@@ -38,6 +38,8 @@ __all__ = [
     "PickedSpectrum",
     "PickerConfig",
     "reference_mz",
+    "copies_in_one_series",
+    "measurement_keys",
     "same_measurement",
     "choose_measure",
     "envelope",

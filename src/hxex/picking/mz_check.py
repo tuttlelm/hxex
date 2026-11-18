@@ -32,7 +32,8 @@ out (``[analysis.filters] off_mz``).
   unflagging borderline off series); a run with fewer than ``MIN_RUN_CONTROLS`` such offsets
   takes the line and scatter of every control, and fewer than ``MIN_SCATTER_OFFSETS`` in all
   give no scatter (the line through three points passes through two of them): then no series
-  is assessed.
+  is assessed. A control read for several samples (one file shared by them: the same ion with
+  identical raw arrays) counts once in the line and scatter of every control.
 - A series' offset is the median over its controls (agreeing pairs included) of (offset minus
   the run's calibration at the control's monoisotopic m/z);
   the series is off its m/z when that is beyond ``off_mz_sd`` times its runs' scatter, and at
@@ -223,6 +224,7 @@ def series_offsets(spectra, config: PickerConfig, *,
     """The m/z check of every series of ``spectra`` (a :class:`~hxex.spectra.SpectrumSet`)
     with undeuterated controls, except those in ``skip`` (fragment ions); ``config.off_mz_sd``
     sets the limit (it must not be None). ``clusters`` as for :func:`pick_spectra`."""
+    from .binned import raw_keys
     from .pick import plan_bins
 
     if config.off_mz_sd is None:
@@ -268,11 +270,20 @@ def series_offsets(spectra, config: PickerConfig, *,
         resid = v - (intercept + slope * x)
         return float(intercept), float(slope), _MAD_SD * float(np.median(np.abs(resid)))
 
-    n_found = int(found.sum())
+    # one measurement read for several samples counts once where every control is pooled
+    keys = raw_keys(spectra, rows)
+    seen: set[bytes] = set()
+    distinct = np.zeros(len(rows), dtype=bool)
+    for j, i in enumerate(rows):
+        k = keys[int(i)]
+        distinct[j] = k is None or k not in seen
+        if k is not None:
+            seen.add(k)
+    n_found = int((found & distinct).sum())
     if 0 < n_found < MIN_SCATTER_OFFSETS:
         log.info("m/z check: %d undeuterated control(s) with a measured offset, fewer than "
                  "the %d a scatter needs: no series assessed", n_found, MIN_SCATTER_OFFSETS)
-    whole = (calibration(np.flatnonzero(found)) if n_found >= MIN_SCATTER_OFFSETS
+    whole = (calibration(np.flatnonzero(found & distinct)) if n_found >= MIN_SCATTER_OFFSETS
              else (np.nan, 0.0, np.nan))
     runs = {run: calibration(np.asarray(at)) if len(at) >= MIN_RUN_CONTROLS else whole
             for run, at in run_index.items()}
