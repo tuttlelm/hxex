@@ -380,6 +380,30 @@ def test_the_fragment_traces_of_a_kinetics_run_have_linear_time():
     assert traces["fragments_S_11-18_z3_gentle_c_z1"]().axes[0].get_xscale() == "linear"
 
 
+def test_no_closure_figure_for_pairs_seen_only_in_the_undeuterated_controls():
+    """With the flagged spectra left out, a parent may keep its complementary pairs only in its
+    undeuterated controls (a real targeted run, 2026-11-18): the closure figure draws labelled
+    times only, so hxex analyse plans none for it instead of stopping."""
+    from hxex.analysis import FragmentAnalysis
+    from hxex.report.fragments import fragment_outputs
+
+    run = stub_run(conditions=("gentle",))
+    run.fit.time[run.fit.time == TIMES[0]] = 0.0  # the first point: the undeuterated control
+    u0 = fragment_uptake(run)
+    by_id = {str(s): i for i, s in enumerate(run.fit.spectrum_id)}
+    m = len(run.fit.spectrum_id)
+    below = np.zeros(m, bool)
+    c_labelled = (u0.ion_type == "c") & (u0.time > 0)
+    below[[by_id[str(s)] for s in u0.spectrum_id[c_labelled]]] = True
+    run.quality = SimpleNamespace(below_noise=below, poor_envelope=np.zeros(m, bool),
+                                  mz_shift=np.zeros(m, bool), overlapping_ion=np.zeros(m, bool),
+                                  flagged=below)
+    _, jobs = fragment_outputs(run, FragmentAnalysis())
+    assert not [name for name, _ in jobs if name.startswith("closure_")]
+    _, everything = fragment_outputs(run, FragmentAnalysis(leave_out_flags=[]))
+    assert [name for name, _ in everything if name.startswith("closure_")]
+
+
 def test_the_windows_fragment_page_draws_left_out_spectra_apart():
     """The Results tab's page (owner, 2026-11-17): every fragment of the parent, a row per ion
     type and charge, a column per condition; the spectra the review rejected stay in, as a

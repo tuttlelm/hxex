@@ -954,8 +954,8 @@ def fragment_outputs(results, config, *, quiet: bool = False,
                                 uptake, ion, charge=z, labels=config.labels,
                                 min_time=config.min_time, kint=kint, steps_shown=shown_steps,
                                 note=note, fit=fit_rates, **sel)))
-        for a, b in pairs:
-            have = set(uptake.fragment[rows].tolist())
+        for a, b in pairs:  # pairs at labelled times: the closure figure draws only those
+            have = set(uptake.fragment[rows & (uptake.time > 0)].tolist())
             n = len(chem.parse_sequence(parent))
             if any(f"{a}:{k}" in have and f"{b}:{n - k}" in have for k in range(1, n)):
                 jobs.append((f"closure_{stem}_{a}+{b}", lambda a=a, b=b, sel=sel: closure_figure(

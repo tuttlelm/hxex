@@ -10744,6 +10744,11 @@ CSVs or mzML if wanted.
     noisy data the filter costs a third to two thirds of the fragment spectra. Guide
     experiments.md (fragments), fragment-residues.md, outputs.md; settings.md and flags.md
     regenerated. Test: `test_flagged_fragment_spectra_are_left_out_of_the_fragment_analysis`.
+    Fix (2026-11-18): with the filter on, a parent of the private targeted dataset kept its
+    complementary c-1/z-dot pairs only in its undeuterated controls; hxex analyse planned a
+    closure figure for it (pairs looked for at every time) that draws labelled times only, so
+    the figure raised and the analysis stopped. The plan now looks at labelled times too. Test:
+    `test_no_closure_figure_for_pairs_seen_only_in_the_undeuterated_controls`.
 
 411. **One measurement read twice counts once in the per-bin noise, the shared envelopes
     and the m/z check; a copy within one series is refused; analyses of runs or samples holding
