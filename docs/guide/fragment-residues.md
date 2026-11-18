@@ -25,6 +25,8 @@ Everything below about rates, precise steps, and fitted curves applies only with
 **Which spectra enter.** Fragment spectra flagged `below_noise`, `poor_envelope`, `mz_shift`, or
 `overlapping_ion` are left out of the ladders, the closures, and the rates by default, and
 listed in `fragment_left_out.csv` (see [Experiments: fragments](experiments.md#fragments)).
+In the window, the Results tree's "left out" column names them as `fragment quality flag`,
+with the flags in brackets, and its "left out" filter finds them.
 
 **The ladder figure.** `ladder_<parent>_<ion>_z<charge>` shows the precursor in its top
 row, then a row for each step of the ladder, read top to bottom. In each step's row, the

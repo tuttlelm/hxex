@@ -10917,3 +10917,15 @@ CSVs or mzML if wanted.
     regenerated; template example. Checked on the private three-protein heterooligomer
     dataset: three folders, each with only its group's three samples and its own 15-16
     regions, about 47 s each.
+
+415. **The window's "left out" column names the fragment spectra the fragment flag filter
+    leaves out.** The filter of item 410 left them out of the fragment analysis and drew them
+    faded on the fragments tab, but the Results tree's "left out" column and filter
+    (`hxex.analysis.left_out_reasons`) did not know `[analysis.fragments] leave_out_flags`, so a
+    filtered fragment showed nothing there (owner, 2026-11-18). New
+    `hxex.analysis.fragment_flag_reasons` (the rule `fragment_uptake` applies: fragment ions
+    only, not the precursor's own ion, not fully deuterated controls, not a spectrum the review
+    accepted); `left_out_reasons` writes `fragment quality flag (below_noise;poor_envelope)`,
+    after the other reasons; entry in `hxex.flags` (`hxex explain`, flags.md). Checked on the
+    private targeted dataset: the same 10,371 spectra as `fragment_left_out.csv`; the column
+    takes 2 s. Guide fragment-residues.md. Test: the fragment filter test.

@@ -242,6 +242,31 @@ def _flag_reasons(results, fit, names: Sequence[str]) -> np.ndarray:
     return out
 
 
+def fragment_flag_reasons(results, leave_out_flags: Sequence[str] = ()) -> np.ndarray:
+    """Per spectrum of ``results.fit`` (one run), which of ``leave_out_flags`` leave it out of
+    the fragment analysis (``'below_noise;poor_envelope'``), '' for every other spectrum: one
+    not read as a fragment ion, the precursor's own ion (M), a fully deuterated control, and a
+    spectrum the review accepted. The rule :func:`fragment_uptake` applies; the window's "left
+    out" column shows it (:func:`hxex.analysis.left_out_reasons`)."""
+    from ..io.mzml import SCAN_READERS, mzml_series_targets
+
+    fit = results.fit
+    out = np.full(len(fit), "", dtype=object)
+    source = results.settings.spectra_source if results.settings is not None else None
+    if not leave_out_flags or not source or source.get("reader") not in SCAN_READERS:
+        return out
+    hits = _flag_reasons(results, fit, tuple(leave_out_flags))
+    targets = mzml_series_targets(source)
+    role = np.asarray(fit.role, dtype=str)
+    for i in np.flatnonzero(hits != ""):
+        target = targets.get(int(fit.data_id[i]))
+        label = dict(target.entry.extra).get("fragment") if target is not None else None
+        if (label is not None and role[i] != FULLDEUT
+                and chem.ion_terminus(label.rpartition(":")[0]) != "M"):
+            out[i] = hits[i]
+    return out
+
+
 def _uptake(results, exclude_flagged: bool, keep_left_out: bool,
             leave_out_flags: Sequence[str] = ()):
     """:func:`fragment_uptake` of one run, and why each row is left out (all '' unless
@@ -274,7 +299,7 @@ def _uptake(results, exclude_flagged: bool, keep_left_out: bool,
                else np.zeros(len(fit), dtype=bool))
     if exclude_flagged:
         keep &= ~flagged
-    hits = _flag_reasons(results, fit, tuple(leave_out_flags))
+    hits = fragment_flag_reasons(results, leave_out_flags)  # fragment ions only, not M
     means = fit.fits[1].means[:, 0]
     # controls carry no time (NaN) since they are set by role; the undeuterated one is time 0
     times = np.asarray(fit.time, dtype=float).copy()
@@ -295,7 +320,7 @@ def _uptake(results, exclude_flagged: bool, keep_left_out: bool,
                               start, int(extra["parent_charge"]))
         label = extra["fragment"]
         reason = str(why[i])
-        if not reason and hits[i] and chem.ion_terminus(label.rpartition(":")[0]) != "M":
+        if not reason and hits[i]:
             if not keep_left_out:  # a fragment ion carrying a flag the analysis leaves out
                 continue
             reason = str(hits[i])

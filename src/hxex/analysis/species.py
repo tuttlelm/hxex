@@ -62,6 +62,9 @@ STAND_IN_SCREENED_REASON = "stand-in control (screened)"
 STAND_IN_UNDEUT_REASON = "stand-in control (undeuterated)"
 ABOVE_AMIDES_REASON = "above the amide count"
 REPLICATE_OUTLIER_REASON = "replicate outlier"
+# a fragment ion carrying one of [analysis.fragments] leave_out_flags; written with the
+# flags in brackets: "fragment quality flag (below_noise;poor_envelope)"
+FRAGMENT_FLAG_REASON = "fragment quality flag"
 # the reasons the spectrum quality screens remove a spectrum, in the order of the summary
 _SCREEN_REMOVE = ("screen_below_mono", "screen_off_position", "screen_between",
                   "screen_beyond_reach")
@@ -70,7 +73,7 @@ _SCREEN_REMOVE = ("screen_below_mono", "screen_off_position", "screen_between",
 LEFT_OUT_REASONS = (OFF_MZ_REASON, *(screen_reason(x) for x in _SCREEN_REMOVE),
                     KEPT_AT_ONE_REASON, UNDEUT_HIGH_REASON, UNDEUT_LEFT_OUT_REASON,
                     STAND_IN_REASON, STAND_IN_SCREENED_REASON, STAND_IN_UNDEUT_REASON,
-                    ABOVE_AMIDES_REASON, REPLICATE_OUTLIER_REASON)
+                    ABOVE_AMIDES_REASON, REPLICATE_OUTLIER_REASON, FRAGMENT_FLAG_REASON)
 
 log = logging.getLogger(__name__)
 
@@ -1695,7 +1698,9 @@ def left_out_reasons(results, config=None) -> list[str]:
     """Why the analysis settings ``config`` (:class:`AnalysisConfig`; its defaults when None)
     leave each spectrum of ``results`` out, '' for the ones kept: the reasons of
     ``left_out_spectra.csv`` (``[analysis.filters]``, :func:`left_out_spectra`),
-    ``exclude_flagged`` and ``exclude_times``, and the spectra kept at one population
+    ``exclude_flagged`` and ``exclude_times``, the fragment ions ``[analysis.fragments]
+    leave_out_flags`` leaves out of the fragment analysis (:func:`fragment_flag_reasons`),
+    and the spectra kept at one population
     (``spectrum_quality_filtering``, :data:`hxex.analysis.screening.KEPT_AT_ONE_REASON`).
     Rejected spectra are not listed (the review left them out). This is the window's "left
     out" column (moved here from ``hxex.gui``, audit of 2026-11-15, Q-4, so that Python gives
@@ -1722,6 +1727,12 @@ def left_out_reasons(results, config=None) -> list[str]:
     time = np.asarray(results.fit.time, dtype=float)
     for t in config.exclude_times:
         why[np.isclose(time, t, rtol=1e-9, atol=1e-6)] = "time left out (exclude_times)"
+    if config.fragments is not None:  # fragment ions the fragment analysis leaves out
+        from .fragments import fragment_flag_reasons
+
+        hits = fragment_flag_reasons(results, config.fragments.leave_out_flags)
+        for i in np.flatnonzero((hits != "") & (why == "")):
+            why[i] = f"{FRAGMENT_FLAG_REASON} ({hits[i]})"
     why[status == "rejected"] = ""
     return [str(w) for w in why]
 

@@ -301,7 +301,8 @@ def left_out(results, config=None) -> list[str]:
     """Why the analysis settings ``config`` (:class:`hxex.analysis.AnalysisConfig`; its
     defaults when None) leave each spectrum of ``results`` out, '' for the ones kept: the
     reasons of ``left_out_spectra.csv`` (``[analysis.filters]``), ``exclude_flagged`` and
-    ``exclude_times``, and the spectra kept at one population (``spectrum_quality_filtering``).
+    ``exclude_times``, the fragment ions ``[analysis.fragments] leave_out_flags`` leaves out,
+    and the spectra kept at one population (``spectrum_quality_filtering``).
     Rejected spectra are not listed (the review left them out). The reasons are the library's
     (:func:`hxex.analysis.left_out_reasons`; moved there, audit of 2026-11-15, Q-4); this
     wrapper only keeps the log quiet."""

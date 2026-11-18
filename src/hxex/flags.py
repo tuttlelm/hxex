@@ -548,6 +548,13 @@ _add("replicate outlier", "left_out", "spectrum", LEFT_OUT,
      "Left out by `{analysis.filters.replicate_outlier}` (typical replicate standard "
      "deviations), with three or more replicates.",
      guide="statistics.md#seeing-what-was-left-out")
+_add("fragment quality flag", "left_out", "spectrum",
+     "the window's \"left out\" column; `fragment_left_out.csv` `reason` (the flags alone)",
+     "A fragment ion spectrum carrying one of the flags `{analysis.fragments.leave_out_flags}` "
+     "names; the flags follow in brackets.",
+     "Left out of the fragment analysis (uptake, ladders, closure, rates); the precursor's own "
+     "ion and a spectrum the review accepted stay in. Not left out of anything else.",
+     guide="fragment-residues.md#residue-level-rates-and-protection-factors-from-fragment-ladders")
 
 ENTRIES: tuple[Entry, ...] = tuple(_ENTRIES)
 _BY_NAME = {e.name: e for e in ENTRIES}

@@ -601,6 +601,23 @@ def test_flagged_fragment_spectra_are_left_out_of_the_fragment_analysis(tmp_path
     assert len(left["reason"]) == n_c5 + len(c6) - 1
     assert set(left["fragment"].tolist()) == {"c:5", "c:6"}
     assert fragment_left_out(run, leave_out_flags=())["reason"].tolist() == []
+    # the window's "left out" column says why (the same rule: not M, not the accepted one)
+    from hxex.analysis import fragment_flag_reasons, left_out_reasons
+    from hxex.analysis.species import FRAGMENT_FLAG_REASON
+
+    hits = fragment_flag_reasons(run, FRAGMENT_LEAVE_OUT_FLAGS)
+    assert hits[c6[0]] == "below_noise;poor_envelope" and hits[c6[1]] == ""
+    assert not hits[rows(u0.where(fragment="M:8"))].any()
+    run.fit.role = np.full(m, "", dtype=object)
+    run.review_status = status
+    reasons = left_out_reasons(run, AnalysisConfig(filters=None))
+    assert reasons[c6[0]] == f"{FRAGMENT_FLAG_REASON} (below_noise;poor_envelope)"
+    assert sum(r.startswith(FRAGMENT_FLAG_REASON) for r in reasons) == len(left["reason"])
+    assert not any(left_out_reasons(run, AnalysisConfig(
+        filters=None, fragments=FragmentAnalysis(leave_out_flags=[]))))
+    from hxex import flags as hxex_flags
+
+    assert hxex_flags.entry(reasons[c6[0]]).name == FRAGMENT_FLAG_REASON
 
     assert FragmentAnalysis().leave_out_flags == FRAGMENT_LEAVE_OUT_FLAGS
     written = write_analysis(run, AnalysisConfig(format="png", fragments=FragmentAnalysis()),
