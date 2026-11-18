@@ -5,6 +5,8 @@ how to process it (`[run]` and its sub-tables), where the results go (`[output]`
 what to analyse afterwards (`[analysis]`). The same file can be run again later and gives the
 same results; the bundle records the settings it was made with.
 
+Every table and key, with its type, default, and meaning: [Settings reference](settings.md).
+
 ## A session from start to finish
 
 ```bash
@@ -97,6 +99,11 @@ bundle = "results"                # the folder (or .zip archive) hxex creates fo
 [analysis]
 reference = "WT"
 ```
+
+The tables in this example, in the settings reference: [top level](settings.md#top-level)
+(`project`, `threads`), [`[input]`](settings.md#input), [`[run.fit]`](settings.md#runfit),
+[`[run.bootstrap]`](settings.md#runbootstrap), [`[run.controls]`](settings.md#runcontrols),
+[`[output]`](settings.md#output), and [`[analysis]`](settings.md#analysis).
 
 - **A key left out keeps its default.** The [settings reference](settings.md) lists every key with
   its default. With a `preset` line at the top (`preset = "bimodal"`), a key left out takes
