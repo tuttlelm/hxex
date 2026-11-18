@@ -241,14 +241,39 @@ LEGEND_BELOW = 1.6  # inches added to a K comparison's height for the legends un
 LEGEND_BELOW_ROWS = 0.9  # inches per row when only the populations are under each panel
 
 
-def _legend_below(ax, only_populations: bool = False) -> None:
+def _legend_below(ax, only_populations: bool = False, under=None) -> None:
+    """The legend of ``ax`` under it, or under ``under`` (its residual panel)."""
     handles, labels = ax.get_legend_handles_labels()
     if only_populations:
         pairs = [(h, lab) for h, lab in zip(handles, labels, strict=True) if lab.startswith("pop ")]
         handles, labels = [h for h, _ in pairs], [lab for _, lab in pairs]
     if handles:
-        ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.18),
-                  fontsize=6.5, frameon=False)
+        target = ax if under is None else under
+        # the same distance under a residual panel (a quarter of the height) as under a spectrum
+        target.legend(handles, labels, loc="upper center",
+                      bbox_to_anchor=(0.5, -0.18 if under is None else -0.54),
+                      fontsize=6.5, frameon=False)
+
+
+RESIDUAL_HEIGHT = 1.3  # a panel with its residuals under it, as on the series' spectra pages
+
+
+def _residual_grid(fig: Figure, nrows: int, ncols: int):
+    """Axes for ``nrows`` spectra at ``ncols`` K, each with a residual panel under it: the
+    spectra of a row share their intensity axis, the residuals of a row theirs, and each
+    residual panel its spectrum's m/z axis."""
+    # one grid, spectra and residuals in alternate rows, so that the panels of a row line up
+    # whatever the height of their titles (a grid of its own per panel did not)
+    grid = fig.add_gridspec(2 * nrows, ncols, height_ratios=[3, 1] * nrows)
+    axes = np.empty((nrows, ncols), dtype=object)
+    raxes = np.empty((nrows, ncols), dtype=object)
+    for r in range(nrows):
+        for c in range(ncols):
+            ax = fig.add_subplot(grid[2 * r, c], sharey=axes[r, 0] if c else None)
+            axes[r, c] = ax
+            raxes[r, c] = fig.add_subplot(grid[2 * r + 1, c], sharex=ax,
+                                          sharey=raxes[r, 0] if c else None)
+    return axes, raxes
 
 
 def plot_k_comparison(
@@ -260,6 +285,7 @@ def plot_k_comparison(
     cell: tuple[float, float] = (4.6, 3.6),
     analysis=None,
     sets="compute",
+    residual: bool = False,
     **kwargs,
 ) -> Figure:
     """One spectrum fitted at each K side by side (default: every K tried), each panel with its
@@ -268,9 +294,11 @@ def plot_k_comparison(
     skipped for the spectrum shows the picked spectrum alone. Where the spectrum's set (with
     the population test) has another number of populations than the spectrum's K, the
     panel at the set's number says so (:func:`set_note`; ``analysis`` and ``sets`` as in
-    :func:`k_comparison_data`). Keyword arguments go to :func:`plot_spectrum`."""
+    :func:`k_comparison_data`). ``residual`` puts each fit's residuals (picked minus fit) in a
+    small panel under it, on one scale for every K. Keyword arguments go to
+    :func:`plot_spectrum`."""
     fig = plot_k_comparisons([spectrum_id], results, ks=ks, show=show, cell=cell,
-                             analysis=analysis, sets=sets, **kwargs)
+                             analysis=analysis, sets=sets, residual=residual, **kwargs)
     # constrained layout places it with the legends; a fragment's long id on two lines
     fig.suptitle(wrap_title(spectrum_id, fig.get_figwidth() - 0.4, 9), fontsize=9)
     return fig
@@ -287,13 +315,16 @@ def plot_k_comparisons(
     title: str | None = None,
     analysis=None,
     sets="compute",
+    residual: bool = False,
     **kwargs,
 ) -> Figure:
     """Several spectra fitted at each K: a row of :func:`plot_k_comparison` per spectrum (the
     replicates of a time point, say), each row's titles starting with its label (``labels``,
     default the spectrum id) and its chosen K framed. ``ks`` default: every K tried.
     ``analysis`` and ``sets``: as in :func:`k_comparison_data` (the set's line,
-    :func:`set_note`)."""
+    :func:`set_note`). ``residual``: each fit's residuals (picked minus fit) in a small panel
+    under it, the residual panels of one spectrum on one scale, so that the K's misfits
+    compare directly."""
     if not len(spectrum_ids):
         raise ValueError("no spectra to compare")
     if isinstance(sets, str) and results.population_test is not None:  # worked out once
@@ -312,9 +343,15 @@ def plot_k_comparisons(
     many = len(rows) > 1
     # several rows: the layers named once at the top, only each fit's populations under it
     below = LEGEND_BELOW_ROWS if many else LEGEND_BELOW
-    height = (cell[1] + below) * len(rows) + (0.6 if many else 0.0)
+    residual = residual and "picked" in show and "fit" in show  # residuals need both layers
+    plot = cell[1] * (RESIDUAL_HEIGHT if residual else 1.0)
+    height = (plot + below) * len(rows) + (0.6 if many else 0.0)
     fig = Figure(figsize=(cell[0] * len(ks), height), layout="constrained")
-    axes = np.atleast_2d(fig.subplots(len(rows), len(ks), sharey="row", squeeze=False))
+    if residual:
+        axes, raxes = _residual_grid(fig, len(rows), len(ks))
+    else:
+        axes = np.atleast_2d(fig.subplots(len(rows), len(ks), sharey="row", squeeze=False))
+        raxes = np.full(axes.shape, None, dtype=object)
     kwargs.setdefault("legend", False)
     room = max(1.0, cell[0] - 0.8)  # the width a panel's title may take (a long label wraps)
     for r, (sid, d) in enumerate(zip(spectrum_ids, rows, strict=True)):
@@ -325,16 +362,22 @@ def plot_k_comparisons(
         set_line = set_note(d)
         set_at = (int(d["set"].K) if set_line and fitted.get(int(d["set"].K))
                   else int(d["effective"]))
-        for ax, k in zip(axes[r], ks, strict=True):
+        for ax, rax, k in zip(axes[r], raxes[r], ks, strict=True):
             j = d["k_values"].index(k)
             if not fitted[k]:  # the screen skipped it: the spectrum alone
                 plot_spectrum(sid, results, show=("picked",), ax=ax, title=False, **kwargs)
                 ax.set_title(wrap_title(f"{lead}K={k} not fitted (screened)", room, 8),
                              fontsize=8)
-                _legend_below(ax, many)
+                if rax is not None:  # no fit, no residuals: the m/z axis stays under it
+                    rax.text(0.5, 0.5, "no fit", transform=rax.transAxes, ha="center",
+                             va="center", fontsize=7, color="grey")
+                    rax.set_xlabel(ax.get_xlabel())
+                    ax.set_xlabel("")
+                _legend_below(ax, many, rax)
                 continue
-            plot_spectrum(sid, results, k=k, show=show, ax=ax, title=False, **kwargs)
-            _legend_below(ax, many)
+            plot_spectrum(sid, results, k=k, show=show, ax=ax, title=False,
+                          residual=rax is not None, rax=rax, **kwargs)
+            _legend_below(ax, many, rax)
             marks = []
             if k == d["selected"]:
                 if d["test"] is not None and d["test"]["by"]:
@@ -361,6 +404,13 @@ def plot_k_comparisons(
             if k == d["effective"]:
                 for spine in ax.spines.values():
                     spine.set_linewidth(2.0)
+    if residual:  # one axis label per row, as the shared spectra have (fig.subplots' rule)
+        for ax, rax in zip(axes[:, 1:].flat, raxes[:, 1:].flat, strict=True):
+            for a in (ax, rax):
+                a.tick_params(labelleft=False)
+                a.set_ylabel("")
+        for ax in axes.flat:  # the residuals under it carry the m/z labels
+            ax.tick_params(labelbottom=False)
     if title is not None:
         fig.suptitle(wrap_title(title, fig.get_figwidth() - 0.4, 9), fontsize=9)
     if many:  # the layers, once for the page (from the panel naming the most)

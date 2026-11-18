@@ -883,6 +883,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"opened {path}", 5000)
         pending = dict(self._pending_selection)
         self.results_page.set_time_axis(pending.pop("time_axis", None))
+        self.results_page.set_k_residuals(pending.pop("k_residuals", False))
         if pending:
             if not self.results_page.select(pending):
                 log.warning("the results do not have the series the session showed (%s); "

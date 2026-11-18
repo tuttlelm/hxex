@@ -188,6 +188,25 @@ def test_the_time_axis_is_chosen_in_the_window(qtbot, page):
     assert labels[0] == "UN" and labels[-1] == "FD"
 
 
+def test_the_fits_at_each_k_show_their_residuals_when_ticked(qtbot, page):
+    """The fits at each K tab's bar has a residuals box (owner, 2026-11-17): ticked, each fit
+    gets its residual panel; the choice is the window's, kept in the session."""
+    series = _open_series(page)
+    page.tree.setCurrentItem(series.child(1).child(0))
+    panel = page.panel("fits at each K")
+    with qtbot.waitSignal(panel.drawn, timeout=30000):
+        page.figures.setCurrentWidget(panel)
+    n = len(panel.view.figure.axes)
+    assert page.view_settings() == {}
+    with qtbot.waitSignal(panel.drawn, timeout=30000):
+        page.k_residuals.setChecked(True)
+    assert len(panel.view.figure.axes) == 2 * n
+    assert page.view_settings() == {"k_residuals": True}
+    with qtbot.waitSignal(panel.drawn, timeout=30000):
+        page.set_k_residuals(False)
+    assert len(panel.view.figure.axes) == n
+
+
 def test_a_change_to_the_projects_figures_reaches_the_results_shown(qtbot, tmp_path):
     """Results opened through the project carry its [figures] and [review]: changing those in
     the file (here as a text editor would) loads them again, keeping the place in the tree

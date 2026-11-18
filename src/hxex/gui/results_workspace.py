@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -372,6 +373,14 @@ class ResultsWorkspace(QWidget):
             lambda i: _same_choice(self.fragment_time_axis, i))
         self.fragment_time_axis.currentIndexChanged.connect(
             lambda i: self.time_axis.setCurrentIndex(i))
+        # the fits at each K with their residuals under them (picked minus fit), for the window
+        # only (owner, 2026-11-17)
+        self.k_residuals = QCheckBox("residuals")
+        self.k_residuals.setToolTip(tip(
+            "a panel under each fit with its residuals (picked minus fit), on one scale for "
+            "every K of a spectrum"))
+        self.k_residuals.toggled.connect(lambda _on: self._draw_k_fits())
+        self._k_fits_job = None  # (results, spectrum ids, labels, title, m/z range) shown
         # the overview tab's page: the run's summary pages, one at a time (owner, 2026-11-04)
         self.overview_page = QComboBox()
         self.overview_page.setToolTip(tip("which page of the overview: as hxex report --figures "
@@ -487,6 +496,8 @@ class ResultsWorkspace(QWidget):
                 panel.add_option(self.time_axis)
             if name == "fragments":
                 panel.add_option(self.fragment_time_axis)
+            if name == "fits at each K":
+                panel.add_option(self.k_residuals)
             if name == "overview":
                 panel.add_option(self.overview_page)
             if name == "fragments":  # a fragment's name: its series in the tree
@@ -1403,6 +1414,28 @@ class ResultsWorkspace(QWidget):
         elif self._last is not None:  # the tree lost the row (a Find), the figures did not
             self._show(*self._last, again=True)
 
+    def _draw_k_fits(self) -> None:
+        """The fits at each K of the time point or spectrum shown, with their residuals when
+        the bar's box is ticked."""
+        from ..report.overview import plot_k_comparison, plot_k_comparisons
+
+        if self._k_fits_job is None:
+            return
+        results, ids, labels, title, mz_range = self._k_fits_job
+        residual = self.k_residuals.isChecked()  # read here: draw() runs in the drawing thread
+        sets = self.sets
+        if labels is None:
+            self._draw_panel("fits at each K", lambda: plot_k_comparison(
+                ids[0], results, mz_range=mz_range, sets=sets, residual=residual))
+        else:
+            self._draw_panel("fits at each K", lambda: plot_k_comparisons(
+                ids, results, labels=labels, title=title, mz_range=mz_range, sets=sets,
+                residual=residual))
+
+    def set_k_residuals(self, on) -> None:
+        """Residuals under the fits at each K, or not (as a session file restores it)."""
+        self.k_residuals.setChecked(bool(on))
+
     def _fill_target_filters(self) -> None:
         """The MS level and ion type lists, from the series of the results (hidden, with the
         tree's ion, MS level and condition columns, when no series has them)."""
@@ -1725,7 +1758,6 @@ class ResultsWorkspace(QWidget):
     def _show(self, kind: str, payload, again: bool = True) -> None:
         """Draw what the row of ``kind`` and ``payload`` (the tree's) shows."""
         from ..report.figures import series_figures, series_kinds
-        from ..report.overview import plot_k_comparison, plot_k_comparisons
         from ..report.picking_check import plot_picking_check
         from ..report.series import plot_series_spectra, series_mz_range
         from ..report.spectrum import plot_spectrum
@@ -1759,6 +1791,7 @@ class ResultsWorkspace(QWidget):
                 self.window.changed()
             return
         self._drawn = drawn
+        self._k_fits_job = None
         config = self._plot_config()
         self._show_tabs(kind)
         self._pending_draws = {}  # the selection before: its tabs not opened are not drawn
@@ -1803,9 +1836,8 @@ class ResultsWorkspace(QWidget):
             ids = [s.spectrum_id for s in point.spectra]
             labels = [f"rep {s.rep}" for s in point.spectra]
             title = f"{payload[0].sample} {payload[0].label} {series.name}, {point.label}"
-            sets = self.sets
-            self._draw_panel("fits at each K", lambda: plot_k_comparisons(
-                ids, results, labels=labels, title=title, mz_range=mz_range, sets=sets))
+            self._k_fits_job = (results, ids, labels, title, mz_range)
+            self._draw_k_fits()
             self._draw_panel("uptake", uptake)
         else:
             spectrum = payload[3]
@@ -1813,9 +1845,8 @@ class ResultsWorkspace(QWidget):
             self._draw_panel("spectrum", lambda: plot_spectrum(
                 sid, results, show=config.show, k=config.k, corrected=config.corrected,
                 mz_range=mz_range))
-            sets = self.sets
-            self._draw_panel("fits at each K", lambda: plot_k_comparison(
-                sid, results, mz_range=mz_range, sets=sets))
+            self._k_fits_job = (results, [sid], None, None, mz_range)
+            self._draw_k_fits()
             if self._profile_fitted():
                 if self._profile_fit_of(sid):
                     self._draw_panel("picking check", lambda: plot_picking_check(
@@ -2135,7 +2166,10 @@ class ResultsWorkspace(QWidget):
     def view_settings(self) -> dict:
         """How the figures are shown, for the session (only what differs from the project)."""
         key = self.time_axis.currentData()
-        return {"time_axis": key} if key else {}
+        out = {"time_axis": key} if key else {}
+        if self.k_residuals.isChecked():
+            out["k_residuals"] = True
+        return out
 
     def select_peptide(self, sample: str, start: int, end: int, peptide: str = "") -> bool:
         """Select the peptide ``start``-``end`` of ``sample`` (its sequence ``peptide`` first,

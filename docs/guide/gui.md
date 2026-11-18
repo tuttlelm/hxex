@@ -379,6 +379,11 @@ alone, "(set)" the test of its set, every replicate and charge state of the pept
 which the analysis uses: the spectrum keeps its own K
 (see [When a spectrum and its peptide disagree](population-test.md#when-a-spectrum-and-its-peptide-disagree)).
 
+Tick **residuals** in the bar of the fits at each K to put a small panel under each fit with
+its residuals (picked minus fit). The residual panels of a spectrum share one scale, so a
+misfit that one more population removes stands out. The choice is the window's (it changes
+no setting) and is kept in a saved session.
+
 Results picked with the profile fit (`[run.picker] pick = "profile_fit"`) also have a
 **picking check** tab on a replicate: the raw profile, the peptide's fitted peaks (dark), the
 peaks the fit gave to other species (orange, dashed), and the bin values (triangles), with the

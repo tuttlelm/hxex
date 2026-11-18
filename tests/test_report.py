@@ -1717,6 +1717,33 @@ def test_several_spectra_fitted_at_each_k_one_row_each(results):
         plot_k_comparisons([], results)
 
 
+def test_fits_at_each_k_with_their_residuals(results):
+    """A residual panel under each fit (owner, 2026-11-17): it shares its fit's m/z axis, and
+    the residual panels of a spectrum share one scale, so that the K's misfits compare."""
+    from hxex.report.overview import plot_k_comparison, plot_k_comparisons
+
+    sid = str(results.fit.spectrum_id[8])
+    n_k = len(results.fit.k_values)
+    fig = plot_k_comparison(sid, results, residual=True)
+    assert len(fig.axes) == 2 * n_k
+    spectra, residuals = fig.axes[0::2], fig.axes[1::2]
+    assert all("residual" in {a.get_gid() for a in ax.get_children()} for ax in residuals)
+    assert all(r.get_shared_x_axes().joined(r, s) for s, r in zip(spectra, residuals, strict=True))
+    assert residuals[0].get_shared_y_axes().joined(residuals[0], residuals[-1])
+    assert not residuals[0].get_shared_y_axes().joined(residuals[0], spectra[0])
+    assert residuals[0].get_ylabel() == "residual" and residuals[-1].get_ylabel() == ""
+    # the legend under the residuals names the fit's layers
+    legend = residuals[0].get_legend()
+    assert legend is not None and "fit" in [t.get_text() for t in legend.get_texts()]
+    # residuals need the picked and fit layers: without them, none
+    assert len(plot_k_comparison(sid, results, show=("fit",), residual=True).axes) == n_k
+    ids = [str(s) for s in results.fit.spectrum_id[3:5]]
+    fig = plot_k_comparisons(ids, results, labels=["rep 1", "rep 2"], residual=True)
+    assert len(fig.axes) == 2 * 2 * n_k
+    first, second = fig.axes[1], fig.axes[2 * n_k + 1]  # each row's first residual panel
+    assert not first.get_shared_y_axes().joined(first, second)  # each spectrum its own scale
+
+
 def test_the_residue_axis_spaces_its_labels_for_the_length():
     """Coverage maps: the residue numbers are spaced for the axis's width (owner, 2026-11-05:
     every 25 crowded them, and met the next panel's at the joins)."""
