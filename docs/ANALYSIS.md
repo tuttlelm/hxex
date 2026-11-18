@@ -953,6 +953,100 @@ check`, 3 strict comparisons by sequence, 4 the forms of the pool, 5 head-to-hea
 table, 6 the window (identity columns, filter by class and level; built). Check data: the private
 pooled dataset (`HXEX_POOLED_EXAMPLE`, both conditions) and the state exports beside it.
 
+### Groups of samples (design, owner 2026-11-18; not built)
+
+**The use case.** One project holds samples of several proteins, analysed together but each
+protein looked at on its own: heterooligomers of three proteins A, B, and C, each alone and in
+every pair, exported once per protein per vial (a state "B in A+B" with B's FASTA, a state "A in
+A+B" with A's). Each sample is one protein, so no per-peptide identity is needed (unlike pooled
+samples, above); what is missing is saying which samples belong together. Today `[analysis]`
+has one `samples` list and its references are each compared with every sample, so a reference
+of protein A is compared with the samples of B by residue range, silently; the workaround is
+one analysis-only project file per protein. Groups are not only for proteins: a pH series of
+one protein, say, is a group too.
+
+**Settings.** `[analysis.groups]`, one table per group (name chosen by the owner: "groups", not
+"classes", which mean a pooled peptide's possible identity):
+
+```toml
+[analysis.groups.B]
+reference = "B_alone"
+samples = { alone = "B_alone", "A+B" = "B_in_AB", "B+C" = "B_in_BC" }
+
+[[analysis.groups.B.regions]]
+name = "N-terminal region"
+start = 1
+end = 64
+
+[[analysis.groups.B.sites]]
+residue = 12
+label = "S12"
+```
+
+- `samples` is a list of samples, or a table of *label* = sample. A label names the same vial
+  (condition) seen from each group that holds it: "A+B" in group A and in group B is one vial.
+  Labels are what line groups up across the analysis (below) and what tell *hxex* which
+  proteins share a vial (owner: a shared label is fine). A list means each sample is its own
+  label.
+- `reference`: one of the group's samples (its sample name).
+- A sample may be in several groups (owner); a sample in no group is not analysed, and `hxex
+  check` says so.
+- With groups, the top-level `reference` and `samples` of `[analysis]` are refused (one way in);
+  every other `[analysis]` setting applies to every group.
+- **Regions and sites per group.** A group's own `[[...regions]]` and `[[...sites]]` replace the
+  shared `[[analysis.regions]]` and `[[analysis.sites]]`; a group without its own takes the
+  shared ones (right for a group of one protein, such as a pH series). Never merged.
+
+**Outputs.** `hxex analyse` makes one analysis per group, as it does per reference today
+(`results_analysis_GROUP`, with its folder listing, settings copy, and `made_from`): an ordinary
+analysis of the group's samples against its reference, with the group's regions and sites, so
+every table and figure works unchanged and `residue_level = "auto"` sees one protein. A sample
+in two groups is analysed in each.
+
+**Peptides shared with another protein in the vial.** A peptide whose sequence (modifications
+ignored, residues tokenised) also occurs in another group's sample of the same label is the sum
+of both proteins' copies there, not like with like against the reference. Such peptides are
+always marked: a `shared_with` column (the other group's name) in the peptide tables
+(`species_uptake.csv`, `compare_peptides.csv`) and a mark on the peptide figures (drafts
+first). `[analysis] shared_sequences = "keep"` (default; owner: keep and flag) compares them
+like any other peptide; `"leave_out"` leaves their spectra out of that sample's analysis, as an
+`[analysis.filters]` rule does (reason "sequence shared with GROUP in this vial" in
+`left_out_spectra.csv`), so residues and comparisons agree. The other sample's sequence comes
+from the bundle (stored FASTA) or `[analysis.fasta]`; where it is unknown the check cannot be
+made and `hxex check` says so. Measured on a private three-protein heterooligomer dataset
+(2026-11-18): 297 distinct measured sequences, one of which also occurs in a second protein,
+and those two proteins share one of the vials.
+
+**Across groups.** With regions of the same name in two or more groups, `hxex analyse` also
+writes a cross-group folder (`results_analysis_groups`):
+- `cross_group_regions.csv`: one row per label, group, time, and region: the sample, the
+  region's residues in that group (`start`, `end`: they differ between proteins), `fD`,
+  `fD_se`, `n_residues`, `coverage`, and from the group's own region test against its reference
+  the difference, its error, and whether it is significant. Regions match by name; a region a
+  group lacks has no row.
+- Figure `cross_group_regions_<time>`, like the Regions figure (`regions_<time>`; owner): grouped
+  bars of fD, the region names along x, each region's bars from every group that has it, each
+  over its own residues. Settled on drafts of the private dataset (owner, 2026-11-18):
+  - Legend: the vial label with the measured protein underlined (A+B with A underlined is A in
+    that vial, with B underlined is B in it; a group's own sample without a partner reads as the
+    group's name, underlined), since the label alone does not tell apart a vial seen from two
+    proteins and "group: label" names grow long. The group's name is found among the label's
+    parts split at `+`; a label without it (`alone`) shows the group's name instead. Bold if
+    matplotlib 3.8 (the lowest version) cannot underline part of a legend entry.
+  - Bars ordered by group, each group's reference first, then its other labels in order.
+  - Colours: one hue per group, the reference darkest and the others lighter shades of it.
+  - Many regions go on further rows of panels, never one very wide row.
+  - The residues behind each bar in its hover and the table. Times match by value; a time
+    missing from a group leaves its bars empty.
+
+**Order.** 1 groups: settings, one analysis per group, own regions and sites, `hxex check`,
+guide (with a "Regions and sites" section: sites are only drawn, regions are also tabled and
+tested); 2 peptides shared within a vial: the mark, `shared_sequences`; 3 across groups: the
+table, then the figure from drafts; 4 the window: a group choice in place of the reference
+choice on the Analysis page, groups and their regions and sites in the project editor. Later,
+perhaps: regions per class of a pooled sample through a group named after the class (regions
+per form or class were left out of HISTORY 356). Check data: the private three-protein dataset.
+
 ## Later parts
 
 - **Comparing separate runs** (a common workflow; owner, 2026-10-12): the same comparisons

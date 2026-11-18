@@ -1959,6 +1959,14 @@ Planned, not built:
    the verdict with both own controls); between different sequences that test ruled a shared
    correction out (a quarter of verdicts changed whatever stood in), and the same peptide may
    fare better since one sample's control is a real measurement of the same molecule.
+38. **Groups of samples: one analysis per protein, compared across** (owner, 2026-11-18). A
+   project of several proteins (heterooligomers, each protein exported per vial) analysed
+   together: `[analysis.groups]`, each with its reference, its samples (labelled by vial, so a
+   vial seen from two proteins lines up), and its own regions and sites; one analysis folder
+   per group; peptides whose sequence another protein in the same vial shares marked
+   (`shared_sequences`, default keep); a cross-group table and Regions-style figure matching
+   regions by name over each protein's own residues. Also covers the gap item 29 left (several
+   proteins on one residue axis). Design in `docs/ANALYSIS.md` "Groups of samples". Nothing built.
 
 ## Risks and open decisions
 
