@@ -55,6 +55,11 @@ KIND, STEM = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
 STATE_WORDS = {"drawn": "drawn", "depends": "if the results have it", "off": "off"}
 
 
+# the group list's entry for the figure across the groups (results_analysis_groups); never a
+# group's name (a TOML key cannot hold this character unescaped, and the editor refuses it)
+ACROSS = "\x1facross the groups"
+
+
 def compute_time(results, config) -> str:
     """How long Compute takes, for the status line: the peptide analysis is quick (about half
     a minute for 25,000 spectra); the fragment ladder rate fits (``[analysis.fragments]
@@ -266,6 +271,8 @@ class AnalysisWorkspace(QWidget):
         """`` against REF`` (or `` of group NAME``) for the status line; empty without one."""
         if not ref:
             return ""
+        if ref == ACROSS:
+            return " across the groups"
         return f" of group {ref}" if self._by_group else f" against {ref}"
 
     @property
@@ -290,13 +297,19 @@ class AnalysisWorkspace(QWidget):
         from ..report import analysis_references
 
         refs = analysis_references(self.results, config)
+        if config.by_group and len(refs) > 1:
+            from ..report.groups import shared_region_names
+
+            if shared_region_names(config):  # the figure across the groups (PLAN 38, step 4)
+                refs = [*refs, ACROSS]
         now = [self.reference.itemData(i) for i in range(self.reference.count())]
         if now != refs:
             keep = self.shown_reference
             self.reference.blockSignals(True)
             self.reference.clear()
             for ref in refs:
-                self.reference.addItem(ref or "(no reference)", ref)
+                self.reference.addItem("(across the groups)" if ref == ACROSS else
+                                       ref or "(no reference)", ref)
             index = self.reference.findData(keep)
             self.reference.setCurrentIndex(max(index, 0))
             self.reference.blockSignals(False)
@@ -592,10 +605,14 @@ class AnalysisWorkspace(QWidget):
             try:
                 config = self._settings()[0]
                 self._fill_references(config)
+                if self.shown_reference == ACROSS:
+                    self._fill_across(config, keep)
+                    return
                 if not config.single_reference:
                     config = config.one(self.shown_reference)
                 situation = Situation.of(analysis=config, results=self.results)
-                planned = plan(situation)
+                # the figure across the groups is the "(across the groups)" entry's alone
+                planned = [p for p in plan(situation) if p.kind.name != "cross_group_regions"]
             except Exception as exc:  # noqa: BLE001 - settings these results refuse
                 self.list.blockSignals(False)
                 self._error = str(exc)
@@ -633,6 +650,32 @@ class AnalysisWorkspace(QWidget):
                     self._add_kind(p, by_kind.get(p.kind.name, []), keep)
         self.list.blockSignals(False)
         self.list.verticalScrollBar().setValue(scrolled)
+        self._describe(self.list.currentItem())
+
+    def _fill_across(self, config, keep) -> None:
+        """The list for ``(across the groups)``: the Regions across the groups and, once
+        computed, its figures (one per time). Called from :meth:`_fill`, the list's signals
+        blocked."""
+        from ..report.catalogue import Situation, plan
+
+        self._error = None
+        planned = next(p for p in plan(Situation.of(analysis=config, results=self.results))
+                       if p.kind.name == "cross_group_regions")
+        head = QTreeWidgetItem(["Across the groups", ""])
+        head.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        font = head.font(0)
+        font.setBold(True)
+        head.setFont(0, font)
+        head.setToolTip(0, tip("each region's fD in every group that has a region of that name, "
+                               "from each group's own analysis (Compute makes every group's "
+                               "first), as hxex analyse writes results_analysis_groups"))
+        head.setFirstColumnSpanned(True)
+        self.list.addTopLevelItem(head)
+        head.setFirstColumnSpanned(True)
+        outputs = self.outputs
+        stems = [stem for stem, _ in outputs.figures] if outputs is not None else []
+        self._add_kind(planned, stems, keep)
+        self.list.blockSignals(False)
         self._describe(self.list.currentItem())
 
     def _add_kind(self, p, stems: list[str], keep) -> None:
@@ -857,7 +900,7 @@ class AnalysisWorkspace(QWidget):
                                 "window does not show that yet; hxex analyse writes it.")
             return
         ref = self.shown_reference
-        if not config.single_reference:
+        if not config.single_reference and ref != ACROSS:
             config = config.one(ref)
         stamp = table_stamp(self._project())
         if self._project() is not None and self.window is not None \
@@ -893,6 +936,15 @@ class AnalysisWorkspace(QWidget):
         self.fit_rates.setEnabled(False)  # the settings stay as computed until it is done
         self._computing_path = path
         log.info("computing the analysis (as hxex analyse, nothing written)")
+        if ref == ACROSS:  # every group's analysis (those up to date kept), then across them
+            ready = {g: entry[0] for g, entry in self._analyses.items()
+                     if g in (config.groups or {}) and not self.why_out_of_date(entry[1])}
+            made: dict = {}
+            self._computing.submit(
+                lambda: across_outputs(results, config, base, ready, made, cancel.is_set),
+                lambda outputs: self._computed(outputs, key, text, path, ref, stamp, made),
+                self._failed)
+            return
         self._computing.submit(
             lambda: analysis_outputs(results, config, base=base, cancel=cancel.is_set),
             lambda outputs: self._computed(outputs, key, text, path, ref, stamp),
@@ -939,7 +991,7 @@ class AnalysisWorkspace(QWidget):
         if run is not None:
             run()
 
-    def _computed(self, outputs, key, text, path, ref, stamp) -> None:
+    def _computed(self, outputs, key, text, path, ref, stamp, groups=None) -> None:
         if self.results is None or path != getattr(self.window, "results_path", None):
             # an analysis of results no longer shown (another project or bundle opened while it
             # was computed): never shown as this one's
@@ -948,6 +1000,8 @@ class AnalysisWorkspace(QWidget):
         self.busy.hide()
         self.stop_button.hide()
         self._analyses[ref] = (outputs, (key, text, path, stamp))
+        for name, made in (groups or {}).items():  # across the groups: each group's too
+            self._analyses[name] = (made, (key, text, path, stamp))
         self._latest = ref  # the figures the same for every reference come from it now
         log.info("analysis: %d tables and %d figures", len(outputs.tables), len(outputs.figures))
         self.refresh()  # draws the figure shown again from the new analysis, once (E-15)
@@ -1015,6 +1069,38 @@ class AnalysisWorkspace(QWidget):
         super().showEvent(event)
         self.refresh()
 
+
+
+def across_outputs(results, config, base, ready: dict, made: dict, cancel=None):
+    """The analysis across the groups as the window shows it: each group's analysis (those in
+    ``ready`` reused, the others computed and put in ``made``), then the table and figures
+    hxex analyse writes in results_analysis_groups (``cross_group_regions``), as an
+    :class:`hxex.report.analysis.AnalysisOutputs`."""
+    from ..hooks import check_cancel
+    from ..report import analysis_outputs
+    from ..report.analysis import AnalysisOutputs, _time_label, _time_scale
+    from ..report.groups import CROSS_TABLE, cross_group_regions, plot_cross_group_regions
+    from ..report.results import mark_provisional, provisional_note
+
+    analyses = {}
+    for name in config.groups:
+        check_cancel(cancel)
+        outputs = ready.get(name)
+        if outputs is None:
+            outputs = made[name] = analysis_outputs(results, config.one(name), base=base,
+                                                    cancel=cancel)
+        analyses[name] = (config.one(name), outputs.tables)
+    table = cross_group_regions(analyses)
+    scale = _time_scale(results)
+    note = provisional_note(results)
+    times = sorted({float(t) for t in table["time"]})
+
+    def draw(t):
+        return lambda: mark_provisional(plot_cross_group_regions(
+            table, t, page_width=config.page_size[0], time_scale=scale), note)
+
+    figures = [(f"{CROSS_TABLE}_{_time_label(t, scale)}", draw(t)) for t in times]
+    return AnalysisOutputs(tables={CROSS_TABLE: table}, figures=figures, config=config)
 
 
 def analysis_sections(kinds, fragments: bool | None, shown_reference: str | None,

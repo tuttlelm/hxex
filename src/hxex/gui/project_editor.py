@@ -456,9 +456,13 @@ class ProjectEditor(QWidget):
         super().__init__(parent)
         from .._reference import tables
 
-        # [analysis.groups] is written in the file for now: its tables are named by the group
-        # (PLAN Next steps 38, step 4: groups in the project editor)
-        self.tables = [t for t in tables() if not t.name.startswith("analysis.groups")]
+        # [analysis.groups]: a page listing the groups, then a page per group (named by the
+        # group; PLAN Next steps 38, step 4), built from the reference's NAME tables
+        every = tables()
+        self.group_tables = {t.name: t for t in every
+                             if t.name.startswith("analysis.groups.NAME")}
+        self.tables = [t for t in every if t.name not in self.group_tables]
+        self.groups: list[str] = []  # the groups the list of tables shows
         # the samples of the results open, offered where a setting lists samples (the window
         # sets it; none: typed)
         self.sample_names = None
@@ -502,20 +506,7 @@ class ProjectEditor(QWidget):
         self.every_format.toggled.connect(self._show_page)
 
         self.list = QListWidget()
-        for table in self.tables:
-            top = "." not in table.name  # [input], [run], [analysis], ...: bold, a gap above
-            if top and self.list.count():
-                gap = QListWidgetItem()
-                gap.setFlags(Qt.ItemFlag.NoItemFlags)  # not selectable: the arrow keys skip it
-                gap.setSizeHint(QSize(0, GROUP_GAP))
-                self.list.addItem(gap)
-            item = QListWidgetItem(table.heading)
-            item.setData(Qt.ItemDataRole.UserRole, table.name)
-            if top:
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
-            self.list.addItem(item)
+        self._fill_list()
         self.list.currentRowChanged.connect(self._show_page)
         self.page = QWidget()
         self.scroll = QScrollArea()
@@ -543,6 +534,56 @@ class ProjectEditor(QWidget):
         layout.addWidget(split, 1)
         self._show_steps()
         self.setEnabled(False)
+
+    def _fill_list(self) -> None:
+        """The list of tables, with a page for each group of ``self.groups`` after
+        ``[analysis.groups]``."""
+        self.list.clear()
+        for table in self.tables:
+            top = "." not in table.name  # [input], [run], [analysis], ...: bold, a gap above
+            if top and self.list.count():
+                gap = QListWidgetItem()
+                gap.setFlags(Qt.ItemFlag.NoItemFlags)  # not selectable: the arrow keys skip it
+                gap.setSizeHint(QSize(0, GROUP_GAP))
+                self.list.addItem(gap)
+            item = QListWidgetItem(table.heading)
+            item.setData(Qt.ItemDataRole.UserRole, table.name)
+            if top:
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+            self.list.addItem(item)
+            if table.name == "analysis.groups":
+                for group in self.groups:
+                    item = QListWidgetItem(f"    [analysis.groups.{group}]")
+                    item.setData(Qt.ItemDataRole.UserRole, f"analysis.groups.{group}")
+                    item.setToolTip(tip(f"group {group}: its reference, samples, regions, and "
+                                        "sites"))
+                    self.list.addItem(item)
+
+    def _groups_changed(self) -> bool:
+        """Show the file's groups in the list of tables (True when they changed: the page
+        shown is then made again, the same table's where it is still there, else the groups'
+        page)."""
+        from .group_editor import file_groups
+
+        groups = list(file_groups(self))
+        if groups == self.groups:
+            return False
+        item = self.list.currentItem()
+        shown = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        self.groups = groups
+        self.list.blockSignals(True)
+        self._fill_list()
+        names = [self.list.item(i).data(Qt.ItemDataRole.UserRole)
+                 for i in range(self.list.count())]
+        if shown is not None:
+            if shown not in names and str(shown).startswith("analysis.groups."):
+                shown = "analysis.groups"
+            if shown in names:
+                self.list.setCurrentRow(names.index(shown))
+        self.list.blockSignals(False)
+        return True
 
     # --- the file ----------------------------------------------------------------------------
 
@@ -581,6 +622,9 @@ class ProjectEditor(QWidget):
             problem = file_problem(self.path)
         self.problem.setText(f"The project file has a problem: {problem}" if problem else "")
         self.problem.setVisible(bool(problem))
+        if self._groups_changed():
+            self._show_page()
+            return
         if self.list_editor is not None:
             self.list_editor.fill()
         elif not self.rows or self.format != self._shown_format:
@@ -698,6 +742,9 @@ class ProjectEditor(QWidget):
     def _table_page(self, form: QVBoxLayout, name: str) -> None:
         from ..project_edit import SWITCHABLE
 
+        if name.startswith("analysis.groups."):  # a group's page: named by the group
+            self._group_page(form, name)
+            return
         table = next(t for t in self.tables if t.name == name)
         form.addWidget(_heading(table.heading))
         if table.intro:
@@ -705,6 +752,9 @@ class ProjectEditor(QWidget):
         if name == "run.controls":  # on by itself when the data hold the controls
             self.controls_state = _note("")
             form.addWidget(self.controls_state)
+        if name == "analysis.groups":
+            self._group_page(form, name)
+            return
         if name in SWITCHABLE:
             words = (f"Use {table.heading} (setting any of its settings switches it on)"
                      if name != "run.controls" else
@@ -737,6 +787,11 @@ class ProjectEditor(QWidget):
         names = {t.name for t in self.tables}  # a key that is a table has a page of its own
         settings = [s for s in table.settings
                     if f"{name}.{s.key}" not in names or f"{name}.{s.key}" in BOTH_FORMS]
+        if name == "analysis" and self.groups:
+            form.addWidget(_note(
+                f"Groups of samples ({', '.join(self.groups)}): each group names its own "
+                "reference and samples on its page under [analysis.groups], so reference and "
+                "samples here are not used (and refused while they are set)."))
         if name == "input" and not self.every_format.isChecked():
             hidden = [s for s in settings if not applies(s, self.format)]
             settings = [s for s in settings if applies(s, self.format)]
@@ -767,13 +822,7 @@ class ProjectEditor(QWidget):
             except TypeError:
                 shown = str(value)
             found.setdefault(first, []).append(f"{key[len(prefix) + len(first) + 1:]} = {shown}")
-        groups = found.pop("groups", None) if name == "analysis" else None
         notes = []
-        if groups:  # PLAN Next steps 38 step 4 will edit them here
-            names = list(dict.fromkeys(item.split(".", 1)[0] for item in groups))
-            notes.append(f"Groups of samples in the file ([analysis.groups]: {', '.join(names)}"
-                         "): each analysed apart, its reference and samples in place of "
-                         "[analysis] reference and samples. A text editor changes them.")
         if found:
             lines = [f"[{name}.{sub}] " + ", ".join(items)
                      for sub, items in sorted(found.items())]
@@ -781,6 +830,19 @@ class ProjectEditor(QWidget):
                          "edit them; a text editor does; they override the settings above for "
                          "it): " + "; ".join(lines))
         return _note(" ".join(notes)) if notes else None
+
+    def _group_page(self, form: QVBoxLayout, name: str) -> None:
+        """The ``[analysis.groups]`` page (the groups, to add, rename, and remove) or one
+        group's page (:mod:`hxex.gui.group_editor`)."""
+        from .group_editor import GroupPage, GroupsEditor
+
+        if name == "analysis.groups":
+            self.list_editor = GroupsEditor(self)
+        else:
+            group = name.split(".", 2)[2]
+            form.addWidget(_heading(f"[analysis.groups.{group}]"))
+            self.list_editor = GroupPage(self, group, self.group_tables)
+        form.addWidget(self.list_editor)
 
     def _add_row(self, layout: QFormLayout, table, setting, prefix: bool = False) -> None:
         row = SettingRow(table.name, setting, self.path.parent if self.path else None,
@@ -886,13 +948,15 @@ class ProjectEditor(QWidget):
         """Set one setting (None: back to its default), as a row of the form does."""
         self._edit(setting, value)
 
-    def run(self, change, *args) -> None:
+    def run(self, change, *args) -> bool:
         """Make a change to a list of tables (:mod:`hxex.project_edit`'s ``set_entry``,
-        ``add_entry``, ``remove_entry`` or ``move_entry``) and show the result."""
+        ``add_entry``, ``remove_entry`` or ``move_entry``) or to the groups (``add_group``,
+        ``rename_group``, ``remove_group``) and show the result; False when it was refused
+        (said above the form)."""
         from ..config import ProjectError
 
         if self.path is None:
-            return
+            return False
         try:
             with self.own_write() as step:
                 said = change(self.path, *args, unfinished=True)
@@ -904,8 +968,9 @@ class ProjectEditor(QWidget):
             self.problem.show()
             if self.list_editor is not None:
                 self.list_editor.fill()  # as the file still has it
-            return
+            return False
         self._after_change()
+        return True
 
     def _switch(self, table: str, on: bool) -> None:
         from ..config import ProjectError

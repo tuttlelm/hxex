@@ -190,6 +190,10 @@ group is analysed in the same command (not with `--group` for some):
 
 A group cannot be named `groups` (the folder's name).
 
+In the window, groups are added, renamed, and changed on the `[analysis.groups]` page of the
+project's settings, the Sequence view shows each group's samples with its own regions, and the
+Analysis page chooses a group, or the regions across the groups ([The window](gui.md)).
+
 ---
 
 ## Top-down and intact proteins

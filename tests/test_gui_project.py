@@ -585,20 +585,107 @@ def test_per_sample_tables_are_listed_on_their_page(editor, project):
     assert any('[analysis.fasta.A] WT = "a.fasta"' in t for t in notes)
 
 
-def test_groups_are_named_on_the_analysis_page_not_edited(editor, project):
-    """[analysis.groups] is written in the file until the editor has a page for it (PLAN Next
-    steps 38, step 4): no page named NAME, and the [analysis] page names the groups."""
+def _list_names(editor):
+    from PySide6.QtCore import Qt
+
+    return [editor.list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(editor.list.count())]
+
+
+def test_groups_are_added_renamed_and_removed_on_their_page(editor, project):
+    """[analysis.groups] (PLAN Next steps 38, step 4): the groups' page adds, renames, and
+    removes a group, each group has a page of its own in the list after it, and adding the
+    first group takes [analysis] reference and samples into it."""
     from PySide6.QtWidgets import QLabel
 
-    project.write_text(project.read_text() + '\n[analysis.groups.B]\nreference = "B1"\n'
-                       'samples = ["B1"]\n[[analysis.groups.B.regions]]\nname = "N"\n'
-                       'start = 1\nend = 5\n', encoding="utf-8")
+    from hxex.gui.group_editor import AddGroupDialog, GroupsEditor
+
+    project.write_text(project.read_text() + '\n[analysis]\nreference = "B1"\n'
+                       'samples = ["B1", "B2"]\n', encoding="utf-8")
     editor.reload()
-    assert not [t for t in editor.tables if "groups" in t.name]
+    _page(editor, "analysis.groups")
+    page = editor.list_editor
+    assert isinstance(page, GroupsEditor) and page.grid.rowCount() == 0
+    dialog = AddGroupDialog(editor)  # starts from [analysis] reference and samples
+    assert dialog.samples.items() == ["B1", "B2"] and dialog.reference.currentText() == "B1"
+    dialog.deleteLater()
+    assert page.add("B", "B1", ["B1", "B2"])
+    data = _data(project)["analysis"]
+    assert data["groups"]["B"] == {"reference": "B1", "samples": ["B1", "B2"]}
+    assert "reference" not in data and "samples" not in data
+    names = _list_names(editor)
+    assert names.index("analysis.groups.B") == names.index("analysis.groups") + 1
+    _page(editor, "analysis.groups")
+    page = editor.list_editor
+    assert not page.add("B", "X", ["X"])  # refused, said above the form
+    assert "a group named B already" in editor.problem.text()
+    assert page.add("C", "C1", ["C1"]) and "analysis.groups.C" in _list_names(editor)
+    _page(editor, "analysis.groups")
+    page = editor.list_editor
+    assert page.grid.rowCount() == 2 and page.grid.item(1, 3).text() == "shared"
+    page.grid.selectRow(1)
+    assert page.rename_selected("D")
+    assert list(_data(project)["analysis"]["groups"]) == ["B", "D"]
+    assert "analysis.groups.D" in _list_names(editor) and "analysis.groups.C" \
+        not in _list_names(editor)
+    _page(editor, "analysis.groups.D")
+    assert editor.list_editor.name == "D"  # the group's page is shown
+    _page(editor, "analysis.groups")
+    editor.list_editor.grid.selectRow(1)
+    assert editor.list_editor.remove_selected()
+    assert list(_data(project)["analysis"]["groups"]) == ["B"]
+    # the page of a removed group gives way to the groups' page
+    assert _list_names(editor)[editor.list.currentRow()] == "analysis.groups"
+    # the [analysis] page says the groups name their own reference and samples
     _page(editor, "analysis")
     notes = [w.text() for w in editor.page.findChildren(QLabel)]
-    assert any("Groups of samples in the file ([analysis.groups]: B)" in t for t in notes)
+    assert any("Groups of samples (B)" in t for t in notes)
     assert not any("for one sample or run each" in t for t in notes)
+
+
+def test_a_groups_page_edits_its_reference_samples_labels_and_regions(editor, project):
+    from hxex.gui.group_editor import GroupPage
+
+    project.write_text(project.read_text() + '\n[analysis.groups.B]\nreference = "B1"\n'
+                       'samples = ["B1", "B2"]\n\n[[analysis.regions]]\nname = "N"\n'
+                       'start = 1\nend = 5\n', encoding="utf-8")
+    editor.reload()
+    _page(editor, "analysis.groups.B")
+    page = editor.list_editor
+    assert isinstance(page, GroupPage)
+    assert page.samples.pairs() == [("B1", "B1"), ("B2", "B2")]
+    assert "takes the shared [[analysis.regions]] (1)" in page.states["regions"].text()
+    # a vial label: the samples become a table of label = sample
+    page.samples.grid.item(1, 0).setText("A+B")
+    group = _data(project)["analysis"]["groups"]["B"]
+    assert group["samples"] == {"B1": "B1", "A+B": "B2"}
+    page = editor.list_editor
+    page.samples.grid.item(1, 0).setText("B2")  # back to the names: a list again
+    assert _data(project)["analysis"]["groups"]["B"]["samples"] == ["B1", "B2"]
+    page = editor.list_editor
+    page.reference.setCurrentIndex(1)
+    page.reference.activated.emit(1)
+    assert _data(project)["analysis"]["groups"]["B"]["reference"] == "B2"
+    page = editor.list_editor
+    page.samples.add_box.setCurrentText("B3")
+    page.samples._add()
+    assert _data(project)["analysis"]["groups"]["B"]["samples"] == ["B1", "B2", "B3"]
+    page = editor.list_editor
+    page.samples.grid.setCurrentCell(2, 1)
+    page.samples._move(-1)
+    assert _data(project)["analysis"]["groups"]["B"]["samples"] == ["B1", "B3", "B2"]
+    # the group's own regions, entry by entry, in place of the shared ones
+    page = editor.list_editor
+    page.lists["regions"].add()
+    page = editor.list_editor
+    grid = page.lists["regions"].grid
+    for column, text in enumerate(["Own", "2", "9"]):
+        grid.item(0, column).setText(text)
+    regions = _data(project)["analysis"]["groups"]["B"]["regions"]
+    assert regions == [{"name": "Own", "start": 2, "end": 9}]
+    assert "1 of its own" in editor.list_editor.states["regions"].text()
+    # a changed group's settings undo as any other change
+    assert editor.undo() and "regions" in _data(project)["analysis"]["groups"]["B"]
 
 
 def test_a_value_none_of_the_choices_is_shown_as_such(editor, project):

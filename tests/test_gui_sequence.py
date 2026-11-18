@@ -393,3 +393,114 @@ def test_the_sequence_is_drawn_in_a_real_fixed_width_font(qapp, tmp_path):
     assert BAR_SAFE in text and BAR not in text  # the region's bar: the safe glyph
     assert BAR in sequence_html(rows, annotations)  # the default: the full set
     assert fonts.even_width(font, "AB") and len(BLOCKS_SAFE) == 4 and len(BLOCKS) == 8
+
+
+GROUPS = {"A_alone": "MKPLAAGDKE", "A_in_AB": "MKPLAHGDKE", "A_pH5": "MKPLAAGDKW",
+          "B_alone": "GSTWVLLPRS", "B_in_AB": "GSTWVQLPRS", "C_extra": "MKPLAAGDKE"}
+
+
+def _groups_project(tmp_path) -> object:
+    """Three groups (owner, 2026-11-18): A with its own regions and sites, B taking the shared
+    ones, and a pH group sharing A_alone with A; C_extra is in no group."""
+    (tmp_path / "SpecExport").mkdir()
+    for name, seq in GROUPS.items():
+        (tmp_path / f"{name}.fasta").write_text(f">{name}\n{seq}\n", encoding="utf-8")
+    fasta = ", ".join(f'{n} = "{n}.fasta"' for n in GROUPS)
+    path = tmp_path / "hxex.toml"
+    path.write_text(
+        'project = "seq"\n\n[input]\nformat = "specexport"\ndata_dir = "SpecExport"\n\n'
+        f"[analysis]\nfasta = {{ {fasta} }}\n\n"
+        '[[analysis.regions]]\nname = "shared"\nstart = 2\nend = 4\n\n'
+        '[[analysis.sites]]\nresidue = 9\nlabel = "S9"\n\n'
+        '[analysis.groups.A]\nreference = "A_alone"\n'
+        'samples = { "A+B" = "A_in_AB", alone = "A_alone" }\n\n'
+        '[[analysis.groups.A.regions]]\nname = "loopA"\nstart = 5\nend = 7\n\n'
+        '[[analysis.groups.A.sites]]\nresidue = 6\nlabel = "H6"\n\n'
+        '[analysis.groups.B]\nreference = "B_alone"\nsamples = ["B_alone", "B_in_AB"]\n\n'
+        '[analysis.groups.pH]\nreference = "A_pH5"\nsamples = ["A_alone", "A_pH5"]\n',
+        encoding="utf-8")
+    return path
+
+
+def _columns(line: str, label: int, char: str) -> list[int]:
+    """The residue numbers (a line from residue 1) at which ``char`` stands in a line of
+    :func:`sequence_html`, its markup taken out: the name column, two spaces, then a cell per
+    residue with a space after every ten."""
+    import re
+
+    text = re.sub(r"<[^>]+>", "", line)[label + 2:]
+    out, n = [], 0
+    for i, ch in enumerate(text):
+        if (i + 1) % 11 == 0:  # the space after a block of ten
+            continue
+        n += 1
+        if ch == char:
+            out.append(n)
+    return out
+
+
+def test_groups_show_their_samples_regions_and_sites(tmp_path):
+    """With [analysis.groups] (owner, 2026-11-18): rows by group in the file's order, the
+    reference first; differences within a group only; each group's regions under its rows and
+    its sites in its rows only; a sample in two groups shown in each; one in no group left out
+    with a note; a click names the group and its regions."""
+    import re
+
+    rows, marks, message = project_sequences(_groups_project(tmp_path))
+    assert [(r.group, r.samples) for r in rows] == [
+        ("A", ["A_alone"]), ("A", ["A_in_AB"]), ("B", ["B_alone"]), ("B", ["B_in_AB"]),
+        ("pH", ["A_pH5"]), ("pH", ["A_alone"])]
+    assert [r.differs for r in rows] == [set(), {6}, set(), {6}, set(), {10}]
+    assert "C_extra is in no group of [analysis.groups]" in message
+    assert [r.name for r in marks["A"].regions] == ["loopA"]  # its own replace the shared
+    assert [r.name for r in marks["B"].regions] == ["shared"]  # none of its own: the shared
+
+    text = sequence_html(rows, marks)
+    assert "<b>A</b>: " in text and "loopA (5–7)" in text and "<b>B</b>: " in text
+    lines = text.split("\n")
+    label = len("A_alone")  # the longest name; the label column is at least 6 wide
+
+    def row_line(name: str, after: int = 0) -> int:
+        return next(i for i, line in enumerate(lines) if i >= after
+                    and re.sub(r"<[^>]+>", "", line).startswith(f"{name:<{label}}  "))
+
+    a_last, b_first = row_line("A_in_AB"), row_line("B_alone")
+    a_bar = row_line("A", a_last + 1)
+    assert a_last < a_bar < b_first  # A's regions under A's rows, before B's
+    assert _columns(lines[a_bar], label, "━") == [5, 6, 7]
+    b_bar = row_line("B", b_first + 1)
+    assert _columns(lines[b_bar], label, "━") == [2, 3, 4]
+    assert lines[a_bar + 1] == ""  # the gap between the groups
+    ph_bar = row_line("pH", row_line("A_pH5"))
+    assert _columns(lines[ph_bar], label, "━") == [2, 3, 4]
+
+    def underlined(k: int) -> list[int]:
+        return sorted(int(n) for n, style in re.findall(
+            rf'res:{k}:(\d+)"[^>]*><span style="([^"]*)"', text) if "underline" in style)
+
+    assert underlined(0) == underlined(1) == [6]  # group A's own site
+    assert underlined(2) == underlined(3) == underlined(5) == [9]  # the shared site
+
+    said = describe(rows, marks, 1, 6)
+    assert said == ("A_in_AB (group A): residue 6, H; differs: A_alone A; region loopA (5–7); "
+                    "site H6")
+    assert "region" not in describe(rows, marks, 0, 3)  # A does not take the shared region
+    assert "region shared (2–4)" in describe(rows, marks, 2, 3)
+    assert describe(rows, marks, 5, 10).startswith("A_alone (group pH): residue 10, E; "
+                                                   "differs: A_pH5 W")
+
+
+def test_the_view_counts_the_groups_samples(qtbot, tmp_path):
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import QUrl
+
+    from hxex.gui.sequence_view import SequenceView
+
+    view = SequenceView()
+    qtbot.addWidget(view)
+    view.show_project(_groups_project(tmp_path))
+    about = view.about.text()
+    assert about.startswith("5 sample(s) in 3 group(s), 5 distinct sequence(s). ")
+    assert "C_extra is in no group" in about
+    view._clicked(QUrl("res:3:6"))
+    assert view.about.text().startswith("B_in_AB (group B): residue 6, Q; differs: B_alone L")

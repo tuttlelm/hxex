@@ -1971,8 +1971,8 @@ Planned, not built:
    check`, `--group`, the guide's "Regions and sites"); step 2 built (HISTORY 416: the
    `shared_with` column, `shared_sequences`, and a grey strip on the Woods and butterfly
    plots); step 3 built (HISTORY 417: `cross_group_regions.csv` and the figure); step 4
-   (the window's group choice and the project editor's pages; until then the editor leaves the
-   groups to the file, and the Sequence view draws the shared regions) to do.
+   built (HISTORY 420: the project editor's groups pages, the Sequence view by group,
+   and the regions across the groups on the Analysis page).
 
 ## Risks and open decisions
 

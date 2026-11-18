@@ -11025,3 +11025,32 @@ CSVs or mzML if wanted.
     the original's file (owner: they describe the data, not the fits). The copy is checked to
     read every path the original reads before it is written. Not offered: clearing the input
     paths too (a template for new data; to add if wanted). tests/test_project_template.py.
+
+420. **Groups of samples, step 4: the window (owner, 2026-11-18; PLAN Next steps 38).**
+    The owner chose each layout from proposals: (1) the project editor's `[analysis.groups]`
+    page lists the groups (reference, samples by vial label, own or shared regions and sites)
+    with **Add a group…** (name, samples from the results open or typed, reference; with
+    `[analysis]` reference or samples in the file they start the group and are switched off in
+    the same change, as groups refuse them), **Rename…**, and **Remove**; each group has a page
+    under it in the list of tables (`hxex.gui.group_editor`): its reference, its samples with a
+    vial label beside each (labels equal to the names write a plain list, else a table of label
+    = sample; ↑/↓ for the order), and its own regions and sites as the editor's lists of
+    tables. `hxex.project_edit` names a group's tables by the group (`generic_table`: the
+    reference's `analysis.groups.NAME...`), so `hxex set hxex.toml analysis.groups.B.reference
+    B_alone` works too, and gains `add_group` (after the last live `[analysis]` table),
+    `rename_group` (live headings and those a switch turned off, `#~`, never the template's
+    commented example group, which is also named B: the first draft renamed it), and
+    `remove_group` (its table and its own regions and sites). (2) The Sequence view shows the
+    groups in the file's order, each group's reference first, a gap between groups, a sample in
+    two groups in each; differences counted within a group (another group may be another
+    protein); each group's regions (its own, else the shared ones, by
+    `AnalysisConfig.with_group`) under its rows, named by the group, its sites in its rows only;
+    samples in no group left out with a note. (3) The Analysis page's group list gains
+    **(across the groups)** when two groups share a region name: Compute there makes every group's
+    analysis not yet made or out of date, then `cross_group_regions` and its figures
+    (`analysis_workspace.across_outputs`), and keeps the groups' analyses for their own entries;
+    a group's own list no longer lists that kind. Checked offscreen on a copy of the private
+    heterooligomer project (three groups, 15-16 regions each): the pages read the file as
+    written, nothing written by opening them, and the figure across the groups was computed in
+    57 s, five times, as `hxex analyse` draws it. Not done: `regions = false` / `sites = false`
+    in a group are shown, not set, by the window (a text editor sets them).

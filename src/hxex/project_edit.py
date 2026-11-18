@@ -156,11 +156,22 @@ def _tables() -> dict[str, tuple[bool, tuple[str, ...] | None]]:
     return {t.name: (t.array, tuple(s.key for s in t.settings) or None) for t in tables()}
 
 
+def generic_table(table: str) -> str:
+    """The name the settings reference gives ``table``: a group's tables are named by the group
+    in a file (``analysis.groups.B.regions``) and by ``NAME`` in the reference
+    (``analysis.groups.NAME.regions``); other names are their own."""
+    parts = table.split(".")
+    if len(parts) >= 3 and parts[:2] == ["analysis", "groups"]:
+        return ".".join(["analysis", "groups", "NAME", *parts[3:]])
+    return table
+
+
 def _default_text(table: str, key: str) -> str | None:
     """The TOML text of a setting's default, as the settings reference shows it (None: it has
     none to write, such as an unset one)."""
     from ._reference import tables
 
+    table = generic_table(table)
     for t in tables():
         if t.name == table:
             for s in t.settings:
@@ -182,8 +193,8 @@ def _split(setting: str) -> tuple[str, str]:
                            'needing other characters in quotes: analysis.merge."A:WT")')
     table, key = ".".join(parts[:-1]), parts[-1]
     known = _tables()
-    if table in known:
-        array, keys = known[table]
+    if generic_table(table) in known:
+        array, keys = known[generic_table(table)]
         if array:
             raise ProjectError(f"[[{table}]] is a list of tables (one per entry): hxex set "
                                "cannot tell which entry to change; edit the project file")
@@ -194,7 +205,7 @@ def _split(setting: str) -> tuple[str, str]:
         if key in known and not known[key][0] and table == "":
             raise ProjectError(f"{key} is a table, not a setting: name one of its settings "
                                f"({key}.NAME)")
-        if f"{table}.{key}" in known:
+        if generic_table(f"{table}.{key}") in known:
             raise ProjectError(f"{setting} is a table, not a setting: name one of its "
                                f"settings ({setting}.NAME)")
     every = [f"{t}.{k}" if t else k for t, (_, keys) in known.items() for k in keys or ()]
@@ -676,9 +687,10 @@ def _blocks(lines: list[str], table: str) -> list[tuple[int, int]]:
 
 def _list_table(table: str) -> tuple[str, ...]:
     known = _tables()
-    if table not in known or not known[table][0]:
+    name = generic_table(table)
+    if name not in known or not known[name][0]:
         raise ProjectError(f"[[{table}]] is not a list of tables of a project file")
-    return known[table][1] or ()
+    return known[name][1] or ()
 
 
 def _entry_text(lines: list[str], index: int, table: str, key: str,
@@ -888,6 +900,149 @@ def set_settings(path: str | Path, changes, unfinished: bool = False) -> list[Ch
     keys = tuple(c.setting.rsplit(".", 1)[-1] for c in done) if unfinished else None
     _write_checked(path, text, new_text, bom, what, keys)
     return done
+
+
+# --- groups of samples ([analysis.groups], docs/ANALYSIS.md "Groups of samples") ------------
+# A group is a table named by the user, [analysis.groups.NAME], with its own lists of tables
+# under it ([[analysis.groups.NAME.regions]], ...); the window adds, renames, and removes one
+# as a whole (PLAN Next steps 38, step 4).
+
+GROUPS = "analysis.groups"
+
+
+def group_names(text: str) -> list[str]:
+    """The groups of the project file ``text``, in its order."""
+    data = tomllib.loads(text)
+    groups = (data.get("analysis") or {}).get("groups") or {}
+    return [str(n) for n in groups] if isinstance(groups, dict) else []
+
+
+def samples_text(samples) -> str:
+    """A group's ``samples`` as TOML text: a list of names, or a table of label = sample
+    written inline (``{ alone = "B_alone", "A+B" = "B_in_AB" }``)."""
+    from .config import toml_value
+
+    if isinstance(samples, dict):
+        return "{ " + ", ".join(f"{key_text(str(k))} = {toml_value(str(v))}"
+                                for k, v in samples.items()) + " }"
+    return "[" + ", ".join(toml_value(str(v)) for v in samples) + "]"
+
+
+def _group_name(name: str, existing: list[str]) -> str:
+    name = name.strip()
+    if not _KEY.fullmatch(name or "-"):
+        raise ProjectError(f"{name!r} cannot name a group: letters, digits, _ and - only (it "
+                           "names the group's analysis folder, results_analysis_NAME)")
+    if name.lower() == "groups":
+        raise ProjectError('"groups" names the folder across the groups '
+                           "(results_analysis_groups): give the group another name")
+    if name in existing:
+        raise ProjectError(f"there is a group named {name} already")
+    return name
+
+
+def _of_group(heading: str, name: str) -> bool:
+    return heading == f"{GROUPS}.{name}" or heading.startswith(f"{GROUPS}.{name}.")
+
+
+def add_group(path: str | Path, name: str, reference: str, samples,
+              take_top: bool = False, unfinished: bool = False) -> str:
+    """Add the group ``name`` with its ``reference`` and ``samples`` (a list of names, or a
+    mapping of label -> sample): ``[analysis.groups.NAME]`` after the last live table of
+    ``[analysis]`` (else at the end of the file). With ``take_top`` the settings it replaces,
+    ``[analysis] reference`` and ``samples`` (refused together with groups), are switched off
+    in the same change."""
+    from .config import toml_value
+
+    path = Path(path)
+    text, bom = _read(path)
+    _analysis_only(path, text)
+    name = _group_name(name, group_names(text))
+    new_text = text
+    off = []
+    if take_top:
+        for key in ("reference", "samples"):
+            new_text, change = _edited(new_text, "analysis", key, None)
+            if not change.unchanged:
+                off.append(f"[analysis] {key} switched off")
+    newline = "\r\n" if "\r\n" in new_text else "\n"
+    lines = new_text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith(("\n", "\r")):
+        lines[-1] += newline
+    heads = _sections(lines)
+    mine = [k for k, h in enumerate(heads) if h[2] and (h[1] == "analysis"
+                                                        or h[1].startswith("analysis."))]
+    if mine:
+        k = mine[-1]
+        end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
+        at = _after_settings(lines, heads[k][0] + 1, end)
+    else:
+        while lines and not lines[-1].strip():
+            lines.pop()
+        at = len(lines)
+    block = [newline, f"[{GROUPS}.{name}]{newline}",
+             f"reference = {toml_value(str(reference))}{newline}",
+             f"samples = {samples_text(samples)}{newline}"]
+    lines[at:at] = block
+    said = "; ".join(off + [f"group {name} added ([{GROUPS}.{name}], line {at + 2})"])
+    _write_checked(path, text, "".join(lines), bom, f"{said}: refused",
+                   ("reference", "samples", name) if unfinished else None)
+    return said
+
+
+def rename_group(path: str | Path, old: str, new: str, unfinished: bool = False) -> str:
+    """Rename the group ``old`` to ``new``: the headings of its table and of its regions and
+    sites (live, or switched off by a switch: ``#~``) are renamed; nothing else changes. Its
+    analysis folder is then ``results_analysis_NEW`` (the old folder stays as it is)."""
+    path = Path(path)
+    text, bom = _read(path)
+    _analysis_only(path, text)
+    names = group_names(text)
+    if old not in names:
+        raise ProjectError(f"there is no group named {old}")
+    new = _group_name(new, [n for n in names if n != old])
+    if new == old:
+        return f"group {old} keeps its name"
+    lines = text.splitlines(keepends=True)
+    # live headings, and those a switch turned off (#~), never a plain comment (the template's
+    # example group is named B too)
+    pattern = re.compile(rf'^(\s*(?:#~\s*)?\[+\s*analysis\.groups\.)(?:{re.escape(old)}|"'
+                         rf'{re.escape(old)}")(?=\s*[.\]])')
+    count = 0
+    for i, _, _, _ in _sections(lines):
+        renamed = pattern.sub(lambda m: m[1] + new, lines[i], count=1)
+        count += renamed != lines[i]
+        lines[i] = renamed
+    said = f"group {old} renamed {new} ({count} heading(s))"
+    _write_checked(path, text, "".join(lines), bom, f"{said}: refused",
+                   (new,) if unfinished else None)
+    return said
+
+
+def remove_group(path: str | Path, name: str, unfinished: bool = False) -> str:
+    """Remove the group ``name``: its table and its own regions and sites (their headings and
+    settings; comments after their last setting are left, as they may belong to what
+    follows)."""
+    path = Path(path)
+    text, bom = _read(path)
+    _analysis_only(path, text)
+    if name not in group_names(text):
+        raise ProjectError(f"there is no group named {name}")
+    lines = text.splitlines(keepends=True)
+    heads = _sections(lines)
+    cut = []
+    for k, (i, heading, on, _) in enumerate(heads):
+        if on and _of_group(heading, name):
+            end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
+            cut.append((i, _after_settings(lines, i + 1, end)))
+    for start, end in reversed(cut):
+        del lines[start:end]
+        if 0 < start < len(lines) and not lines[start].strip() and not lines[start - 1].strip():
+            del lines[start]  # no double blank line left behind
+    said = f"group {name} removed (its table and {len(cut) - 1} region and site entries)"
+    _write_checked(path, text, "".join(lines), bom, f"{said}: refused",
+                   () if unfinished else None)
+    return said
 
 
 def quoted(text: str) -> str:

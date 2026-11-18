@@ -482,3 +482,56 @@ def test_a_moved_entry_takes_its_switched_off_setting_along(tmp_path):
     assert 'path = "b.mzML"' in first and "precursor_charge" not in first
     assert 'path = "a.mzML"' in second and "# precursor_charge = 3" in second
     assert [e["path"] for e in list_entries(project_text, "input.runs")] == ["b.mzML", "a.mzML"]
+
+
+# --- groups of samples ([analysis.groups]; PLAN Next steps 38, step 4) ---------------------
+
+_TOP = ('[analysis]\nreference = "A1"\nsamples = ["A1", "A2"]\n\n[[analysis.regions]]\n'
+        'name = "N"\nstart = 1\nend = 5\n\n[review]\n')
+
+
+def _groups(path):
+    return tomllib.loads(path.read_text())["analysis"].get("groups", {})
+
+
+def test_a_group_is_added_renamed_and_removed_as_a_whole(project):
+    from hxex.project_edit import add_entry, add_group, remove_group, rename_group, set_entry
+
+    project.write_text(project.read_text().replace("\n[review]", "\n#[review]") + "\n" + _TOP,
+                       encoding="utf-8")
+    with pytest.raises(ProjectError, match="go in each group"):  # [analysis] reference is set
+        add_group(project, "A", "A1", ["A1", "A2"])
+    said = add_group(project, "A", "A1", {"alone": "A1", "A+B": "A2"}, take_top=True)
+    assert "[analysis] reference switched off" in said
+    add_group(project, "B", "B1", ["B1"])
+    groups = _groups(project)
+    assert list(groups) == ["A", "B"]
+    assert groups["A"]["samples"] == {"alone": "A1", "A+B": "A2"}
+    data = tomllib.loads(project.read_text())
+    assert "reference" not in data["analysis"] and "samples" not in data["analysis"]
+    # placed after the analysis tables, before the table that follows them
+    text = project.read_text()
+    assert text.index("[analysis.groups.B]") < text.rindex("\n[review]")
+    # a group's settings and its own lists of tables, by the group's name
+    set_setting(project, "analysis.groups.B.samples", '["B1", "B2"]')
+    set_setting(project, "analysis.groups.B.reference", '"B2"')
+    add_entry(project, "analysis.groups.B.regions", {"name": '"N"', "start": "2", "end": "9"})
+    set_entry(project, "analysis.groups.B.regions", 0, "end", "10")
+    assert _groups(project)["B"] == {"reference": "B2", "samples": ["B1", "B2"],
+                                     "regions": [{"name": "N", "start": 2, "end": 10}]}
+    with pytest.raises(ProjectError, match="a group named A already"):
+        add_group(project, "A", "X", ["X"])
+    with pytest.raises(ProjectError, match="cannot name a group"):
+        add_group(project, "a b", "X", ["X"])
+    with pytest.raises(ProjectError, match="folder across the groups"):
+        rename_group(project, "B", "groups")
+    rename_group(project, "B", "C")
+    assert _groups(project)["C"]["regions"][0]["end"] == 10 and "B" not in _groups(project)
+    remove_group(project, "C")
+    assert list(_groups(project)) == ["A"]
+    assert "analysis.groups.C" not in project.read_text()
+    assert "# [analysis.groups.B]" in project.read_text()  # the template's example untouched
+    load_project(project)  # still a project file
+    # hxex set names a group's setting too
+    assert main(["set", str(project), "analysis.groups.A.reference", "A2"]) == 0
+    assert _groups(project)["A"]["reference"] == "A2"

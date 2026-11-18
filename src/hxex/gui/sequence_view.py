@@ -23,6 +23,15 @@ by class (``[input] pooled_classes``), each record's differences from the first 
 highlighted; with results open, each record's coverage is that of the peptides it may hold, in
 its own numbering, the residues only that record's peptides cover in black. How many residues
 a line holds is chosen in the view (:data:`PER_LINE_CHOICES`).
+
+With ``[analysis.groups]`` (owner, 2026-11-18; docs/ANALYSIS.md "Groups of samples") the rows
+follow the groups, in the file's order: each group's reference first, then its samples in the
+group's order, a gap between groups, and a sample in two groups shown in each, since it is
+analysed in each. Differences are counted within a group, against its reference, as one group
+may be another protein. Each group's regions and sites are its own of each kind, else the shared
+ones (as its analysis takes them): its region bars run under its rows, named by the group, and
+its sites are marked in its rows only. Samples in no group are not analysed, so they are left
+out, with a note.
 """
 
 from __future__ import annotations
@@ -62,8 +71,9 @@ class SequenceRow:
     residues: tuple[str, ...]
     first: int = 1
     differs: set[int] = field(default_factory=set)  # residue numbers unlike the first row's
-    # pooled: the record's class ('' for a record of no class, and for other data); a row's
-    # differences are counted against the first row of its group
+    # pooled: the record's class ('' for a record of no class); with [analysis.groups]: the
+    # group's name ('' for other data); a row's differences are counted against the first row
+    # of its group
     group: str = ""
 
     @property
@@ -107,7 +117,10 @@ def project_sequences(project) -> tuple[list[SequenceRow], object, str]:
     """The rows of the project's sequences, its annotations, and a message: why there is no
     sequence when there are no rows, else what to say of where they came from ('' when the
     files were read as they are). ``project``: the project file's path, or the window's
-    :class:`hxex.gui.project_state.ProjectState` of it (read once for every panel, Q-2)."""
+    :class:`hxex.gui.project_state.ProjectState` of it (read once for every panel, Q-2).
+    With ``[analysis.groups]`` the rows are the groups' (:func:`_group_rows`) and the
+    annotations a mapping of group -> its regions and sites, which :func:`sequence_html` and
+    :func:`describe` take as they take one set."""
     from ..analysis.compare import Annotations
     from ..io import read_fasta_numbered
     from .project_state import ProjectState
@@ -226,6 +239,13 @@ def project_sequences(project) -> tuple[list[SequenceRow], object, str]:
         return [], annotations, "".join(f"{n} " for n in notes) + (
             "No sequence: name the FASTA file(s) in [analysis] fasta (or, for SpecExport data, "
             "put SAMPLE.fasta beside each sample's folder).")
+    if config is not None and config.by_group:
+        rows, marks, said = _group_rows(config, found, read)
+        notes += said
+        if not rows:
+            return [], annotations, " ".join(notes + [
+                "No sequence for the samples of [analysis.groups]."])
+        return rows, marks, " ".join(notes)
     # the reference first (each other row then shows its own differences), then [analysis]
     # samples' order, the rest alphabetically
     ref = config.reference if config is not None and isinstance(config.reference, str) else ""
@@ -314,9 +334,76 @@ def _pooled_rows(inputs) -> tuple[list[SequenceRow], str]:
                      if classes else "") + ".")
 
 
+def _group_rows(config, found: dict, read) -> tuple[list[SequenceRow], dict, list[str]]:
+    """The rows of a project with ``[analysis.groups]``: each group's samples in its order with
+    its reference first (each other row then shows its differences from the reference), the
+    groups in the order the file gives them; within a group, samples with one sequence share a
+    row, and a sample in two groups has a row in each. Also each group's regions and sites (its
+    own of a kind, else the shared ones: :meth:`hxex.analysis.AnalysisConfig.with_group`), and
+    notes: the samples with a sequence that are in no group (not analysed, so not shown) and
+    the group samples without one. ``found``: name -> (residues, first residue number), as
+    :func:`project_sequences` read them; ``read``: whether the project reads a sample."""
+    from ..analysis.settings import _same_sample
+
+    def sequence_of(sample: str):
+        if sample in found:
+            return found[sample]
+        same = next((v for name, v in found.items() if name != EVERY
+                     and _same_sample(name, sample)), None)
+        return same if same is not None else found.get(EVERY)
+
+    rows: list[SequenceRow] = []
+    marks: dict = {}
+    missing: list[str] = []
+    for name, group in config.groups.items():
+        marks[name] = config.with_group(name).annotations
+        ordered = sorted(group.samples, key=lambda s: not _same_sample(s, group.reference))
+        start = len(rows)
+        for sample in ordered:  # sorted() is stable: the group's order after its reference
+            value = sequence_of(sample)
+            if value is None:
+                if read(sample.partition(":")[2] or sample):
+                    missing.append(f"{sample} (group {name})")
+                continue
+            residues, first = value
+            same = next((r for r in rows[start:] if r.residues == residues
+                         and r.first == first), None)
+            if same is not None:
+                same.samples.append(sample)
+            else:
+                rows.append(SequenceRow([sample], residues, first, group=name))
+    _mark_differences(rows)
+    notes = []
+    grouped = [s for g in config.groups.values() for s in g.samples]
+    alone = [name for name in found if name != EVERY
+             and not any(_same_sample(name, s) for s in grouped)]
+    if alone:
+        one = len(alone) == 1
+        notes.append(f"{', '.join(alone)} {'is' if one else 'are'} in no group of "
+                     "[analysis.groups], so not analysed: left out.")
+    if missing:
+        notes.append(f"No sequence for {', '.join(missing)}.")
+    return rows, marks, notes
+
+
+def _grouped(annotations) -> bool:
+    """Whether ``annotations`` are each group's (a mapping of group -> its regions and sites,
+    from a project with ``[analysis.groups]``) rather than one set for every row."""
+    from collections.abc import Mapping
+
+    return isinstance(annotations, Mapping)
+
+
+def _marks_of(annotations, group: str):
+    """The regions and sites of a row's ``group``: its group's with ``[analysis.groups]``, else
+    the one set every row shares (None: none)."""
+    return annotations.get(group) if _grouped(annotations) else annotations
+
+
 def _mark_differences(rows: list[SequenceRow]) -> None:
-    """Each row's residues unlike those of the first row of its group (all rows one group for
-    data other than pooled)."""
+    """Each row's residues unlike those of the first row of its group (a pooled class, or a
+    group of ``[analysis.groups]``, whose first row is its reference; all rows one group for
+    other data)."""
     first: dict[str, SequenceRow] = {}
     for row in rows:
         base = first.setdefault(row.group, row)
@@ -436,25 +523,48 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
     left, every residue a link (``res:<row>:<number>``) for the view to say what it is.
     ``coverage`` (:func:`coverage_of`) adds each sample's coverage under its row, drawn with
     ``blocks`` (the levels) and ``bar`` (a region's bar): the view passes the safe set when
-    ``family`` draws the others at another width (:func:`hxex.gui.fonts.even_width`)."""
+    ``family`` draws the others at another width (:func:`hxex.gui.fonts.even_width`).
+
+    ``annotations``: one set of regions and sites for every row, or (``[analysis.groups]``) a
+    mapping of group -> its own (:func:`project_sequences`): each group's region bars then run
+    under its rows on every line, named by the group on the left, its sites are marked in its
+    rows only, and the key lists each group's regions under its name (colours restart in each
+    group)."""
     if not rows:
         return ""
     first = min(r.first for r in rows)
     last = max(r.last for r in rows)
     shown = {k: _coverage_samples(r, coverage) for k, r in enumerate(rows)}
-    names = [", ".join(r.samples) for r in rows] + [s for v in shown.values() for s in v]
+    grouped = _grouped(annotations)
+    # the groups in the rows' order, each with its regions and the residues of its sites ('':
+    # the one set every row shares)
+    order = list(dict.fromkeys(r.group for r in rows)) if grouped else [""]
+    regions = {g: list(getattr(_marks_of(annotations, g), "regions", ())) for g in order}
+    sites = {g: {s.residue: s.label for s in getattr(_marks_of(annotations, g), "sites", ())}
+             for g in order}
+    colour = {g: {id(reg): REGION_COLOURS[i % len(REGION_COLOURS)]
+                  for i, reg in enumerate(regions[g])} for g in order}
+    names = ([", ".join(r.samples) for r in rows] + [s for v in shown.values() for s in v]
+             + ([g for g in order if regions[g]] if grouped else []))
     label = min(max(max(len(n) for n in names), 6), 28)
     top = max((depth(coverage[s], n) for v in shown.values() for s in v
                for n in range(first, last + 1)), default=0)
-    regions = list(getattr(annotations, "regions", ()))
-    sites = {s.residue: s.label for s in getattr(annotations, "sites", ())}
-    colour = {id(reg): REGION_COLOURS[i % len(REGION_COLOURS)] for i, reg in enumerate(regions)}
     out = [f'<div style="font-family: {html.escape(family)}, monospace; font-size: 11pt; '
            'white-space: pre;">']
-    if regions or sites or top:
-        keys = [f'<span style="color:{colour[id(r)]};">{bar * 2}</span> {html.escape(r.name)} '
-                f'({r.start}–{r.end})' for r in regions]
-        if sites:
+    if any(regions.values()) or any(sites.values()) or top:
+        keys = []
+        for g in order:
+            entries = [f'<span style="color:{colour[g][id(r)]};">{bar * 2}</span> '
+                       f'{html.escape(r.name)} ({r.start}–{r.end})' for r in regions[g]]
+            if entries:
+                keys.append((f"<b>{html.escape(g)}</b>: " if grouped else "")
+                            + "    ".join(entries))
+        # each group's regions on a line of its own, the other keys after them
+        if grouped and keys:
+            out.append('<span style="font-family: sans-serif; font-size: 9pt;">'
+                       + "\n".join(keys) + "</span>\n")
+            keys = []
+        if any(sites.values()):
             keys.append(f'<span style="color:{SITE};">▲</span> site')
         if top:
             keys.append(f'<span style="color:{COVER};">{blocks[0]}…{blocks[-1]}</span> '
@@ -464,15 +574,16 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
             if any(len(p) > 3 and p[3] for v in coverage.values() for p in v):
                 keys.append(f'<span style="color:{OWN};">{blocks[-1]}</span> covered by a '
                             "peptide only this record may hold")
-        out.append('<span style="font-family: sans-serif; font-size: 9pt;">'
-                   + "    ".join(keys) + "</span>\n\n")
+        out.append(('<span style="font-family: sans-serif; font-size: 9pt;">'
+                    + "    ".join(keys) + "</span>\n" if keys else "") + "\n")
     start = first - ((first - 1) % per_line)  # lines begin at 1, 51, 101, ...
     for line_start in range(start, last + 1, per_line):
         numbers = range(line_start, min(line_start + per_line, last + 1))  # not past the end
         out.append(_ruler(numbers, label) + "\n")
         for k, row in enumerate(rows):
             if k and row.group != rows[k - 1].group:
-                out.append("\n")  # pooled: a line between the classes
+                out.append("\n")  # a line between the pooled classes, or the groups
+            marks = sites[row.group if grouped else ""]
             name = ", ".join(row.samples)
             name = name if len(name) <= label else name[:label - 1] + "…"
             cells = []
@@ -485,7 +596,7 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
                         style.append(f"background:{DIFFERS}; font-weight:bold")
                     elif residue[-1] == "P":
                         style.append(f"color:{PROLINE}")
-                    if n in sites:
+                    if n in marks:
                         style.append(f"text-decoration: underline; color:{SITE}")
                     text = (f'<a href="res:{k}:{n}" style="text-decoration:none; color:inherit;">'
                             f'<span style="{"; ".join(style)}">{text}</span></a>')
@@ -497,7 +608,13 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
                 cover = _coverage_line(numbers, row, coverage[sample], top, start, blocks)
                 out.append(f'<span style="color:{COVER};">{html.escape(sample[:label]):<{label}}'
                            f'</span>  {cover}\n')
-        bars = _region_line(numbers, regions, colour, start, bar)
+            if grouped and (k + 1 == len(rows) or rows[k + 1].group != row.group):
+                # the group's own regions under its last row, named by the group
+                bars = _region_line(numbers, regions[row.group], colour[row.group], start, bar)
+                if bars.strip():
+                    out.append(f'<span style="color:#757575;">'
+                               f'{html.escape(row.group[:label]):<{label}}</span>  {bars}\n')
+        bars = "" if grouped else _region_line(numbers, regions[""], colour[""], start, bar)
         if bars.strip():
             out.append(f"{'':<{label}}  {bars}\n")
         out.append("\n")
@@ -556,10 +673,14 @@ def describe(rows: list[SequenceRow], annotations, row: int, number: int,
              coverage=None) -> str:
     """What a residue clicked is: its sample(s), number and residue, how the other rows differ
     there, the regions and site it belongs to, and (``coverage``) the peptides covering it in
-    each sample of its row."""
+    each sample of its row. With ``[analysis.groups]`` (``annotations`` each group's) the row's
+    group is named and its own regions and sites are said; the other rows compared are those of
+    its group (or pooled class)."""
     here = rows[row]
-    parts = [f"{', '.join(here.samples)}" + (f" (class {here.group})" if here.group else "")
+    kind = "group" if _grouped(annotations) else "class"
+    parts = [f"{', '.join(here.samples)}" + (f" ({kind} {here.group})" if here.group else "")
              + f": residue {number}, {here.at(number)}"]
+    annotations = _marks_of(annotations, here.group)
     if here.at(number).endswith("P"):
         parts.append("a proline (no amide hydrogen to exchange)")
     others = [f"{', '.join(r.samples)} {r.at(number) or '(none)'}" for i, r in enumerate(rows)
@@ -697,9 +818,16 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
                                         blocks=BLOCKS if even else BLOCKS_SAFE,
                                         bar=BAR if even else BAR_SAFE))
         self.text.verticalScrollBar().setValue(bar)
-        n = sum(len(r.samples) for r in self.rows)
-        what = "record(s)" if any(r.group for r in self.rows) else "sample(s)"
-        self.about.setText(f"{n} {what}, {len(self.rows)} distinct sequence(s). "
+        if _grouped(self.annotations):  # a sample in two groups has a row in each
+            n = len({s for r in self.rows for s in r.samples})
+            groups = len({r.group for r in self.rows})
+            distinct = len({(r.residues, r.first) for r in self.rows})
+            counts = f"{n} sample(s) in {groups} group(s), {distinct} distinct sequence(s). "
+        else:
+            n = sum(len(r.samples) for r in self.rows)
+            what = "record(s)" if any(r.group for r in self.rows) else "sample(s)"
+            counts = f"{n} {what}, {len(self.rows)} distinct sequence(s). "
+        self.about.setText(counts
                            + (f"{self._message} " if self._message else "")
                            + ("Coverage from the open results: MS1 peptides only (fragment "
                               "ions and rejected spectra left out). "

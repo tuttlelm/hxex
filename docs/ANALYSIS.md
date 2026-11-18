@@ -953,7 +953,7 @@ check`, 3 strict comparisons by sequence, 4 the forms of the pool, 5 head-to-hea
 table, 6 the window (identity columns, filter by class and level; built). Check data: the private
 pooled dataset (`HXEX_POOLED_EXAMPLE`, both conditions) and the state exports beside it.
 
-### Groups of samples (design, owner 2026-11-18; steps 1-3 built, HISTORY 414, 416, and 417)
+### Groups of samples (design, owner 2026-11-18; built, HISTORY 414, 416, 417, and 420)
 
 **The use case.** One project holds samples of several proteins, analysed together but each
 protein looked at on its own: heterooligomers of three proteins A, B, and C, each alone and in
@@ -1060,7 +1060,9 @@ protein is in bold (the figure's caption says which). A group may not be named `
 guide (with a "Regions and sites" section: sites are only drawn, regions are also tabled and
 tested); 2 peptides shared within a vial: the mark, `shared_sequences`; 3 across groups: the
 table, then the figure from drafts; 4 the window: a group choice in place of the reference
-choice on the Analysis page, groups and their regions and sites in the project editor. Later,
+choice on the Analysis page, groups and their regions and sites in the project editor (built
+with the owner's layouts: one page per group, the Sequence view by group, and "(across the
+groups)" on the Analysis page). Later,
 perhaps: regions per class of a pooled sample through a group named after the class (regions
 per form or class were left out of HISTORY 356). Check data: the private three-protein dataset.
 

@@ -581,3 +581,42 @@ def test_groups_are_chosen_and_share_nothing(qtbot, tmp_path, project):
     page.reference.setCurrentIndex(1)
     assert page.outputs is None and "Not computed yet of group G2" in page.status.text()
     assert _items(page)["coverage"].childCount() == 0  # G1's coverage is not G2's
+
+
+def test_the_regions_across_the_groups_are_a_choice_of_their_own(qtbot, tmp_path, project):
+    """With two groups sharing a region name, "(across the groups)" follows the groups (PLAN
+    Next steps 38, step 4): Compute makes each group's analysis, then the table and the figures
+    hxex analyse writes in results_analysis_groups; a group's own list leaves that kind out."""
+    from hxex.gui.analysis_workspace import ACROSS
+
+    project.write_text(project.read_text().replace('reference = "S"\n', "") +
+                       '[[analysis.regions]]\nname = "all"\nstart = 1\nend = 30\n'
+                       '[analysis.groups.G1]\nreference = "S"\nsamples = ["S"]\n'
+                       '[analysis.groups.G2]\nreference = "V"\nsamples = ["V"]\n',
+                       encoding="utf-8")
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    assert [page.reference.itemData(i) for i in range(page.reference.count())] \
+        == ["G1", "G2", ACROSS]
+    assert page.reference.itemText(2) == "(across the groups)"
+    assert "cross_group_regions" not in _items(page)
+    page.reference.setCurrentIndex(2)
+    assert "Not computed yet across the groups" in page.status.text()
+    assert "cross_group_regions" in _items(page)
+    page.compute()
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=180000)
+    table = page.outputs.tables["cross_group_regions"]
+    assert set(table["group"]) == {"G1", "G2"}
+    kind = _items(page)["cross_group_regions"]
+    assert kind.childCount() == len(set(table["time"])) >= 1
+    assert "across the groups" in page.status.text()
+    stem = kind.child(0).data(0, Qt.ItemDataRole.UserRole + 1)
+    fig = dict(page.outputs.figures)[stem]()
+    assert fig.axes and fig.legends  # drawn as hxex analyse draws it
+    # each group's analysis was made on the way, and is shown without computing it again
+    page.reference.setCurrentIndex(1)
+    assert page.outputs is not None and "of group G2" in page.status.text()

@@ -175,6 +175,17 @@ for the new file's name and a folder for its results, then writes a copy and ope
   and table: it is a list, with **↑** and **↓** to move the selected sample, **Remove**, and
   **Add** with the samples of the results that are open (or type one). The reference goes
   first wherever it is in the list.
+- Groups of samples ([Groups of samples](experiments.md#groups-of-samples)) have a page of
+  their own, `[analysis.groups]`, listing the groups with their reference, samples, and whether
+  their regions and sites are their own or the shared ones. **Add a group…** asks for its name,
+  samples, and reference (when `[analysis]` names a reference or samples, they start the new
+  group and are taken out of `[analysis]`, where groups refuse them); **Rename…** and
+  **Remove** change the selected group, its own regions and sites with it (its analysis folder
+  is left as it is). Each group then has a page under `[analysis.groups]` in the list:
+  its **reference**, its **samples** with a **vial label** beside each (left as the sample's
+  name, the samples are written as a plain list; **↑** and **↓** set their order), and its
+  **Own regions** and **Own sites**, edited as any list of tables. A group without regions
+  of its own takes the shared `[[analysis.regions]]`, and its page says how many.
 
 ## Tables
 
@@ -250,6 +261,15 @@ the peptides that record may hold, from every sample, in the record's own number
 whose numbering differs from the peptide's has its coverage moved to its own residues). A
 residue covered by a peptide that only this record may hold is drawn in black, so you can see
 where the data tell that record apart from the others.
+
+With groups of samples (`[analysis.groups]`), **Sequence** shows the groups in the file's
+order, each group's reference first and then its samples, with a gap between the groups; a
+sample in two groups is shown in each. A residue is highlighted where it differs from the
+group's reference only, since another group may be another protein. Each group's regions
+(its own, or the shared ones it takes) run under its rows, named by the group, and its sites
+are underlined in its rows only; the key lists each group's regions on a line of its own.
+Samples in no group are not analysed, so they are left out, and the line under the view says
+which.
 
 ## Results
 
@@ -700,6 +720,13 @@ file), so what you see here is what the command writes.
 - With two samples or more and no `[analysis] reference`, a red line above the list says
   *Reference needed for comparison plots*, with **choose a reference…** beside it: the sample
   chosen is written to the project file (**every sample in turn** writes `reference = "all"`).
+- With groups of samples (`[analysis.groups]`) the list above is the **group**: each group's
+  analysis is its own, against its own reference, and nothing is shared between groups. When
+  two groups or more have a region of one name, **(across the groups)** follows the groups: its
+  **Compute** makes every group's analysis not yet made (or out of date), then the Regions
+  across the groups, one figure per time, as `hxex analyse` writes them in
+  `results_analysis_groups`; the groups' analyses made on the way are shown when you choose
+  them.
 - Select a figure to see it; **Save figure…** suggests the name `hxex analyse` gives it.
 - The **data** tab beside the figure lists what the figure draws, one row per bar: on a coverage
   map each peptide's sample, time, residues, sequence, fD and its error, and how many spectra
