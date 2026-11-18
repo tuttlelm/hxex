@@ -527,6 +527,73 @@ def test_parent_uptake_and_the_precursor_offset():
                                                                                       nan_ok=True))}
 
 
+def test_flagged_fragment_spectra_are_left_out_of_the_fragment_analysis(tmp_path):
+    """[analysis.fragments] leave_out_flags (default below_noise, poor_envelope, mz_shift,
+    overlapping_ion; owner, 2026-11-17): a fragment spectrum carrying one of them leaves every
+    fragment output, listed with its flags in fragment_left_out.csv; the precursor's own ion
+    and a spectrum the review accepted stay; [] keeps them all."""
+    from hxex.analysis import (
+        FRAGMENT_LEAVE_OUT_FLAGS,
+        AnalysisConfig,
+        FragmentAnalysis,
+        fragment_left_out,
+        fragment_uptake_with_left_out,
+    )
+    from hxex.report import write_analysis
+
+    run = stub_run()
+    u0 = fragment_uptake(run)
+    by_id = {str(s): i for i, s in enumerate(run.fit.spectrum_id)}
+    rows = lambda mask: np.array([by_id[str(s)] for s in u0.spectrum_id[mask]])  # noqa: E731
+    m = len(run.fit.spectrum_id)
+    below, envelope, other = np.zeros(m, bool), np.zeros(m, bool), np.zeros(m, bool)
+    below[rows(u0.where(fragment="c:5", condition="gentle"))] = True
+    c6 = rows(u0.where(fragment="c:6", condition="gentle"))
+    envelope[c6] = True  # c:6 gentle: poor_envelope, but one spectrum accepted
+    below[c6[0]] = True
+    envelope[rows(u0.where(fragment="M:8"))] = True  # the precursor's own ion stays
+    other[rows(u0.where(fragment="z:2"))] = True  # a flag not named: kept
+    run.quality = SimpleNamespace(below_noise=below, poor_envelope=envelope,
+                                  mz_shift=np.zeros(m, bool), overlapping_ion=np.zeros(m, bool),
+                                  poor_fit=other, flagged=below | envelope | other)
+    status = np.full(m, "unreviewed", dtype=object)
+    status[c6[1]] = "accepted"
+    run.review = SimpleNamespace(status_of=lambda fit: status)
+    accepted = str(run.fit.spectrum_id[c6[1]])
+
+    u = fragment_uptake(run, leave_out_flags=FRAGMENT_LEAVE_OUT_FLAGS)
+    assert not u.where(fragment="c:5", condition="gentle").any()
+    assert u.spectrum_id[u.where(fragment="c:6", condition="gentle")].tolist() == [accepted]
+    assert u.where(fragment="M:8").sum() == u0.where(fragment="M:8").sum()
+    assert u.where(fragment="z:2").sum() == u0.where(fragment="z:2").sum()
+    assert len(fragment_uptake(run, leave_out_flags=())) == len(u0)
+    full, why = fragment_uptake_with_left_out(run, leave_out_flags=FRAGMENT_LEAVE_OUT_FLAGS)
+    assert len(full) == len(u0)
+    reasons = dict(zip(full.spectrum_id.tolist(), why.tolist(), strict=True))
+    assert reasons[str(run.fit.spectrum_id[c6[0]])] == "below_noise;poor_envelope"
+    assert reasons[accepted] == ""
+    left = fragment_left_out(run, leave_out_flags=FRAGMENT_LEAVE_OUT_FLAGS)
+    n_c5 = int(u0.where(fragment="c:5", condition="gentle").sum())
+    assert len(left["reason"]) == n_c5 + len(c6) - 1
+    assert set(left["fragment"].tolist()) == {"c:5", "c:6"}
+    assert fragment_left_out(run, leave_out_flags=())["reason"].tolist() == []
+
+    assert FragmentAnalysis().leave_out_flags == FRAGMENT_LEAVE_OUT_FLAGS
+    written = write_analysis(run, AnalysisConfig(format="png", fragments=FragmentAnalysis()),
+                             tmp_path / "default")
+    names = {p.name for p in written}
+    assert "fragment_left_out.csv" in names
+    import csv
+
+    with open(tmp_path / "default" / "fragment_left_out.csv", encoding="utf-8") as f:
+        table = list(csv.DictReader(f))
+    assert len(table) == len(left["reason"]) and "reason" in table[0]
+    off = write_analysis(run, AnalysisConfig(format="png",
+                                             fragments=FragmentAnalysis(leave_out_flags=[])),
+                         tmp_path / "off")
+    assert "fragment_left_out.csv" not in {p.name for p in off}
+
+
 def stub_run(conditions=("gentle", "harsh"), parent=None):
     """A fitted fragment run (the objects fragment_uptake reads) whose fragments are the sums of
     their residues' decays, every fragment of one condition from the same scans."""
@@ -629,6 +696,17 @@ def test_fragment_analysis_settings():
     assert AnalysisConfig.from_dict(parsed.to_dict()) == parsed
     with pytest.raises(ValueError, match="kint needs"):
         FragmentAnalysis(kint=True)
+    from hxex.analysis import FRAGMENT_LEAVE_OUT_FLAGS
+
+    assert FragmentAnalysis().leave_out_flags == FRAGMENT_LEAVE_OUT_FLAGS
+    toml = tomllib.loads('[analysis.fragments]\nleave_out_flags = []\n')
+    parsed = _analysis_from(toml["analysis"], Path("."))
+    assert parsed.fragments.leave_out_flags == ()
+    assert AnalysisConfig.from_dict(parsed.to_dict()) == parsed
+    assert FragmentAnalysis(leave_out_flags=["poor_fit", "poor_fit"]).leave_out_flags == (
+        "poor_fit",)
+    with pytest.raises(ValueError, match="not a quality flag"):
+        FragmentAnalysis(leave_out_flags=["noisy"])
     for bad in ({"ion_types": ["M"]}, {"charges": [0]}, {"tolerance": 0}, {"bogus": 1}):
         with pytest.raises(ValueError):
             FragmentAnalysis.from_dict(bad)

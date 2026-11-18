@@ -155,10 +155,20 @@ def _columns(table) -> dict[str, np.ndarray]:
     return {"run": table.run, **cols, "merged": table.merged}
 
 
-def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake:
+# the quality flags whose fragment spectra [analysis.fragments] leave_out_flags leaves out by
+# default: each one, measured on the targeted Orbitrap dataset and the kinetics files of the
+# private fragment dataset, cleans the closure, the ladder steps and the c- and z-ladder
+# agreement (docs/HISTORY.md, 2026-11-17)
+FRAGMENT_LEAVE_OUT_FLAGS = ("below_noise", "poor_envelope", "mz_shift", "overlapping_ion")
+
+
+def fragment_uptake(results, *, exclude_flagged: bool = False,
+                    leave_out_flags: Sequence[str] = ()) -> FragmentUptake:
     """The K = 1 deuteration of every fragment-ion spectrum of ``results`` (a run read from mzML
     or Thermo files with fragment targets, :func:`hxex.fragments.fragment_targets`). Spectra
-    the review rejected are left out, flagged ones too with ``exclude_flagged``; series that
+    the review rejected are left out, flagged ones too with ``exclude_flagged`` (any flag) or
+    with one of ``leave_out_flags`` (fragment ions only, not the precursor's own ion, and not a
+    spectrum the review accepted: :data:`FRAGMENT_LEAVE_OUT_FLAGS` in an analysis); series that
     are not fragments of a parent (peptides read from MS1) are left out, and so are the fully
     deuterated controls (the spectra with the role ``'fulldeut'``): they are not a point of
     the kinetics. An undeuterated control without a time of its own is the start of the
@@ -172,19 +182,68 @@ def fragment_uptake(results, *, exclude_flagged: bool = False) -> FragmentUptake
     from .runs import RunSet
 
     if isinstance(results, RunSet):
-        return _runset_uptake(results, exclude_flagged)
-    return _uptake(results, exclude_flagged, False)[0]
+        return _runset_uptake(results, exclude_flagged, leave_out_flags)
+    return _uptake(results, exclude_flagged, False, leave_out_flags)[0]
 
 
-def fragment_uptake_with_left_out(results) -> tuple[FragmentUptake, np.ndarray]:
-    """:func:`fragment_uptake` of one run with the spectra the review rejected and those the
-    analysis excludes kept in, and why each row is left out of the fragment analysis
-    (``'rejected'``, ``'excluded'``; '' for a row it keeps): the window draws the left-out
-    rows apart (owner, 2026-11-17)."""
-    return _uptake(results, False, True)
+def fragment_uptake_with_left_out(results, *, leave_out_flags: Sequence[str] = ()
+                                  ) -> tuple[FragmentUptake, np.ndarray]:
+    """:func:`fragment_uptake` of one run with the spectra the review rejected, those the
+    analysis excludes and those carrying one of ``leave_out_flags`` kept in, and why each row is
+    left out of the fragment analysis (``'rejected'``, ``'excluded'``, or the flags, as
+    ``'below_noise;poor_envelope'``; '' for a row it keeps): the window draws the left-out rows
+    apart (owner, 2026-11-17)."""
+    return _uptake(results, False, True, leave_out_flags)
 
 
-def _uptake(results, exclude_flagged: bool, keep_left_out: bool):
+def fragment_left_out(results, *, leave_out_flags: Sequence[str] = ()) -> dict[str, np.ndarray]:
+    """The fragment spectra the fragment analysis leaves out other than those the review
+    rejected (``fragment_left_out.csv``): :class:`FragmentUptake`'s columns and ``reason``
+    (``'excluded'``, or the ``leave_out_flags`` a spectrum carries, ``;``-joined). Of every run
+    of a :class:`hxex.analysis.RunSet` read from scan files, with its ``run``."""
+    from ..io.mzml import SCAN_READERS
+    from .runs import RunSet
+
+    runs = results.runs if isinstance(results, RunSet) else {"": results}
+    parts = []
+    for name, r in runs.items():
+        source = r.settings.spectra_source if r.settings is not None else None
+        if not source or source.get("reader") not in SCAN_READERS:
+            continue
+        u, why = _uptake(r, False, True, leave_out_flags)
+        out = (why != "") & (why != "rejected")
+        cols = u.select(out).columns()
+        if isinstance(results, RunSet):
+            cols["run"] = np.full(int(out.sum()), name, dtype=object)
+            cols["sample"] = np.array([results.state(name, x)[1] for x in cols["sample"]], str)
+        cols["reason"] = why[out].astype(str)
+        parts.append(cols)
+    if not parts:
+        return {}
+    return {key: np.concatenate([c[key] for c in parts]) for key in parts[0]}
+
+
+def _flag_reasons(results, fit, names: Sequence[str]) -> np.ndarray:
+    """Which of the flags ``names`` each measurement of ``fit`` carries (``'a;b'``; '' for
+    none, and for a spectrum the review accepted)."""
+    out = np.full(len(fit), "", dtype=object)
+    quality = results.quality
+    if not names or quality is None:
+        return out
+    on = np.zeros((len(names), len(fit)), dtype=bool)
+    for k, name in enumerate(names):
+        column = getattr(quality, name, None)
+        if column is not None:
+            on[k] = np.asarray(column, dtype=bool)
+    if results.review is not None:
+        on[:, np.asarray(results.review.status_of(fit)) == "accepted"] = False
+    for i in np.flatnonzero(on.any(axis=0)):
+        out[i] = ";".join(n for n, hit in zip(names, on[:, i], strict=True) if hit)
+    return out
+
+
+def _uptake(results, exclude_flagged: bool, keep_left_out: bool,
+            leave_out_flags: Sequence[str] = ()):
     """:func:`fragment_uptake` of one run, and why each row is left out (all '' unless
     ``keep_left_out``)."""
     from ..fragments import fragment_amides
@@ -215,6 +274,7 @@ def _uptake(results, exclude_flagged: bool, keep_left_out: bool):
                else np.zeros(len(fit), dtype=bool))
     if exclude_flagged:
         keep &= ~flagged
+    hits = _flag_reasons(results, fit, tuple(leave_out_flags))
     means = fit.fits[1].means[:, 0]
     # controls carry no time (NaN) since they are set by role; the undeuterated one is time 0
     times = np.asarray(fit.time, dtype=float).copy()
@@ -234,6 +294,11 @@ def _uptake(results, exclude_flagged: bool, keep_left_out: bool):
         parent = PeptideEntry("", "", extra["parent_peptide"], extra["parent_range"], start,
                               start, int(extra["parent_charge"]))
         label = extra["fragment"]
+        reason = str(why[i])
+        if not reason and hits[i] and chem.ion_terminus(label.rpartition(":")[0]) != "M":
+            if not keep_left_out:  # a fragment ion carrying a flag the analysis leaves out
+                continue
+            reason = str(hits[i])
         key = (parent.peptide, label)
         if key not in amides:
             amides[key] = len(fragment_amides(parent, label, nterm_subtract=nterm, rules=rules))
@@ -255,7 +320,7 @@ def _uptake(results, exclude_flagged: bool, keep_left_out: bool):
         }
         for name, value in values.items():
             rows[name].append(value)
-        reasons.append(str(why[i]))
+        reasons.append(reason)
     if skipped:
         log.info("fragment_uptake: %d spectra of series that are not fragments left out", skipped)
     kinds = {"parent_start": np.int64, "parent_charge": np.int64, "length": np.int64,
@@ -266,7 +331,8 @@ def _uptake(results, exclude_flagged: bool, keep_left_out: bool):
         nterm_subtract=int(nterm), amide_rules=rules), np.array(reasons, dtype=object)
 
 
-def _runset_uptake(runs, exclude_flagged: bool) -> FragmentUptake:
+def _runset_uptake(runs, exclude_flagged: bool,
+                   leave_out_flags: Sequence[str] = ()) -> FragmentUptake:
     """:func:`fragment_uptake` of the runs of a :class:`hxex.analysis.RunSet`."""
     from ..io.mzml import SCAN_READERS
 
@@ -277,7 +343,8 @@ def _runset_uptake(runs, exclude_flagged: bool) -> FragmentUptake:
         if not source or source.get("reader") not in SCAN_READERS:
             continue  # a folder format (MS1 tables): no fragments, nothing to read
         try:
-            u = fragment_uptake(results, exclude_flagged=exclude_flagged)
+            u = fragment_uptake(results, exclude_flagged=exclude_flagged,
+                                leave_out_flags=leave_out_flags)
         except ValueError as exc:
             raise ValueError(f"run {name}: {exc}") from exc
         if len(u):
@@ -1278,6 +1345,10 @@ class FragmentAnalysis:
     - ``max_rate_error``: a ladder step's ``rate_se / rate`` at most this is ``precise`` and
       enters the per-residue rates (:func:`ladder_residues`, ``ladder_residues.csv``: the N-
       and C-terminal ladders combined, fragment charges and conditions kept apart).
+    - ``leave_out_flags``: fragment spectra carrying any of these quality flags are left out of
+      every fragment output (:data:`FRAGMENT_LEAVE_OUT_FLAGS` by default; empty: none left out
+      for their flags), listed with the flags in ``fragment_left_out.csv``; the precursor's own
+      ion and a spectrum the review accepted are kept.
     - ``kint``: compute intrinsic rates, protection factors and theoretical curves (opt-in;
       needs ``exchange``); ``exchange``: the samples' exchange conditions
       (:class:`hxex.kint.ExchangeConditions`, one set for every sample, or by sample with a
@@ -1295,9 +1366,23 @@ class FragmentAnalysis:
     max_rate_error: float = MAX_RATE_ERROR
     kint: bool = False
     exchange: ExchangeConditions | Mapping[str, ExchangeConditions] | None = None
+    leave_out_flags: tuple[str, ...] = FRAGMENT_LEAVE_OUT_FLAGS
 
     def __post_init__(self):
         from ..kint import read_conditions
+        from ..quality import FLAG_NAMES
+
+        flags = self.leave_out_flags
+        if flags is False or flags is None:
+            flags = ()
+        if isinstance(flags, str):
+            flags = (flags,)
+        flags = tuple(dict.fromkeys(str(f) for f in flags))
+        unknown = [f for f in flags if f not in FLAG_NAMES]
+        if unknown:
+            raise ValueError(f"leave_out_flags: {', '.join(unknown)} is not a quality flag "
+                             f"(one of {', '.join(FLAG_NAMES)})")
+        object.__setattr__(self, "leave_out_flags", flags)
 
         object.__setattr__(self, "exchange", read_conditions(self.exchange))
         if not isinstance(self.kint, bool):
@@ -1330,7 +1415,8 @@ class FragmentAnalysis:
                 "tolerance": self.tolerance, "precursor_charge": self.precursor_charge,
                 "fit_rates": self.fit_rates, "max_rate_error": self.max_rate_error,
                 "kint": self.kint,
-                "exchange": conditions_dict(self.exchange)}
+                "exchange": conditions_dict(self.exchange),
+                "leave_out_flags": list(self.leave_out_flags)}
 
     @classmethod
     def from_dict(cls, data: Mapping) -> FragmentAnalysis:

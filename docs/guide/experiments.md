@@ -194,6 +194,15 @@ and z do not); `[run.picker.amide_rules]` changes this per ion type.
 
 - `fragment_uptake.csv`: the K=1 deuteration of every fragment and of the precursor read with
   them.
+- Flagged spectra left out: fragment spectra flagged `below_noise`, `poor_envelope`,
+  `mz_shift`, or `overlapping_ion` are left out of every fragment output, and listed with their
+  flags in `fragment_left_out.csv`. On a targeted dataset, and on infusion kinetics of three of
+  four peptides (the fourth stayed poor whatever was left out), leaving them out made the c- and
+  z-ladders agree, made the closures meet the precursor, and removed nearly all ladder steps
+  outside what one amide can hold; a stricter signal threshold alone did not. On noisy data it
+  costs a third to two thirds of the fragment spectra. The precursor's own ion is kept, and so is a spectrum you mark `accepted` in the
+  review. `leave_out_flags` in `[analysis.fragments]` changes the list; `leave_out_flags = []`
+  keeps every flagged spectrum.
 - Ladders: consecutive fragments of one ion type differ by one residue (ladder figures). With
   `fit_rates = true` (opt-in, as the fits take minutes on a large run) their difference over
   time is fitted with `A exp(-kt) + C`, giving one rate per residue (`ladder_rates.csv`, and a

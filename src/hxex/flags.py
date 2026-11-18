@@ -99,6 +99,11 @@ SPECTRA_FLAGS = "`spectra.csv` `flags`"
 SERIES_CONTROLS = "`series.csv` `controls`"
 SERIES_NOTES = "`series.csv` `control_notes`"
 FLAG_ONLY = "Flag only: nothing is left out or changed."
+# the flags [analysis.fragments] leave_out_flags names by default (hxex.analysis.fragments)
+FRAGMENT_LEFT_OUT = ("Left out of the fragment analysis while "
+                     "`{analysis.fragments.leave_out_flags}` names it (listed in "
+                     "`fragment_left_out.csv`); a spectrum the review accepted stays in. Flag "
+                     "only elsewhere.")
 QUALITY_PAGE = "outputs.md#quality-flags"
 CONTROLS_PAGE = "back-exchange-correction.md#how-hxex-judges-the-controls"
 ORDER_PAGE = "back-exchange-correction.md#the-order-of-the-values"
@@ -133,7 +138,7 @@ _add("noise_outlier", "quality", "spectrum", SPECTRA_FLAGS,
      guide=QUALITY_PAGE)
 _add("mz_shift", "quality", "series, on each of its spectra", SPECTRA_FLAGS,
      "The series' peaks sit off their predicted m/z.",
-     FLAG_ONLY,
+     FRAGMENT_LEFT_OUT,
      "The series' peaks are, as a rule, more than {run.quality.max_mz_offset_ppm} ppm from where "
      "the composition puts them, compared with the run as a whole. Judged only for series "
      "`off_mz` does not check: fragment ions, and series without an undeuterated control.",
@@ -192,7 +197,7 @@ _add("precursor_off", "quality", "series, on each of its spectra", SPECTRA_FLAGS
 _add("overlapping_ion", "quality", "spectrum", SPECTRA_FLAGS,
      "Another ion of the same fragment scans puts at least {run.quality.max_ion_overlap} of this "
      "fragment's picked intensity on its bins.",
-     FLAG_ONLY,
+     FRAGMENT_LEFT_OUT,
      "Their peaks are too close for the instrument to separate, so the fragment's envelope is "
      "partly the other ion's. `overlapping_ion_with` in `spectra.csv` names it and its share. "
      "Ions that are not read (a, b, and y ions), and an ion on every one of the fragment's "
@@ -202,14 +207,14 @@ _add("overlapping_ion", "quality", "spectrum", SPECTRA_FLAGS,
 _add("below_noise", "quality", "spectrum", SPECTRA_FLAGS,
      "A fragment spectrum fitted through the per-scan cut whose tallest peak is below "
      "{run.quality.min_signal_to_noise} times its scan's recorded noise.",
-     FLAG_ONLY,
+     FRAGMENT_LEFT_OUT,
      "So many of its peaks were deleted scan by scan that even the fit through the cut cannot "
      "recover its deuteration. `signal_to_noise` in `spectra.csv` gives the size.",
      "Do not rely on its value.",
      "inputs.md#fitting-fragment-ions-through-the-cut")
 _add("poor_envelope", "quality", "series, on each of its spectra", SPECTRA_FLAGS,
      "The fragment's ion-type envelope could not be measured well.",
-     FLAG_ONLY,
+     FRAGMENT_LEFT_OUT,
      "Left with one ion type's theory for want of usable reference spectra, or the measured "
      "envelope does not describe the spectra: the deuteration can be off by up to a hydrogen.",
      guide="experiments.md#fragments")
@@ -588,6 +593,8 @@ def _format(value) -> str:
         return f"{value:g}"
     if isinstance(value, str):
         return f'"{value}"'
+    if isinstance(value, (list, tuple)):  # as the project file writes it
+        return "[" + ", ".join(_format(v) for v in value) + "]"
     return str(value)
 
 

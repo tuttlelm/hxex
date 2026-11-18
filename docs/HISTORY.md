@@ -10713,3 +10713,34 @@ CSVs or mzML if wanted.
     curve and the shared envelopes still count each copy, and copies within one sample are not
     refused. Tests: `test_one_measurement_read_twice_is_found_by_its_content`,
     `test_a_control_read_under_two_samples_counts_once`.
+
+410. **Fragment spectra with a quality flag that spoils ladders are left out of the fragment
+    analysis by default (owner, 2026-11-17: "build the combined flag filter", on by default).**
+    `[analysis.fragments] leave_out_flags`, default `["below_noise", "poor_envelope",
+    "mz_shift", "overlapping_ion"]` (`hxex.analysis.FRAGMENT_LEAVE_OUT_FLAGS`): a fragment
+    spectrum carrying any of them is left out of `fragment_uptake.csv`, the ladders, the
+    closures and the rates, and listed in the new `fragment_left_out.csv` (the uptake columns
+    and `reason`, the flags it carries, `;`-joined, which the flag dictionary and the window's
+    tooltips read); the precursor's own ion (M, M-NH3) and a spectrum the review accepted stay;
+    `[]` keeps them all. The window's fragments tab draws such spectra faded and dashed (the
+    project's setting, or the default for results opened without their project). The four flags'
+    actions in the dictionary say so (`flags.md`). Evidence (private records, scratch,
+    K-independent yardsticks: undeuterated controls near 0, values within the amide count,
+    closure c + z - precursor, ladder steps between 0 and 1 D per amide, c- and z-ladder
+    agreement per residue, and rates where precise ones existed): on the targeted Orbitrap
+    dataset the four flags took the closure misses from 69 to 4 %, implausible steps from 38 to
+    2 %, c/z residue disagreement from 70 to 3 % and c vs z rates more than 3x apart from 17 to
+    0 %, keeping 5,073 of 15,449 fragment spectra; below_noise and poor_envelope carried most of
+    it, and a stricter signal threshold (20 x noise) instead kept fewer spectra and stayed bad
+    (poor_envelope is not dimness). On the infusion kinetics of the private fragment dataset
+    (raw files converted with ThermoRawFileParser `-N -p`; HISTORY 406 and 407 found on the way)
+    the same two flags gave the largest gains for the 8-, 12- and 14-residue peptides
+    (12-residue: closure misses 37 -> 3 %, steps 16 -> 4 %, c/z 39 -> 3 %); the 24-residue
+    peptide stayed poor whatever was left out (owner: "maybe the data is just bad"). The
+    charge-partition rule (a short fragment without a basic residue whose complement holds one
+    should be absent; bright ones of that kind are 5x more often wrong) and dropping 2+
+    fragments added nothing once poor_envelope was used, so they are not part of the filter;
+    precursor_off, poor_fit, low_intensity and the brightness flags improved no yardstick. On
+    noisy data the filter costs a third to two thirds of the fragment spectra. Guide
+    experiments.md (fragments), fragment-residues.md, outputs.md; settings.md and flags.md
+    regenerated. Test: `test_flagged_fragment_spectra_are_left_out_of_the_fragment_analysis`.

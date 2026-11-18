@@ -475,6 +475,7 @@ apparent factor at each time) and, with a reference, `compare_protection.csv`.
 | File | Holds |
 |---|---|
 | `fragment_uptake.csv` | per fragment spectrum: the K=1 mean, its error, amides, condition, parent |
+| `fragment_left_out.csv` | the fragment spectra left out of the fragment outputs (not those the review rejected), with the columns of `fragment_uptake.csv` and `reason`: the quality flags of `[analysis.fragments] leave_out_flags` the spectrum carries, or `excluded` |
 | `ladder_rates.csv` | (with `[analysis.fragments] fit_rates = true`) per one-residue ladder step: rate and amplitude with errors, `resolved`, `precise`; with `kint`, intrinsic rate and protection |
 | `ladder_residues.csv` | (with `[analysis.fragments] fit_rates = true`) per residue and N-/C-terminal ion pair: the combined rate, misfit, `agreement` |
 | `closure.csv` | per complementary pair and split: the miss c + z minus the precursor, flagged beyond the tolerance; `reference` says what the precursor was: `MS1` (the parent's MS1 spectrum in the same run) or `M` (its ion in the fragment scans, when the parents were not read) |

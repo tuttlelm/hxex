@@ -23,7 +23,8 @@ residue tiers, :func:`hxex.report.plot_population_tiers`), and with a reference
 ``woods_<sample>_<time>`` (K=1, and where the number of populations differs),
 ``woods_K2_<sample>_<time>`` (the K=2 comparisons), ``butterfly_<sample>`` and
 ``regions_<time>``. For a run with fragment series (:class:`hxex.analysis.FragmentAnalysis`;
-those series are left out of the above): ``fragment_uptake.csv``, ``closure.csv`` and per
+those series are left out of the above): ``fragment_uptake.csv``, ``fragment_left_out.csv``
+(the fragment spectra ``leave_out_flags`` left out), ``closure.csv`` and per
 parent ``ladder_<sample>_<range>_z<charge>_<ion>_z<fragment charge>``,
 ``fragments_..._<condition>_<ion>_z<fragment charge>`` and ``closure_..._<n ion>+<c ion>``;
 with ``fit_rates`` (opt-in) also ``ladder_rates.csv``,

@@ -595,7 +595,7 @@ def test_a_fragment_series_has_its_parents_fragments_tab(qtbot, page, monkeypatc
     why = np.full(len(u), "", dtype=object)
     monkeypatch.setattr(type(page), "_with_fragments", lambda self: True)
     monkeypatch.setattr(type(page), "_fragment_table",
-                        lambda self, results: (u, why, np.zeros(len(u), dtype=bool)))
+                        lambda self, results, flags=(): (u, why, np.zeros(len(u), dtype=bool)))
     page._show_tabs("start")  # the tabs again, now with fragments
     second = page.tree.topLevelItem(0).child(1)  # data_id 1: c:1 in the table
     page.tree.setCurrentItem(second)

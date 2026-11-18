@@ -545,6 +545,7 @@ The fragment outputs of a run with fragment series (ladders, rates, closure, per
 | `fit_rates` | true/false | `false` | opt in: fit each ladder step's decay rate (ladder_rates.csv, ladder_residues.csv, the residue_rates figures, the fitted curves on the ladder figures); slow on a large run (minutes) |
 | `max_rate_error` | number | `0.5` | ladder steps with rate_se / rate at most this give the per-residue rates (ladder_residues.csv) |
 | `kint` | true/false | `false` | opt in: intrinsic rates and theoretical curves, and with fit_rates protection factors (needs [analysis.fragments.exchange]) |
+| `leave_out_flags` | list | `["below_noise", "poor_envelope", "mz_shift", "overlapping_ion"]` | fragment spectra carrying any of these quality flags are left out of the fragment analysis (fragment_left_out.csv); [] leaves none out for their flags; the precursor's own ion and spectra the review accepted stay in |
 
 ## `[analysis.fragments.labels]`
 

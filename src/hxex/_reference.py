@@ -336,6 +336,11 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.fragments.labels": "short condition names for the figures: "
                                  "[analysis.fragments.labels] (below)",
     "analysis.fragments.tolerance": "deuterons: a closure c + z - M beyond this is flagged",
+    "analysis.fragments.leave_out_flags": "fragment spectra carrying any of these quality flags "
+                                          "are left out of the fragment analysis "
+                                          "(fragment_left_out.csv); [] leaves none out for "
+                                          "their flags; the precursor's own ion and spectra "
+                                          "the review accepted stay in",
     "analysis.fragments.precursor_charge": "the closure's precursor charge (unset: the "
                                            "unreacted precursor)",
     "analysis.fragments.fit_rates": "opt in: fit each ladder step's decay rate "

@@ -632,20 +632,34 @@ class ResultsWorkspace(QWidget):
         settings = getattr(self.results, "settings", None)
         return has_fragments(None if settings is None else settings.spectra_source)
 
-    def _fragment_table(self, results):
+    def _fragment_table(self, results, flags=()):
         """The fragment uptake of ``results``, left-out rows included, and why each is left out
-        (:func:`hxex.analysis.fragment_uptake_with_left_out`) and whether each came from a
-        kinetics run: made once per results (a review decision makes new ones). Called in the
-        drawing thread only."""
+        (:func:`hxex.analysis.fragment_uptake_with_left_out`, with the ``flags`` the analysis
+        leaves out) and whether each came from a kinetics run: made once per results and flags
+        (a review decision makes new results). Called in the drawing thread only."""
         from ..analysis import fragment_uptake_with_left_out
         from ..report.fragments import _kinetics_rows
 
+        flags = tuple(flags)
         cached = getattr(self, "_fragments_of", None)
-        if cached is None or cached[0] is not results:
-            uptake, why = fragment_uptake_with_left_out(results)
-            cached = (results, uptake, why, _kinetics_rows(results, uptake))
+        if cached is None or cached[0] is not results or cached[1] != flags:
+            uptake, why = fragment_uptake_with_left_out(results, leave_out_flags=flags)
+            cached = (results, flags, uptake, why, _kinetics_rows(results, uptake))
             self._fragments_of = cached
-        return cached[1:]
+        return cached[2:]
+
+    def _fragment_flags(self) -> tuple[str, ...]:
+        """The quality flags whose fragment spectra the analysis leaves out: the project's
+        ``[analysis.fragments] leave_out_flags``, or the default for results opened without
+        their project."""
+        from ..analysis import FRAGMENT_LEAVE_OUT_FLAGS
+
+        window = self.window
+        if window is None or window.project is None or not window.project_results:
+            return FRAGMENT_LEAVE_OUT_FLAGS
+        fragments = getattr(window.fresh_project_state().analysis, "fragments", None)
+        return (FRAGMENT_LEAVE_OUT_FLAGS if fragments is None
+                else tuple(fragments.leave_out_flags))
 
     def _fragment_labels(self):
         """The project's condition names (``[analysis.fragments.labels]``), or None."""
@@ -665,6 +679,7 @@ class ResultsWorkspace(QWidget):
 
         pep, series = payload[0], payload[1]
         labels = self._fragment_labels()
+        flags = self._fragment_flags()  # read here: draw() runs in the drawing thread
         results = self.results
         chosen = self.time_axis.currentData()  # read here: draw() runs in the drawing thread
 
@@ -676,7 +691,7 @@ class ResultsWorkspace(QWidget):
             return fig
 
         def draw():
-            uptake, why, kinetics = self._fragment_table(results)
+            uptake, why, kinetics = self._fragment_table(results, flags)
             mine = uptake.data_id == series.data_id
             if mine.any():  # a fragment (or the precursor's ion): its own parent
                 i = int(np.flatnonzero(mine)[0])

@@ -41,6 +41,7 @@ from .compare import (
     region_summary,
 )
 from .fragments import (
+    FRAGMENT_LEAVE_OUT_FLAGS,
     ClosureTable,
     DecayFit,
     FragmentAnalysis,
@@ -58,6 +59,7 @@ from .fragments import (
     fit_decay,
     fit_residues,
     fragment_ion_types,
+    fragment_left_out,
     fragment_trace,
     fragment_uptake,
     fragment_uptake_with_left_out,
@@ -134,6 +136,8 @@ __all__ = [
     "fit_decay",
     "fit_residues",
     "fragment_trace",
+    "FRAGMENT_LEAVE_OUT_FLAGS",
+    "fragment_left_out",
     "fragment_uptake",
     "fragment_uptake_with_left_out",
     "parent_uptake",

@@ -820,7 +820,8 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     ``ladder_..._<ion>_z<charge>``, ``fragments_..._<condition>_<ion>_z<charge>`` (every
     fragment of the series on one panel), ``closure_..._<n ion>+<c ion>`` and
     ``residue_rates_...``;
-    tables ``fragment_uptake``, ``ladder_rates``, ``ladder_residues`` and ``closure``. A parent
+    tables ``fragment_uptake``, ``fragment_left_out`` (the spectra ``config.leave_out_flags``
+    left out, with the flags), ``ladder_rates``, ``ladder_residues`` and ``closure``. A parent
     read at several precursor charges has one ``residue_rates_<sample>_<range>`` (no charge)
     for all of them. The rate fits are opt-in (``config.fit_rates``): without them there are
     no ``ladder_rates``, ``ladder_residues`` or ``residue_rates_...``, and the ladder figures
@@ -837,6 +838,7 @@ def fragment_outputs(results, config, *, quiet: bool = False,
         _PARTNERS,
         closure_table,
         fragment_ion_types,
+        fragment_left_out,
         fragment_uptake,
         ladder_rates,
         ladder_residues,
@@ -859,7 +861,8 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     from ..hooks import check_cancel
 
     check_cancel(cancel)
-    uptake = fragment_uptake(results)  # any other error is a real one
+    flags = config.leave_out_flags  # [analysis.fragments] leave_out_flags
+    uptake = fragment_uptake(results, leave_out_flags=flags)  # any other error is a real one
     if not len(uptake):
         return {}, []
     ions = list(config.ion_types) or fragment_ion_types(uptake)
@@ -881,6 +884,16 @@ def fragment_outputs(results, config, *, quiet: bool = False,
                                       min_time=config.min_time, tolerance=config.tolerance,
                                       parents=parents))
     tables = {"fragment_uptake": uptake.columns()}
+    left = fragment_left_out(results, leave_out_flags=flags)
+    if left and len(left["reason"]):  # the spectra left out, and why (not the rejected)
+        tables["fragment_left_out"] = left
+        n_flagged = int(np.sum(left["reason"] != "excluded"))
+        if n_flagged and not quiet:
+            import logging
+
+            logging.getLogger(__name__).info(
+                "%d fragment spectra left out for their quality flags (%s; [analysis.fragments] "
+                "leave_out_flags): fragment_left_out.csv", n_flagged, ", ".join(flags))
     if rates is not None:
         tables |= {"ladder_rates": rates.columns(),
                    "ladder_residues": ladder_residues(rates).columns()}
