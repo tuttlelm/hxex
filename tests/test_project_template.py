@@ -10,11 +10,17 @@ from hxex.config import ProjectError, load_project, template
 from hxex.project_edit import save_template
 
 
+def _elsewhere(folder):
+    """A full location outside the project (with its drive on Windows: "/abs" is not one
+    there), as a project file writes it."""
+    return (folder.parent / "elsewhere" / "d109h.fasta").as_posix()
+
+
 def _specexport(folder):
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "SpecExport").mkdir()
     text = template().replace("overwrite = false ", "overwrite = true  ", 1)
-    text += """
+    text += f"""
 [review]
 table = "user_review_table.csv"
 
@@ -29,7 +35,7 @@ reference = "WT"
 
 [analysis.fasta]
 WT = "sequences/wt.fasta"      # the reference's own sequence
-D109H = "/abs/d109h.fasta"
+D109H = "{_elsewhere(folder)}"
 """
     path = folder / "hxex.toml"
     path.write_text("# my own note at the top\n" + text, encoding="utf-8")
@@ -50,7 +56,8 @@ def test_a_copy_in_another_folder_reads_the_same_data(tmp_path):
     assert copy.input.data_dir.resolve() == original.input.data_dir.resolve()
     assert _data(target)["input"]["data_dir"] == "../first/SpecExport"
     fasta = _data(target)["analysis"]["fasta"]
-    assert fasta == {"WT": "../first/sequences/wt.fasta", "D109H": "/abs/d109h.fasta"}
+    assert fasta == {"WT": "../first/sequences/wt.fasta",
+                     "D109H": _elsewhere(tmp_path / "first")}  # a full location: kept
     text = target.read_text(encoding="utf-8")
     assert text.startswith("# my own note at the top")  # comments kept
     assert "# the reference's own sequence" in text
