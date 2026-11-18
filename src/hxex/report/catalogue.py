@@ -183,6 +183,18 @@ def _has_regions(analysis) -> bool:
 
 _REGIONS = Need("[[analysis.regions]]", "at least one region (or a group's own)",
                 lambda s: _has_regions(s.analysis))
+def _groups_share_regions(analysis) -> bool:
+    """Whether ``hxex analyse`` writes the folder across the groups: the groups' analyses (not
+    one group's), two groups or more with a region of one name."""
+    from .groups import shared_region_names
+
+    return analysis.by_group and len(analysis.groups) > 1 and bool(
+        shared_region_names(analysis))
+
+
+_GROUP_REGIONS = Need("[analysis.groups]", "two groups or more with a region of one name "
+                      "(their own [[...regions]] or the shared ones), every group analysed",
+                      lambda s: _groups_share_regions(s.analysis))
 _PROTECTION = Need("[analysis] protection", "true (with [analysis.labelling])",
                    lambda s: bool(s.analysis.protection))
 _FRAGMENTS = Need("[analysis.fragments]", "not false",
@@ -372,6 +384,14 @@ KINDS: tuple[FigureKind, ...] = (
     FigureKind(
         "regions", "Regions", ANALYSE, ("regions_{time}",), "each region's fD, per sample",
         _ANALYSIS_PAGE, (_REGIONS,), changed_by=("[[analysis.regions]]", "[analysis.colours]")),
+    FigureKind(
+        "cross_group_regions", "Regions across the groups", ANALYSE,
+        ("cross_group_regions_{time}",),
+        "each region's fD in every group that has a region of that name, each over its own "
+        "protein's residues: the bars by group, its reference first and darkest, the measured "
+        "protein underlined in each vial label (results_analysis_groups)",
+        "experiments.md#groups-of-samples", (_GROUP_REGIONS,),
+        changed_by=("[analysis.groups]", "[[analysis.regions]]", "[analysis] page_size")),
     FigureKind(
         "protection", "Protection factors", ANALYSE, ("protection_{sample}",),
         "the peptides' protection factors", "protection-factors.md", (_PROTECTION,),

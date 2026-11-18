@@ -953,7 +953,7 @@ check`, 3 strict comparisons by sequence, 4 the forms of the pool, 5 head-to-hea
 table, 6 the window (identity columns, filter by class and level; built). Check data: the private
 pooled dataset (`HXEX_POOLED_EXAMPLE`, both conditions) and the state exports beside it.
 
-### Groups of samples (design, owner 2026-11-18; steps 1-2 built, HISTORY 414 and 416)
+### Groups of samples (design, owner 2026-11-18; steps 1-3 built, HISTORY 414, 416, and 417)
 
 **The use case.** One project holds samples of several proteins, analysed together but each
 protein looked at on its own: heterooligomers of three proteins A, B, and C, each alone and in
@@ -1049,6 +1049,12 @@ writes a cross-group folder (`results_analysis_groups`):
   - Many regions go on further rows of panels, never one very wide row.
   - The residues behind each bar in its hover and the table. Times match by value; a time
     missing from a group leaves its bars empty.
+
+**Built (step 3).** `hxex analyse` keeps each group's tables in memory and, once every group is
+analysed in one command and a region name occurs in two groups or more, writes
+`results_analysis_groups` (`hxex.report.groups`): the table as above and the figure as drafted.
+matplotlib 3.8, the lowest version, has no `\underline` in its mathtext: there the measured
+protein is in bold (the figure's caption says which). A group may not be named `groups`.
 
 **Order.** 1 groups: settings, one analysis per group, own regions and sites, `hxex check`,
 guide (with a "Regions and sites" section: sites are only drawn, regions are also tabled and

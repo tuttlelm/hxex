@@ -324,3 +324,63 @@ def test_shared_peptides_are_marked_on_the_woods_and_butterfly_plots():
     assert len(strips(bottom)) == 1
     assert SHARED_LABEL in [t.get_text() for t in bottom.get_legend().texts]
     assert not strips(plot_butterfly(pc, "S").axes[1])
+
+
+def test_regions_of_one_name_are_joined_across_the_groups(tmp_path, capsys):
+    """With every group analysed and a region name in two groups, results_analysis_groups gets
+    cross_group_regions.csv: each group's rows over its own residues, its reference first, the
+    test against its own reference; not with --group for some, nor without a shared name."""
+    text = GROUPS.replace('[[analysis.groups.A.regions]]\nname = "own"',
+                          '[[analysis.groups.A.regions]]\nname = "shared"')
+    path = groups_project(tmp_path, text)
+    assert cli.main(["-q", "run", str(path)]) == 0
+    assert cli.main(["-q", "analyse", str(path), "--group", "A"]) == 0
+    cross = tmp_path / "out_analysis_groups"
+    assert not cross.exists()
+    capsys.readouterr()
+    assert cli.main(["analyse", str(path), "--overwrite"]) == 0
+    out = capsys.readouterr().out
+    assert "1 table and " in out and f"across the groups in {cross}" in out
+    with open(cross / "cross_group_regions.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert list(rows[0]) == ["label", "group", "sample", "reference", "region", "start", "end",
+                             "time", "fD", "fD_se", "n_residues", "coverage", "delta",
+                             "delta_se", "significant"]
+    spans = {(r["group"], r["label"], r["start"], r["end"]) for r in rows}
+    assert spans == {("A", "alone", "2", "8"), ("A", "A+B", "2", "8"), ("B", "B1", "1", "5")}
+    assert [r["label"] for r in rows if r["group"] == "A"][0] == "alone"  # reference first
+    assert all(r["delta"] == "" for r in rows if r["sample"] == r["reference"])
+    assert all(r["significant"] in ("True", "False") for r in rows if r["sample"] == "A2")
+    # one figure per time, each a kind the catalogue knows (hxex figures, the guide)
+    from hxex.report.catalogue import kind_of
+
+    times = {r["time"] for r in rows}
+    drawn = sorted(p.stem for p in cross.glob("cross_group_regions_*"))
+    assert len(drawn) == len(times) and all(kind_of(d).name == "cross_group_regions"
+                                            for d in drawn)
+    # no region name in two groups: no folder across them
+    path.write_text(path.read_text().replace('name = "shared"\nstart = 2', 'name = "own"\n'
+                                             'start = 2'))
+    assert cli.main(["analyse", str(path), "--overwrite"]) == 0
+    assert "no region name in two groups or more" in capsys.readouterr().err
+
+
+def test_a_group_cannot_be_named_groups():
+    with pytest.raises(ValueError, match="names the folder across the groups"):
+        AnalysisConfig(groups={"groups": {"reference": "A", "samples": ["A"]}})
+
+
+def test_a_vial_label_underlines_the_protein_measured():
+    """The measured protein underlined in its vial label (its part split at "+", or the group's
+    name for a label that names no group); bold where matplotlib cannot underline (3.8)."""
+    from hxex.report.groups import bar_colours, vial_label
+
+    assert vial_label("B", "A+B", underline=True) == r"A+$\underline{\mathrm{B}}$"
+    assert vial_label("B", "alone", underline=True) == r"$\underline{\mathrm{B}}$"
+    assert vial_label("B", "A+B", underline=False) == r"A+$\mathbf{B}$"
+    assert vial_label("A 1", "A 1+B", underline=False) == r"$\mathbf{A\ 1}$+B"
+    bars = [("A", "alone", "A1"), ("A", "A+B", "A2"), ("B", "alone", "B0")]
+    colours = bar_colours(bars)
+    # one colour map per group, the reference darkest
+    assert sum(colours[bars[0]][:3]) < sum(colours[bars[1]][:3])
+    assert colours[bars[0]] != colours[bars[2]]

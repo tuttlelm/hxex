@@ -477,6 +477,10 @@ class AnalysisConfig:
             name = str(name)
             if not name.strip():
                 raise ValueError("a group needs a name")
+            if name.lower() == "groups":  # results_analysis_groups is the folder across them
+                raise ValueError('[analysis.groups.groups]: "groups" names the folder across '
+                                 "the groups (results_analysis_groups); give the group another "
+                                 "name")
             try:
                 groups[name] = (value if isinstance(value, AnalysisGroup)
                                 else AnalysisGroup.from_dict(value))

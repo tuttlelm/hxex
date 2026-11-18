@@ -1651,6 +1651,7 @@ def write_analysis(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
     before_writing=None,
+    computed: list | None = None,
 ) -> list[Path]:
     """Compute the analysis of ``results`` (:class:`hxex.report.Results`, or a
     :class:`hxex.analysis.RunSet` to compare separate runs) and write its tables and figures into
@@ -1671,13 +1672,16 @@ def write_analysis(
     can tell when the folder no longer matches its bundle. ``before_writing`` (no arguments) is
     called once everything is computed, just before the first file is written (``hxex
     analyse --keep-previous`` moves the earlier folder then, so that a refusal moves
-    nothing)."""
+    nothing). ``computed``: a list the :class:`AnalysisOutputs` is appended to (``hxex
+    analyse`` joins the groups' region tables across them, :mod:`hxex.report.groups`)."""
     from ..config import settings_records
 
     directory = Path(directory)
     read = results.runs if isinstance(results, RunSet) else results  # as read, for the records
     outputs = analysis_outputs(results, config, base=base, review=review, cancel=cancel)
     tables, jobs, config = outputs.tables, outputs.figures, outputs.config
+    if computed is not None:
+        computed.append(outputs)
 
     total = len(tables) + len(jobs)
     names = [f"{name}.csv" for name in tables] + [f"{_stem(stem)}.{config.format}"

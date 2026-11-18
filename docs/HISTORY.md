@@ -10965,3 +10965,24 @@ CSVs or mzML if wanted.
     long dashes) and no line before residue 1 (`Annotations.marks`; a region's end and the
     next one's start were already one line; a line after the last residue lies outside the
     axis). Drafts in the private analysis_groups folder.
+
+417. **Groups of samples, step 3: the regions across the groups (owner, 2026-11-18; PLAN
+    Next steps 38).** With `[analysis.groups]`, `hxex analyse` keeps each group's analysis
+    (`write_analysis(computed=)`) and, once every group is analysed in one command (not with
+    `--group` for some) and two groups or more have a region of one name (their own or the
+    shared ones), writes `results_analysis_groups` (`hxex.report.groups`, prepared and
+    overwritten as the analysis folders are; a group named `groups` is refused):
+    `cross_group_regions.csv`, one row per vial label, group, region, and time (sample and
+    reference; the region's residues in that group; `fD`, `fD_se`, `n_residues`, `coverage`
+    from `regions.csv`; `delta`, `delta_se`, `significant` from the group's own region test,
+    `compare_regions.csv`'s `delta_shared` and its error), and one figure per time,
+    `cross_group_regions_<time>`, as the owner chose from drafts on the private
+    heterooligomer dataset: grouped bars by region, ordered by group with each reference
+    first, one colour map per group with the reference darkest, the legend naming each bar by
+    its vial label with the measured protein underlined (the group's name for a label naming
+    no group, `alone`), further rows of panels within `[analysis] page_size`'s width; each
+    bar's residues in its hover. matplotlib 3.8, the lowest version supported, has no
+    `\underline` in mathtext: the protein is in bold there (`_can_underline`, the caption says
+    which). Figure catalogue entry `cross_group_regions` (drawn only for the groups' analyses
+    together). Checked on the private dataset: 690 rows (three proteins, three vials each, 15-16
+    regions, five times), "ACD" over residues 84-172, 64-153, and 63-152 of the three proteins.

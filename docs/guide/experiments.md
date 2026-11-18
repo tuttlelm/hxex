@@ -171,6 +171,25 @@ analysis of the group's samples against its reference. `hxex analyse hxex.toml -
 makes only group B's. `hxex check` shows each group: its reference, its samples by label, and
 whether its regions and sites are its own or the shared ones.
 
+**Across the groups.** When two groups or more have a region of the same name (each over its
+own protein's residues: "ACD" may be residues 84-172 in one protein and 64-153 in another),
+`hxex analyse` also writes a folder across the groups, `results_analysis_groups`, once every
+group is analysed in the same command (not with `--group` for some):
+
+- `cross_group_regions.csv`: one row per vial label, group, region, and time: the group's
+  sample and reference, the region's residues in that group (`start`, `end`), `fD`, `fD_se`,
+  `n_residues`, `coverage`, and the group's own test against its reference (`delta`,
+  `delta_se`, `significant`; empty for the reference itself). A region a group does not have
+  has no row.
+- `cross_group_regions_<time>`: grouped bars of each region's fD, the region names along the
+  bottom, the bars ordered by group (each group's reference first), one colour family per
+  group with its reference darkest. The legend names each bar by its vial label with the
+  measured protein underlined ("A+B" with A underlined is protein A in that vial; a sample
+  labelled `alone` reads as its group's name); with matplotlib older than 3.9 it is in bold
+  instead. Many regions go on further rows of panels.
+
+A group cannot be named `groups` (the folder's name).
+
 ---
 
 ## Top-down and intact proteins

@@ -2612,7 +2612,21 @@ def cmd_analyse(args) -> int:
     # with "all" the references are the results' samples, known once they are open
     outs = ({} if ALL_REFERENCES in config.references
             else {name: folder(name) for name in (names or ("",))})
-    if outs and not prepared(outs):
+    # across the groups (cross_group_regions.csv): once every group is analysed, when two
+    # groups or more have a region of one name
+    cross = None
+    if config.by_group and len(config.groups) > 1:
+        from .report.groups import CROSS_GROUPS, shared_region_names
+
+        if not shared_region_names(config):
+            log.info("across the groups: no region name in two groups or more, so no "
+                     "results_analysis_%s", CROSS_GROUPS)
+        elif set(names) != set(config.groups):
+            log.info("across the groups: written when every group is analysed (not with "
+                     "--group for some)")
+        else:
+            cross = folder(CROSS_GROUPS)
+    if outs and not prepared({**outs, **({"": cross} if cross is not None else {})}):
         return EXIT_ERROR
     stop = _Stop()
     said = []
@@ -2648,6 +2662,8 @@ def cmd_analyse(args) -> int:
             if left := ungrouped_samples(results, config):
                 log.info("in no group of [analysis.groups], so not analysed: %s",
                          ", ".join(left))
+        computed: dict = {}  # each group's analysis (config, tables), for across the groups
+        across_line = ""
         for ref, out in outs.items():
             one = config.one(ref)
             what = f"group {ref}" if config.by_group else f"against {ref}"
@@ -2660,14 +2676,37 @@ def cmd_analyse(args) -> int:
                     progress=progress, cancel=stop,
                     # moved only once nothing more can refuse the analysis
                     before_writing=(lambda out=out: prepare_output(out, keep_previous=True))
-                    if keep_previous else None)
+                    if keep_previous else None,
+                    computed=(kept := []) if cross is not None else None)
+            if cross is not None and kept:
+                computed[ref] = (one, kept[0].tables)
             tables = sum(1 for p in written if p.suffix == ".csv")
             figures = sum(1 for p in written if p.suffix == f".{config.format}")
             said.append(f"{tables} table(s) and {figures} figure(s) in {out}")
+        if cross is not None and len(computed) > 1:
+            from .report.groups import write_cross_groups
+
+            if keep_previous:
+                prepare_output(cross, keep_previous=True)
+            made = {name: str(getattr(getattr(r, "settings", None), "created", "") or "")
+                    for name, r in opened.items()}
+            from .report.analysis import _time_scale
+            from .report.results import provisional_note
+
+            across = write_cross_groups(
+                computed, cross, made=made, figure_format=config.format,
+                time_scale=_time_scale(results), page_width=config.page_size[0],
+                note=provisional_note(opened if several else opened[""]))
+            if across:
+                n_figures = sum(1 for p in across if p.suffix != ".csv")
+                across_line = (f"1 table and {n_figures} figure(s) across the groups in "
+                               f"{cross}")
     if not several:  # said once, for every folder not just written
         _stale_analyses(lead, next(iter(outs.values())), written=list(outs.values()))
     for line in said:
         _say(line + ", with the settings used")
+    if cross is not None and across_line:
+        _say(across_line)
     return 0
 
 
