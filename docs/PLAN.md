@@ -1941,6 +1941,24 @@ Planned, not built:
    `fit_rates` on spends a minute in `fragments.fit_decay`'s 3,766 `scipy.optimize.curve_fit`
    calls, almost all in finite-difference Jacobians. An analytic Jacobian of the decay model, or
    a vectorised start, would cut most of it. Engine work, a later item.
+37. **Peptide comparisons on the best correction both sides share** (owner, 2026-11-17). A
+   comparison of two samples' peptides leaves out a series whose fully deuterated control is a
+   stand-in (`[analysis.filters] stand_in_controls`), so a peptide can drop out of the
+   comparison entirely: in the benchmark's per-bin run, every 30 min replicate of 94-113 z3 in
+   one sample was left out that way. Instead, the comparison could fall back to the best
+   correction level both sides share (own control on both, then the same stand-in on both,
+   down to uncorrected deuterium, which is always shared), as the pooled head to head does from
+   2026-11-17 (both sides on one shared retention; each sample's own values unchanged
+   elsewhere). Open: mixed levels in one table and figure (a `correction` column, marked
+   points), whether residue-level comparisons take the same rule, and whether it replaces
+   `stand_in_controls` for comparisons. The rows it concerns: a comparison whose sides are
+   corrected differently (one its own control, the other a stand-in), 6 of 814 tested K = 1
+   rows in the private pooled SpecExport run, 73 of 860 in its raw-file run; the rest share a
+   correction already (the states read the same control files). Needs first a test like the
+   head-to-head one of HISTORY 413 (hide one side's control, score each correction against
+   the verdict with both own controls); between different sequences that test ruled a shared
+   correction out (a quarter of verdicts changed whatever stood in), and the same peptide may
+   fare better since one sample's control is a real measurement of the same molecule.
 
 ## Risks and open decisions
 

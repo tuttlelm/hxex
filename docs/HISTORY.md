@@ -10861,3 +10861,23 @@ CSVs or mzML if wanted.
     not a global fit), its mean share, and what follows (a weak spectrum dilutes but does not
     veto; one strong spectrum can carry a set, the mean share being the guard); statistics.md
     points to it.
+
+413. **Pooled head to head between different sequences stays tested only on their own
+    controls: no shared correction keeps the verdicts (owner, 2026-11-17; scratch only, no hxex
+    change).** The owner asked whether rows without their own fully deuterated controls on both
+    sides could be compared on one shared correction. On the private pooled dataset's pairs with
+    their own controls on both sides, one side's controls were hidden and that side corrected
+    as each option would, scored against the verdict with both own controls (acetyl-lysine pairs
+    left out: no intrinsic rates yet). SpecExport, 60 hidden sides: the paired sequence's
+    control, retention off by median 2 % (max 14 %), verdict unchanged in 80 %; the kint
+    stand-in (quench pH 2.5, 0 C, LC in H2O; scale, LC time and RT term fitted to the run's
+    other controls) 8 % (15 %), 83 %; hxex's usual stand-in 10 % (66 %), 87 %; the run's
+    median 11 % (25 %), 73 %. The raw-file run (130 sides; its own controls include ones the
+    owner judged bad by eye) 69-82 %. The two sequences' own retentions differ by a median of
+    3 % with one substitution (8 % on the raw files), 1-6 % with two, and 13-30 % with three:
+    as large as the head-to-head differences sought, so a borrowed correction changes a quarter
+    of the verdicts whichever it is. The rows stay listed with their values and reason, untested
+    and pale in the figure (HISTORY 345). Comparisons of the same peptide between the pooled
+    states (prep methods) already share a correction (the states read the same control files;
+    808 of 814 tested K = 1 rows); the few corrected differently are PLAN Next steps 37.
+
