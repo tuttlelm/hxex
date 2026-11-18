@@ -10986,3 +10986,42 @@ CSVs or mzML if wanted.
     which). Figure catalogue entry `cross_group_regions` (drawn only for the groups' analyses
     together). Checked on the private dataset: 690 rows (three proteins, three vials each, 15-16
     regions, five times), "ACD" over residues 84-172, 64-153, and 63-152 of the three proteins.
+
+418. **The window's File tab finds and edits the project file** (owner, 2026-11-18). The
+    tab was a read-only view; it is now `hxex.gui.file_view.ProjectFileView`. Ctrl+F (or the
+    find box) marks every match and Enter / Shift+Enter step through them, with a count and a
+    match-case box. Typing changes nothing on disk: **Save** writes the text through
+    `hxex.project_edit.write_text` (refused, file untouched, when the text is not valid TOML:
+    the message and the cursor name the line; the file's byte-order mark and line endings are
+    kept; a settings problem is written and shown, as on the Settings form, since a file being
+    filled in may lack something), as one step of the Settings form's Undo
+    (`MainWindow.write_project_text` through `recording`). The tab reads "File (unsaved)" while
+    the text differs from the file, and **Discard changes** puts it back. A change to the file
+    from elsewhere while there are unsaved edits keeps the edits and says so (**Load the file**
+    drops them; Save asks before writing over the change). Opening another project or closing
+    the window asks about unsaved text first (`may_leave`, beside the Tables view's).
+    Allowed while results are open, as the Settings form is. The text is coloured as TOML
+    (`hxex.gui.toml_colours`, a QSyntaxHighlighter: headings, setting names, text, numbers and
+    true/false, comments; a light and a dark set picked from the palette's base colour and
+    changed with it); a switched-off setting is a comment, so it is grey and the settings in
+    use stand out. tests/test_gui_file.py.
+
+419. **Save project file as template** (owner, 2026-11-18). File > Save project file as
+    template (and a button at the top of the Project part) copies the project file open as the
+    start of another project with the same data, then opens the copy. The owner chose a
+    template copy over a plain "save as", because a plain copy keeps everything that ties a
+    project to its results and review (two project files writing one bundle; with `overwrite =
+    true` the copy's first run would replace the original's results). `hxex.project_edit.
+    save_template` keeps every setting and comment; rewrites the paths the project reads,
+    which count from the project file's folder (`[input] data_dir`, `pooled_fasta`,
+    `peptides`, `thermo_dir`, `retention_times`, `rt_elution_windows`, `spectra`, `[analysis]
+    fasta` and `runs`, per sample too, and `data_root` for the scan formats, written even when
+    unset since relative run paths start there), relative where it can; sets `[output]
+    bundle` to the name asked for (refused when it is the original's results or a folder that
+    exists; suggested `results_<new file's stem>`); clears `overwrite`, `keep_previous`, a
+    tables folder named outright, `[analysis] out`, `[review] table`, and the
+    `[[review.exclude]]` rules (owner: the review starts afresh; a user who wants the
+    original's decisions chooses that table with Browse). The elution windows stay linked to
+    the original's file (owner: they describe the data, not the fits). The copy is checked to
+    read every path the original reads before it is written. Not offered: clearing the input
+    paths too (a template for new data; to add if wanted). tests/test_project_template.py.

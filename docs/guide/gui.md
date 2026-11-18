@@ -83,6 +83,23 @@ list on the left), each with its description, the text of the [settings referenc
 part, beside **Open project file…**) asks for the input format and a name and writes a project
 file with every setting at its default, as `hxex init` does.
 
+**File > Save project file as template** (or **Save as template…** at the top of the Project
+part) starts another project from the one open: the same data with other settings, say. It asks
+for the new file's name and a folder for its results, then writes a copy and opens it:
+
+- Every setting and comment is kept.
+- Paths the project reads (the data folder, the peptide table, the FASTA files, the elution
+  windows) are rewritten so the copy reads the same files from its own folder.
+- The copy gets its own results folder, which must not exist yet, so neither project replaces
+  the other's results. `overwrite` and `keep_previous` go back to false, and a tables folder
+  or an `[analysis] out` folder named in the original is left out.
+- The review is not copied: `[review] table` and the `[[review.exclude]]` rules are left out,
+  so the copy starts unreviewed. To use the original's review decisions, choose its review
+  table with **Browse…** under `[review]` (both projects then write to that one file), or copy
+  the table first and choose the copy.
+- The elution windows table (`[input] rt_elution_windows`) stays the original's file, so a
+  window edited in either project changes it for both.
+
 - A setting the file sets is in **bold**; an empty box shows the default in grey. Type a value
   and press Enter (or click elsewhere): it is written to the project file at once, as `hxex set`
   writes it, so the file keeps your comments and its layout. **Default** puts the setting back
@@ -120,8 +137,24 @@ file with every setting at its default, as `hxex init` does.
 - A value that cannot be right (a word where a number belongs) is refused, and the Messages
   pane says why. A file you are still filling in can lack something (a peptide table, a run):
   the red line at the top says what is still needed, as `hxex check` would.
-- **File** shows the project file itself. A change made in a text editor shows in the window
-  at once.
+- **File** shows the project file itself, to search and to edit. A change made in a text editor
+  shows in the window at once. The text is coloured: table headings in bold blue, setting names
+  purple, text green, numbers and true/false orange, comments grey. A setting switched off
+  (a `#` in front) is grey too, so the settings in use stand out.
+  - **Find in the file** (or Ctrl+F) marks every match; Enter goes to the next one,
+    Shift+Enter to the one before, and the count beside the box says which one you are on.
+    **Match case** tells capitals apart.
+  - Type in the text to edit it. Nothing is written until **Save**; the tab then reads
+    **File (unsaved)**, and **Discard changes** puts the file's text back. A save is one step of
+    **Undo** on the Settings form.
+  - Text that is not valid TOML is not saved: the line at the top says why, the cursor goes to
+    the line with the mistake, and your text is kept. Text that is valid TOML but has a problem
+    with a setting (a misspelt format) is saved, and the red line says what is wrong, as on the
+    Settings form.
+  - If the file changes while you have unsaved edits (on the Settings form, in a text editor,
+    or from the review panel), your text is kept and a line says so. **Load the file** drops your
+    edits; **Save** asks before writing over the other change.
+  - Opening another project, or closing the window, with unsaved text asks whether to save it.
 
 - A list of tables (`[[input.runs]]`, the exclusion rules `[[input.exclude]]` and
   `[[review.exclude]]`, regions and sites) is a table with one row per entry and one column per

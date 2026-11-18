@@ -480,7 +480,13 @@ def _write_checked(path: Path, text: str, new_text: str, bom: bool, what: str,
     if new and (unfinished is None
                 or any(re.search(rf"\b{re.escape(k)}\b", problem[0]) for k in unfinished)):
         raise ProjectError(f"{what}; {path} is unchanged: {problem[1]}")
-    data = (b"\xef\xbb\xbf" if bom else b"") + new_text.encode("utf-8")
+    _write_bytes(path, new_text, bom)
+    return problem[1] if new else None
+
+
+def _write_bytes(path: Path, text: str, bom: bool) -> None:
+    """``text`` written to ``path`` through a file beside it, replaced in one step."""
+    data = (b"\xef\xbb\xbf" if bom else b"") + text.encode("utf-8")
     tmp = path.with_name(path.name + ".hxex-set")
     tmp.write_bytes(data)
     try:
@@ -489,7 +495,48 @@ def _write_checked(path: Path, text: str, new_text: str, bom: bool, what: str,
         # still held (Windows): the text in place, not atomic but never lost
         tmp.unlink(missing_ok=True)
         path.write_bytes(data)
-    return problem[1] if new else None
+
+
+def toml_error_line(exc: tomllib.TOMLDecodeError) -> int | None:
+    """The line (from 1) a TOML error names, if it names one."""
+    line = getattr(exc, "lineno", None)  # Python 3.14
+    if line:
+        return int(line)
+    found = re.search(r"line (\d+)", str(exc))
+    return int(found.group(1)) if found else None
+
+
+def write_text(path: str | Path, new_text: str) -> str | None:
+    """Write ``new_text`` as the whole project file at ``path`` (the window's File tab, edited
+    as text): refused (ProjectError, the file left as it was) when it is not valid TOML;
+    written otherwise, with the file's byte-order mark and line endings kept. Returns what
+    ``hxex check`` would say first about the settings (None: nothing), as
+    :func:`file_problem`."""
+    path = Path(path)
+    text, bom = _read(path)
+    new_text = new_text.replace("\r\n", "\n")
+    if "\r\n" in text:
+        new_text = new_text.replace("\n", "\r\n")
+    try:
+        tomllib.loads(new_text)
+    except tomllib.TOMLDecodeError as exc:
+        from .config import _toml_hint
+
+        raise TextNotSaved(
+            f"not saved, {path.name} is unchanged: the text is not valid TOML "
+            f"({exc}){_toml_hint(new_text, exc)}", toml_error_line(exc)) from exc
+    if new_text != text:
+        _write_bytes(path, new_text, bom)
+    return file_problem(path)
+
+
+class TextNotSaved(ProjectError):
+    """The File tab's text was not written (not valid TOML); ``line`` is where the error is
+    (from 1), when the parser said."""
+
+    def __init__(self, message: str, line: int | None = None):
+        super().__init__(message)
+        self.line = line
 
 
 def file_problem(path: str | Path) -> str | None:
@@ -860,3 +907,174 @@ def relative_path(path: Path, folder: Path | None) -> str:
         except ValueError:
             pass
     return str(path)
+
+
+# --- a copy of a project file as the start of another project ----------------------------------
+
+# settings that name a file or folder the project reads, counted from the project file's folder
+_INPUT_PATHS = (("input", "data_dir"), ("input", "pooled_fasta"), ("input", "peptides"),
+                ("input", "thermo_dir"), ("input", "retention_times"),
+                ("input", "rt_elution_windows"), ("input", "spectra"), ("analysis", "fasta"),
+                ("analysis", "runs"))
+# what ties a project file to its own results and review: cleared in the copy
+_CLEARED = ("output.overwrite", "output.keep_previous", "analysis.out", "review.table")
+_CLEARED_LISTS = ("review.exclude", "analysis.exclude")
+
+
+def _moved(value: str, old: Path, new: Path) -> str:
+    """The path ``value`` (as written in a project file in the folder ``old``) as a project
+    file in the folder ``new`` writes it to reach the same place: an absolute path stays as
+    it is; a relative one is made relative to ``new`` (absolute when it cannot be: another
+    drive)."""
+    path = Path(value).expanduser()
+    if path.is_absolute() or value.startswith("~"):
+        return value
+    target = os.path.normpath(old / path)
+    try:
+        moved = os.path.relpath(target, new)
+    except ValueError:  # another drive (Windows)
+        return Path(target).as_posix()
+    return Path(moved).as_posix()
+
+
+def _rebased(value, old: Path, new: Path):
+    if isinstance(value, str):
+        return _moved(value, old, new)
+    if isinstance(value, dict):
+        return {k: _rebased(v, old, new) for k, v in value.items()}
+    return value
+
+
+def _inline(value) -> str:
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{key_text(k)} = {_inline(v)}" for k, v in value.items()) + " }"
+    from .config import toml_value
+
+    return toml_value(value)
+
+
+def _put(text: str, table: str, key: str, value, before) -> str:
+    """``text`` with ``table.key`` set to ``value``: a table written under its own heading is
+    changed key by key (its comments kept), anything else as one value."""
+    if value == before:
+        return text
+    sub = f"{table}.{key}"
+    headings = {name for _, name, on, _ in _sections(text.splitlines(keepends=True)) if on}
+    if isinstance(value, dict) and sub in headings:
+        for k, v in value.items():
+            text = _put(text, sub, k, v, before.get(k) if isinstance(before, dict) else None)
+        return text
+    return _edited(text, table, key, _inline(value))[0]
+
+
+def _resolved(data: dict, base: Path, fmt: str | None) -> dict[str, str]:
+    """Every path the project file ``data`` reads, as an absolute path (for the check that a
+    copy reads the same files)."""
+    out = {}
+
+    def add(name, value):
+        if isinstance(value, str):
+            p = Path(value).expanduser()
+            out[name] = os.path.normpath(p if p.is_absolute() else base / p)
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                add(f"{name}.{k}", v)
+
+    for table, key in _INPUT_PATHS:
+        add(f"{table}.{key}", data.get(table, {}).get(key))
+    if fmt in ("mzml", "thermo"):
+        add("input.data_root", data.get("input", {}).get("data_root", "."))
+    return out
+
+
+def template_text(text: str, source: Path, target: Path, bundle: str) -> tuple[str, list[str]]:
+    """The project file ``text`` (at ``source``) as the start of another project at ``target``:
+    every setting and comment kept; the paths it reads rewritten to reach the same files from
+    ``target``'s folder; ``[output] bundle`` set to ``bundle`` and the links to the original's
+    results and review cleared (``overwrite``, ``keep_previous``, a tables folder named
+    outright, ``[analysis] out``, ``[review] table``, and the ``[[review.exclude]]`` rules).
+    Returns the new text and what changed, in words."""
+    old, new = source.resolve().parent, target.resolve().parent
+    data = tomllib.loads(text)
+    fmt = data.get("input", {}).get("format")
+    said = []
+    for table, key in _INPUT_PATHS:
+        value = data.get(table, {}).get(key)
+        if value is None:
+            continue
+        moved = _rebased(value, old, new)
+        if moved != value:
+            text = _put(text, table, key, moved, value)
+            said.append(f"[{table}] {key}: {_inline(value)} → {_inline(moved)}")
+    if fmt in ("mzml", "thermo") and old != new:
+        value = data.get("input", {}).get("data_root", ".")
+        moved = _moved(value, old, new) if isinstance(value, str) else value
+        if moved != value:  # relative run paths start here: written even when it was unset
+            text = _edited(text, "input", "data_root", _inline(moved))[0]
+            said.append(f"[input] data_root: {_inline(value)} → {_inline(moved)}")
+    output = data.get("output", {})
+    text = _edited(text, "output", "bundle", quoted(bundle))[0]
+    said.append(f"[output] bundle: {_inline(output.get('bundle', 'not set'))} → "
+                f"{quoted(bundle)}")
+    cleared = list(_CLEARED)
+    if isinstance(output.get("tables"), str):
+        cleared.append("output.tables")
+    for setting in cleared:
+        table, key = setting.rsplit(".", 1)
+        if data.get(table.split(".")[0], {}).get(key) is None:
+            continue
+        text, change = _edited(text, table, key, None)
+        if not change.unchanged:
+            said.append(f"[{table}] {key} cleared (was {change.before})")
+    for table in _CLEARED_LISTS:
+        lines = text.splitlines(keepends=True)
+        blocks = _blocks(lines, table)
+        for start, end in reversed(blocks):
+            del lines[start:end]
+            if start < len(lines) and start > 0 and not lines[start].strip() \
+                    and not lines[start - 1].strip():
+                del lines[start]
+        if blocks:
+            text = "".join(lines)
+            said.append(f"[[{table}]]: {len(blocks)} rule(s) removed")
+    try:
+        copy = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ProjectError(f"the copy could not be made from {source.name} ({exc}): copy the "
+                           "file in a file manager and edit it there") from None
+    if _resolved(copy, new, fmt) != _resolved(data, old, fmt):
+        raise ProjectError(f"the copy of {source.name} would not read the same files (a path "
+                           "written in a way the window cannot rewrite): copy the file in a "
+                           "file manager and change its paths there")
+    return text, said
+
+
+def save_template(source: str | Path, target: str | Path, bundle: str) -> tuple[list[str],
+                                                                                 str | None]:
+    """Write :func:`template_text` of the project file ``source`` to ``target`` (replaced if
+    there). ``bundle`` is the copy's results folder, counted from ``target``'s folder: refused
+    when it names the original's results or a folder that exists. Returns what changed and the
+    copy's problem, if any (as :func:`file_problem`)."""
+    source, target = Path(source), Path(target)
+    if target.resolve() == source.resolve():
+        raise ProjectError("the copy must be another file than the project file itself")
+    if not bundle.strip():
+        raise ProjectError("give the new project's results folder a name")
+    text, bom = _read(source)
+    data = tomllib.loads(text)
+    folder = target.resolve().parent
+    results = Path(bundle).expanduser()
+    results = os.path.normpath(results if results.is_absolute() else folder / results)
+    mine = data.get("output", {}).get("bundle")
+    if isinstance(mine, str):
+        p = Path(mine).expanduser()
+        if os.path.normpath(p if p.is_absolute() else source.resolve().parent / p) == results:
+            raise ProjectError(f"{bundle} is {source.name}'s own results folder: give the new "
+                               "project another name, so neither replaces the other's results")
+    if Path(results).exists():
+        raise ProjectError(f"{results} exists already: give the new project's results a "
+                           "folder of their own")
+    new_text, said = template_text(text, source, target, bundle)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _write_bytes(target, new_text, bom)
+    return said, file_problem(target)

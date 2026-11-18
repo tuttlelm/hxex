@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
 )
 
 from .analysis_workspace import AnalysisWorkspace
-from .fonts import fixed_font
+from .file_view import ProjectFileView
 from .project_state import ProjectState
 from .results_workspace import ResultsWorkspace, left_out_or_none, sets_or_none
 from .review import table_stamp
@@ -83,7 +83,7 @@ PROJECT_TIPS = {
               "review), to view and edit",
     "Sequence": "the protein sequence(s) as the analysis numbers them, with each residue's "
                 "coverage",
-    "File": "the project file as text (read only)",
+    "File": "the project file as text: find (Ctrl+F) and edit it; Save writes it",
 }
 ABOUT_LOGO_WIDTH = 220  # pixels: the logo in the About box
 
@@ -118,8 +118,8 @@ class MessagesHandler(logging.Handler):
 # --- the workspaces ---------------------------------------------------------------------------
 
 class ProjectWorkspace(QWidget):
-    """The project file: its settings as a form (:mod:`hxex.gui.project_editor`), and the file
-    itself, read-only."""
+    """The project file: its settings as a form (:mod:`hxex.gui.project_editor`), its tables,
+    its sequence, and the file itself as text (:mod:`hxex.gui.file_view`)."""
 
     file_changed = Signal()  # the project file changed (in the window or outside)
 
@@ -134,16 +134,22 @@ class ProjectWorkspace(QWidget):
         new_button.clicked.connect(window.new_project_dialog)
         open_button = QPushButton("Open project file…")
         open_button.clicked.connect(window.open_project_dialog)
+        self.template_button = QPushButton("Save as template…")
+        self.template_button.setToolTip(tip(
+            "a copy of this project file to start another project from: every setting kept, "
+            "the same data read, new results, no review"))
+        self.template_button.clicked.connect(window.save_template_dialog)
+        self.template_button.setEnabled(False)
         top = QHBoxLayout()
         top.addWidget(self.path_label, 1)
         top.addWidget(new_button)
         top.addWidget(open_button)
+        top.addWidget(self.template_button)
         self.editor = ProjectEditor()
         self.editor.changed.connect(self._file_changed)
-        self.text = QPlainTextEdit()
-        self.text.setReadOnly(True)
-        self.text.setFont(fixed_font())
-        self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.text = ProjectFileView()
+        self.text.write = window.write_project_text  # recorded for the editor's Undo
+        self.text.modified_changed.connect(self._text_modified)
         self.tables = TablesView()
         self.tables.write_settings = window.write_settings  # recorded for the editor's Undo
         self.sequence = SequenceView()  # the protein sequence(s), as the analysis numbers them
@@ -151,6 +157,7 @@ class ProjectWorkspace(QWidget):
         for page, name in ((self.editor, "Settings"), (self.tables, "Tables"),
                            (self.sequence, "Sequence"), (self.text, "File")):
             self.views.setTabToolTip(self.views.addTab(page, name), tip(PROJECT_TIPS[name]))
+        self._file_tab = self.views.indexOf(self.text)
         layout = QVBoxLayout(self)
         layout.addLayout(top)
         layout.addWidget(self.views, 1)
@@ -159,6 +166,7 @@ class ProjectWorkspace(QWidget):
     def show_project(self, path: Path | None) -> None:
         self.path = path
         self.path_label.setText(str(path) if path is not None else "No project file open.")
+        self.template_button.setEnabled(path is not None)
         self.editor.open(path)
         self._file_changed()
 
@@ -169,13 +177,10 @@ class ProjectWorkspace(QWidget):
         self.tables.show_project(self.path, self.editor.values, self.editor.format)
         self.sequence.show_project(self.window.project_state)
         self.file_changed.emit()
-        if self.path is None:
-            self.text.setPlainText("")
-            return
-        try:
-            self.text.setPlainText(self.path.read_text(encoding="utf-8-sig"))
-        except OSError as exc:
-            self.text.setPlainText(f"cannot read the project file: {exc}")
+        self.text.show_file(self.path)
+
+    def _text_modified(self, modified: bool) -> None:
+        self.views.setTabText(self._file_tab, "File (unsaved)" if modified else "File")
 
 
 def _only_the_table_named(before: dict, now: dict) -> bool:
@@ -397,6 +402,7 @@ class MainWindow(QMainWindow):
         self._fill_recent()
         file.addSeparator()
         for text, slot in (("New project file…", self.new_project_dialog),
+                           ("Save project file as template…", self.save_template_dialog),
                            ("Open project file…", self.open_project_dialog),
                            ("Open results…", self.open_results_dialog)):
             action = QAction(text, self)
@@ -544,7 +550,8 @@ class MainWindow(QMainWindow):
         unsaved table edits, then the session, then a command running (asked last: a command
         stopped before a cancelled question was gone for nothing; audit of 2026-11-15, A-2).
         False when the user cancels."""
-        return (self.project_page.tables.editor.may_leave() and self._may_discard()
+        return (self.project_page.tables.editor.may_leave()
+                and self.project_page.text.may_leave() and self._may_discard()
                 and self.run_page.may_close())
 
     def _drop_load(self) -> None:
@@ -597,6 +604,74 @@ class MainWindow(QMainWindow):
         self._new_session_with(path)
         self.tabs.setCurrentIndex(0)
 
+    def save_template_dialog(self) -> bool:
+        """Copy the project file open as the start of another project (as the guide's "A
+        project from another one" says): every setting and comment kept, its paths rewritten to
+        read the same data from the copy's folder, a new results folder, and no review table,
+        review exclusions, overwrite, or keep_previous. The copy is then opened. False when
+        nothing was written."""
+        from ..config import ProjectError
+        from ..project_edit import save_template
+
+        if self.project is None:
+            QMessageBox.information(self, "No project file open",
+                                    "Open a project file first: the template is made from it.")
+            return False
+        # the copy is made from the file on disk: text typed in the File tab first
+        if not self.project_page.text.may_leave():
+            return False
+        target = self.ask_template_path()
+        if target is None:
+            return False
+        if target.suffix != ".toml":
+            target = target.with_name(target.name + ".toml")
+        if target.absolute() == self.project:
+            self.tell("Template not written",
+                      "Choose another name: this is the project file itself.")
+            return False
+        if target.exists() and not self.ask_replace_file(target):
+            return False
+        bundle = self.ask_template_results(target)
+        if bundle is None:
+            return False
+        try:
+            said, problem = save_template(self.project, target, bundle)
+        except (ProjectError, OSError) as exc:
+            self.tell("Template not written", str(exc))
+            return False
+        log.info("wrote %s from %s:", target, self.project.name)
+        for line in said:
+            log.info("  %s", line)
+        if problem:
+            log.warning("%s: %s", target.name, problem)
+        if self._may_replace():
+            self._new_session_with(target)
+            self.tabs.setCurrentIndex(0)
+        return True
+
+    def tell(self, title: str, text: str) -> None:
+        """A warning the user must read (replaced in tests)."""
+        QMessageBox.warning(self, title, text)
+
+    def ask_template_path(self) -> Path | None:
+        """Where the template goes (asked; replaced in tests)."""
+        start = self.project.with_name(f"{self.project.stem}_copy.toml")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save the project file as a template", str(start), "project files (*.toml)",
+            options=QFileDialog.Option.DontConfirmOverwrite)
+        return Path(path) if path else None
+
+    def ask_template_results(self, target: Path) -> str | None:
+        """The new project's results folder (asked; replaced in tests)."""
+        from PySide6.QtWidgets import QInputDialog
+
+        name, ok = QInputDialog.getText(
+            self, "Results of the new project",
+            f"The folder for {target.name}'s results, beside it (it must not exist yet, so "
+            "neither project replaces the other's results):",
+            QLineEdit.EchoMode.Normal, f"results_{target.stem}")
+        return name.strip() if ok and name.strip() else None
+
     def ask_replace_file(self, path: Path) -> bool:
         """Whether to write over the file at ``path`` (asked before a new project file or a
         new table replaces one; replaced in tests)."""
@@ -636,6 +711,15 @@ class MainWindow(QMainWindow):
             step.what = what
         editor._after_change()  # shown now (the file is not watched while written)
         return done
+
+    def write_project_text(self, text: str) -> str | None:
+        """Write ``text`` as the whole project file open (the File tab's Save), recorded for
+        the Project editor's Undo; the file's problem, if any (ProjectError when the text is
+        not valid TOML: nothing written)."""
+        from ..project_edit import write_text
+
+        with self.recording("the project file edited as text"):
+            return write_text(self.project, text)
 
     def open_project_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open project file", "",
