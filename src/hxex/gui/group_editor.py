@@ -78,7 +78,8 @@ def samples_value(pairs: list[tuple[str, str]]):
 
 
 def _names(owner) -> list[str]:
-    """The samples of the results open (none without them)."""
+    """The window's samples (:meth:`hxex.gui.window.MainWindow.sample_names`: those of the
+    results open, else ``[input] samples``, else those the data hold)."""
     names = owner.sample_names
     try:
         return list(names() if callable(names) else names or [])
@@ -294,7 +295,8 @@ class SamplesGrid(QWidget):
         self.grid.cellChanged.connect(self._edited)
         self.add_box = NoWheelComboBox()
         self.add_box.setEditable(True)
-        self.add_box.setToolTip(tip("a sample to add: one of the results', or typed"))
+        self.add_box.setToolTip(tip("a sample to add: chosen (the results' samples, else "
+                                    "[input] samples, else those the data hold), or typed"))
         add = QPushButton("Add")
         add.clicked.connect(self._add)
         self.remove = QPushButton("Remove the selected sample")

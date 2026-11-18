@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .colours_editor import ColoursEditor
 from .fonts import fixed_font
 from .table_copy import block_text, install_copy, selection_text, set_clipboard
 from .tips import ERROR_COLOUR, tip
@@ -174,6 +175,18 @@ class SettingRow(QWidget):
             menu.addAction("A folder…", lambda: self._browse(folder=True))
             browse.setMenu(menu)
             line.addWidget(browse)
+        self.names = names
+        if self.name in NAMED and isinstance(self.editor, QLineEdit):
+            # one of the samples, chosen from a list (or typed: a group, run:sample, ...)
+            pick = QToolButton()
+            pick.setText("Samples ▾")
+            pick.setToolTip(tip("choose one of the samples (those of the results open, else "
+                                "[input] samples, else those the data hold); or type a name"))
+            pick.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            self.pick_menu = QMenu(pick)
+            self.pick_menu.aboutToShow.connect(self._fill_pick)
+            pick.setMenu(self.pick_menu)
+            line.addWidget(pick)
         line.addWidget(self.reset)
         self.about = QLabel(plain(setting.text or ""))
         self.about.setWordWrap(True)
@@ -256,6 +269,20 @@ class SettingRow(QWidget):
         self.where.setText("" if where is None else f"→ {where}")
         self.where.setHidden(where is None)
 
+    def _fill_pick(self) -> None:
+        """The samples to choose from, when the menu opens (the results or data may have
+        changed since the page was shown)."""
+        self.pick_menu.clear()
+        names = self.names() if self.names else []
+        if not names:
+            self.pick_menu.addAction("no samples found yet: type a name").setEnabled(False)
+        for name in names:
+            self.pick_menu.addAction(name, lambda n=name: self._picked(n))
+
+    def _picked(self, name: str) -> None:
+        self.editor.setText(name)
+        self.edited.emit(self.name, _quoted(name))
+
     def _ordered(self, items: list) -> None:
         from ..config import toml_value
 
@@ -303,6 +330,8 @@ class SettingRow(QWidget):
 
 # list settings whose order matters, edited as a list with up and down
 ORDERED = ("analysis.samples",)
+# settings naming one sample: a list of the samples beside the box (the window's samples)
+NAMED = ("analysis.reference",)
 # settings that are a value or a table of their own (one FASTA for every sample, or one per
 # sample: owner, 2026-11-05): the value's row stays on its table's page, the table has a page,
 # and writing one form takes the other out of the file (TOML holds one)
@@ -322,7 +351,8 @@ NAME_LIST_TABLES = ("input.pooled_classes",)
 class OrderedList(QWidget):
     """A list whose order matters (``[analysis] samples``: the order of every figure): its
     items, ↑ and ↓ to move the selected one, Remove, and a box to add one, offering the names
-    ``names()`` gives (the samples of the results open) that the list does not hold yet.
+    ``names()`` gives (the window's samples, :meth:`MainWindow.sample_names`) that the list does
+    not hold yet.
     Emits :attr:`changed` with the items after every change."""
 
     changed = Signal(list)
@@ -344,7 +374,8 @@ class OrderedList(QWidget):
         self.remove.clicked.connect(self._remove)
         self.add_box = NoWheelComboBox()
         self.add_box.setEditable(True)
-        self.add_box.setToolTip(tip("a sample to add: one of the results', or typed"))
+        self.add_box.setToolTip(tip("a sample to add: chosen (the results' samples, else "
+                                    "[input] samples, else those the data hold), or typed"))
         self.add_button = QPushButton("Add")
         self.add_button.clicked.connect(self._add)
         side = QVBoxLayout()
@@ -374,7 +405,8 @@ class OrderedList(QWidget):
         self._offer()
 
     def _offer(self) -> None:
-        """The names the add box offers: the results' samples not in the list."""
+        """The names the add box offers: the samples ``names()`` gives (the results', else
+        ``[input] samples``, else those the data hold) not in the list."""
         held = set(self.items())
         names = [n for n in (self.names() if self.names else []) if n not in held]
         self.add_box.blockSignals(True)
@@ -474,7 +506,7 @@ class ProjectEditor(QWidget):
         # [run.controls]'s page: "[run] controls = false" and the state in words
         self.controls_off: QCheckBox | None = None
         self.controls_state: QLabel | None = None
-        self.list_editor: ListEditor | NamesEditor | None = None
+        self.list_editor: ListEditor | NamesEditor | ColoursEditor | None = None
         self._shown_format: str | None = None
         self.watched = WatchedFile(self, self._file_changed)
         # every change the window makes, to undo and redo (owner: settings are easily changed
@@ -777,7 +809,8 @@ class ProjectEditor(QWidget):
             return
         nested = self._nested_note(name)
         if not table.settings:
-            self.list_editor = NamesEditor(self, table)
+            self.list_editor = (ColoursEditor if name == "analysis.colours" else
+                                NamesEditor)(self, table)
             form.addWidget(self.list_editor)
             if nested is not None:
                 form.addWidget(nested)

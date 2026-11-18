@@ -1649,6 +1649,41 @@ def folder_entries(project: Project):
                 registry=project.run.registry)
 
 
+
+def data_samples(project: Project) -> list[str]:
+    """Every sample the project's data hold, whatever ``[input] samples`` says, without reading
+    any spectra: SpecExport, the state folders with their FASTA beside them (as the reader pairs
+    them); HX-Express and pooled, the samples of the folder (or peptide table) read as the run
+    reads it, its warnings silenced; mzML and Thermo, the ``sample`` of each ``[[input.runs]]``
+    entry, in the file's order. None found (no data folder yet, one that does not read): an
+    empty list. For ``hxex check``'s message about a sample that is not there, and the window's
+    list of samples to choose from before there are results."""
+    import dataclasses
+
+    inp = project.input
+    if inp is None:
+        return []
+    if inp.format in SCAN_FORMATS:
+        return list(dict.fromkeys(r.sample for r in inp.runs if r.sample))
+    if inp.data_dir is None or not inp.data_dir.is_dir():
+        return []
+    if inp.format == "specexport":
+        from .io.specexport import _fasta_files
+
+        dirs = {p.name for p in inp.data_dir.iterdir() if p.is_dir()}
+        return sorted({p.stem for p in _fasta_files(inp.data_dir)} & dirs)
+    whole = dataclasses.replace(project, input=dataclasses.replace(inp, samples=None))
+    hxex_log = logging.getLogger("hxex")
+    level = hxex_log.level
+    hxex_log.setLevel(logging.CRITICAL)
+    try:
+        found = folder_entries(whole)
+    except Exception:  # noqa: BLE001 - only a list of names to offer
+        return []
+    finally:
+        hxex_log.setLevel(level)
+    return sorted({e.sample for e in found if e.sample})
+
 def _is_spectra_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() == ".parquet"
 

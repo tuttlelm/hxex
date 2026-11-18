@@ -2005,32 +2005,11 @@ def _same_folder(a: Path, b: Path) -> bool:
 
 
 def _every_sample(project) -> list[str]:
-    """Every sample of a folder format's data folder, whatever ``[input] samples`` says, for
-    the message naming a sample that is not there. SpecExport: the folders with their FASTA
-    beside them, as the reader pairs them (another sample's refusal does not hide them); the
-    other formats: read without their warnings (about samples the project does not read),
-    none when the folder does not read."""
-    import dataclasses
+    """Every sample of the project's data, whatever ``[input] samples`` says, for the message
+    naming a sample that is not there (:func:`hxex.config.data_samples`)."""
+    from .config import data_samples
 
-    from .config import folder_entries
-
-    inp = project.input
-    if inp.format == "specexport":
-        from .io.specexport import _fasta_files
-
-        dirs = {p.name for p in inp.data_dir.iterdir() if p.is_dir()}
-        return sorted({p.stem for p in _fasta_files(inp.data_dir)} & dirs)
-    whole = dataclasses.replace(project, input=dataclasses.replace(project.input, samples=None))
-    hxex_log = logging.getLogger("hxex")
-    level = hxex_log.level
-    hxex_log.setLevel(logging.CRITICAL)
-    try:
-        found = folder_entries(whole)
-    except Exception:  # noqa: BLE001 - only a list of names for a message
-        return []
-    finally:
-        hxex_log.setLevel(level)
-    return sorted({e.sample for e in found if e.sample})
+    return data_samples(project)
 
 
 def _fasta_note(folder, sequences) -> str:

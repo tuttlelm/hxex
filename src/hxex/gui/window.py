@@ -244,6 +244,7 @@ class MainWindow(QMainWindow):
         # the project file as read last: one parsed state for every panel (Q-2), renewed by
         # the Project workspace whenever the file changes
         self.project_state = ProjectState()
+        self._data_samples: tuple | None = None  # (state, names): the data's samples, read once
         self.results_path: Path | None = None
         self._saved_text: str | None = None
         self._restoring = False  # results of the session just opened are still loading
@@ -852,6 +853,7 @@ class MainWindow(QMainWindow):
         self.results_page.release()
         self.analysis_page.release()
         self.project_page.editor.sample_names = None  # a bound method of this window
+        self._data_samples = None
         self.project_page.sequence.show_coverage(None)
         self._view_settings = self._analysis_text = None
         self.project_state = ProjectState()
@@ -906,18 +908,36 @@ class MainWindow(QMainWindow):
         self.project_page.sequence.show_coverage(coverage_of(results) if mine else None)
 
     def sample_names(self) -> list[str]:
-        """The samples of the results open, named as the analysis settings name them (none
-        without results)."""
+        """The samples to offer where a setting names samples (``[analysis] samples`` and
+        ``reference``): those of the results open, named as the analysis settings name them;
+        before there are results, ``[input] samples`` when the project file sets it, else the
+        samples its data hold (:func:`hxex.config.data_samples`), so a new project's order and
+        reference can be set from the start (owner, 2026-11-18)."""
         results = self.results_page.results
-        if results is None:
-            return []
-        from ..analysis import AnalysisConfig
-        from ..report import analysis_references
+        if results is not None:
+            from ..analysis import AnalysisConfig
+            from ..report import analysis_references
 
-        try:
-            return analysis_references(results, AnalysisConfig(reference="all"))
-        except ValueError:  # results that do not list their samples
-            return []
+            try:
+                names = analysis_references(results, AnalysisConfig(reference="all"))
+            except ValueError:  # results that do not list their samples
+                names = []
+            if names:
+                return names
+        state = self.project_state
+        if self._data_samples is not None and self._data_samples[0] is state:
+            return list(self._data_samples[1])  # read once per reading of the project file
+        project = state.loaded
+        names = []
+        if project is not None and project.input is not None:
+            if project.input.samples:
+                names = list(project.input.samples)
+            else:
+                from ..config import data_samples
+
+                names = data_samples(project)
+        self._data_samples = (state, names)
+        return list(names)
 
     def run_resume(self) -> None:
         """hxex resume in the Run workspace (a bootstrap for spectra shown at a K without one)."""

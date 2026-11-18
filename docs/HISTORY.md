@@ -11054,3 +11054,34 @@ CSVs or mzML if wanted.
     written, nothing written by opening them, and the figure across the groups was computed in
     57 s, five times, as `hxex analyse` draws it. Not done: `regions = false` / `sites = false`
     in a group are shown, not set, by the window (a text editor sets them).
+
+421. **The window offers the samples before there are results** (owner, 2026-11-18: "I was
+    trying to set up a fresh toml file and set the sample order and reference from the
+    beginning"). The Add box of `[analysis] samples` offered only the samples of the results
+    open, so on a new project it was empty, and `[analysis] reference` offered nothing.
+    `MainWindow.sample_names` now gives, in this order: the results' samples (as before);
+    `[input] samples` when the project file sets it (its order); else the samples the data
+    hold, `hxex.config.data_samples` (moved from `hxex check`'s `_every_sample`: SpecExport's
+    state folders with their FASTA beside them, sorted; HX-Express and pooled, the folder or
+    peptide table read as the run reads it, warnings silenced; mzML and Thermo, the `sample` of
+    each `[[input.runs]]` entry, in the file's order; nothing when the data folder is not there
+    yet), read once per reading of the project file. `[analysis] reference` gains a **Samples
+    ▾** menu of the same names beside its box (`NAMED`; typing stays, for a group or
+    `run:sample`; an empty list says "no samples found yet: type a name"). The group pages
+    (`hxex.gui.group_editor`, item 420) ask the window for the same names, so a group's Add box
+    and the Add a group dialog offer them too. Tests in tests/test_gui_project.py.
+
+422. **The `[analysis.colours]` page lists the samples with their default colours** (owner,
+    2026-11-18: "prepopulate the table with the samples, then have dropdown for default or user
+    value ... maintaining the preview color"). The page was the generic table of names (type a
+    name and a value). `hxex.gui.colours_editor.ColoursEditor` lists the window's samples (the
+    item before: results, else `[input] samples`, else the data) in `[analysis] samples`'
+    order, then any other name the file colours or typed with **Add** (shown until it has a
+    colour). Each row's list: **default (colour)**, the colour `sample_styles` gives that sample
+    with the others' choices kept (`default_colours`); hxex's palette by name (`black`,
+    `tab:blue`, ...); the file's own value when it is another; **Other…** (QColorDialog, written
+    as hex) and **Type a colour…** (refused unless matplotlib knows it). Every entry carries its
+    swatch, so the closed list shows the colour the figures use. Choosing default removes the
+    sample's line (the file keeps only choices); anything else writes it, even the default's
+    own colour. The write runs after the list's signal returns (it rebuilds the rows, the list
+    among them). tests/test_gui_project.py.

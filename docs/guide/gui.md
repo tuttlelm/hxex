@@ -170,11 +170,25 @@ for the new file's name and a folder for its results, then writes a copy and ope
 - A table of names you choose (sample names under `[analysis.controls]`, run names under
   `[analysis.runs]`, ...) is a table of names and values: type a name and its value and click
   **Add**, change a value in the table, or select a row and click **Remove the selected
-  name**. Under `[analysis.colours]`, each colour is shown beside its name.
+  name**.
+- `[analysis.colours]` lists every sample (the same samples as the list below), in
+  `[analysis] samples`' order, each with a list of colours. The list starts with **default**
+  and the colour the figures give the sample when the file names none (the first sample
+  black, the others in turn, skipping colours chosen for other samples), then hxex's other
+  colours, **Other…** (a colour picker), and **Type a colour…** (any colour matplotlib knows,
+  `tab:red` or `#1f77b4`). Each entry shows its colour, so the list shows the colour the figures
+  will use. Choosing a colour writes it; choosing **default** removes the sample's line from the
+  file. **Add** gives a row to another name (`run:sample`, a modified state), written once it
+  has a colour.
 - `[analysis] samples` sets which samples the analysis uses and their order in every figure
   and table: it is a list, with **↑** and **↓** to move the selected sample, **Remove**, and
-  **Add** with the samples of the results that are open (or type one). The reference goes
-  first wherever it is in the list.
+  **Add** with a list of samples to choose from (or type one). The reference goes first
+  wherever it is in the list. `[analysis] reference` has **Samples ▾** beside its box, with the
+  same list. The list holds the samples of the results that are open; before there are
+  results, those of `[input] samples` when the project file sets it, else the samples the data
+  hold (the SpecExport folders with their FASTA files beside them, the samples of the
+  `[[input.runs]]`, ...). So a new project's samples, their order, and its reference can be set
+  before anything is run. A name not in the list (a group, `run:sample`) is typed.
 - Groups of samples ([Groups of samples](experiments.md#groups-of-samples)) have a page of
   their own, `[analysis.groups]`, listing the groups with their reference, samples, and whether
   their regions and sites are their own or the shared ones. **Add a group…** asks for its name,
@@ -182,7 +196,8 @@ for the new file's name and a folder for its results, then writes a copy and ope
   group and are taken out of `[analysis]`, where groups refuse them); **Rename…** and
   **Remove** change the selected group, its own regions and sites with it (its analysis folder
   is left as it is). Each group then has a page under `[analysis.groups]` in the list:
-  its **reference**, its **samples** with a **vial label** beside each (left as the sample's
+  its **reference**, its **samples** (added from the same list of samples as `[analysis]
+  samples`) with a **vial label** beside each (left as the sample's
   name, the samples are written as a plain list; **↑** and **↓** set their order), and its
   **Own regions** and **Own sites**, edited as any list of tables. A group without regions
   of its own takes the shared `[[analysis.regions]]`, and its page says how many.

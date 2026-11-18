@@ -367,21 +367,22 @@ def test_the_samples_are_a_list_in_order(editor, project):
     assert "samples" not in _data(project).get("analysis", {})
 
 
-def test_sample_colours_are_typed_bare_and_shown_as_swatches(editor, project):
-    from PySide6.QtCore import Qt
-
+def test_a_name_without_samples_gets_a_colour_typed_bare(editor, project):
+    """The colours page with no samples to list (no window): a name is added, then given a
+    colour from its list or typed (no quotes needed, a hex code is no comment)."""
     _page(editor, "analysis.colours")
-    names = editor.list_editor
-    names.name.setText("WT")
-    names.value.setText("orange")  # no quotes needed
-    names.add()
-    assert _data(project)["analysis"]["colours"]["WT"] == "orange"
-    names.name.setText("V")
-    names.value.setText("#1f77b4")  # a hex code is no comment
-    names.add()
-    assert _data(project)["analysis"]["colours"]["V"] == "#1f77b4"
-    swatch = names.grid.item(0, 1).data(Qt.ItemDataRole.DecorationRole)
-    assert swatch is not None and swatch.name() in ("#ffa500", "#1f77b4")
+    colours = editor.list_editor
+    assert "No samples found yet" in colours.note.text()
+    colours.name.setText("WT")
+    colours.add()
+    box = colours.grid.cellWidget(0, 1)
+    assert colours.grid.item(0, 0).text() == "WT" and box.currentText() == "default"
+    colours.choose("WT", "tab:orange")
+    assert _data(project)["analysis"]["colours"]["WT"] == "tab:orange"
+    colours.ask_text = lambda name, value: "#1f77b4"
+    colours.choose("WT", "Type a colour…")
+    assert _data(project)["analysis"]["colours"]["WT"] == "#1f77b4"
+    assert colours.grid.cellWidget(0, 1).currentText() == "#1f77b4"  # as the file has it
 
 
 def test_the_top_level_tables_stand_out_in_the_list(editor):
@@ -764,3 +765,153 @@ def test_a_project_name_with_a_quote_gives_a_valid_file(tmp_path):
 
     path = new_project(tmp_path / "q.toml", "specexport", 'my "quoted" \\ name')
     assert load_project(path, analysis_only=True).project == 'my "quoted" \\ name'
+
+
+def _states(folder, names):
+    for name in names:
+        (folder / name).mkdir()
+        (folder / f"{name}.fasta").write_text(f">{name}\nPEPTIDE\n", encoding="utf-8")
+
+
+def test_samples_are_offered_before_there_are_results(qtbot, tmp_path, project):
+    """A new project's [analysis] samples and reference can be chosen from the start (owner,
+    2026-11-18): without results the window offers [input] samples, else the samples the data
+    hold; a sample is still typed when it is not offered."""
+    from PySide6.QtWidgets import QMessageBox
+
+    _states(tmp_path / "SpecExport", ["WT", "D109H", "R120G"])
+    (tmp_path / "SpecExport" / "notes").mkdir()  # a folder without its FASTA: not a sample
+    w = MainWindow(settings=QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat))
+    w.ask_to_save = lambda: QMessageBox.StandardButton.Discard
+    qtbot.addWidget(w)
+    w.open_project(project)
+    assert w.results_page.results is None
+    assert w.sample_names() == ["D109H", "R120G", "WT"]  # the data's, as hxex check finds them
+    editor = w.project_page.editor
+    editor.show_table("analysis")
+    order = editor.rows["analysis.samples"].editor
+    order._offer()
+    box = order.add_box
+    assert [box.itemText(i) for i in range(box.count())] == ["D109H", "R120G", "WT"]
+    reference = editor.rows["analysis.reference"]
+    reference._fill_pick()
+    assert [a.text() for a in reference.pick_menu.actions()] == ["D109H", "R120G", "WT"]
+    reference.pick_menu.actions()[2].trigger()
+    assert _data(project)["analysis"]["reference"] == "WT"
+
+    w.write_settings([("input.samples", '["WT", "R120G"]')], "samples read")
+    assert w.sample_names() == ["WT", "R120G"]  # [input] samples, in their order
+    editor.show_table("analysis")
+    order = editor.rows["analysis.samples"].editor
+    order._offer()
+    assert [order.add_box.itemText(i) for i in range(order.add_box.count())] == ["WT", "R120G"]
+
+
+def test_no_samples_found_yet_says_so(qtbot, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+
+    path = new_project(tmp_path / "new.toml", "specexport", "trial")  # its data folder: none
+    w = MainWindow(settings=QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat))
+    w.ask_to_save = lambda: QMessageBox.StandardButton.Discard
+    qtbot.addWidget(w)
+    w.open_project(path)
+    assert w.sample_names() == []
+    editor = w.project_page.editor
+    editor.show_table("analysis")
+    reference = editor.rows["analysis.reference"]
+    reference._fill_pick()
+    (only,) = reference.pick_menu.actions()
+    assert not only.isEnabled() and "type a name" in only.text()
+
+
+def test_the_data_samples_of_a_scan_project_are_its_runs(tmp_path):
+    from hxex.config import data_samples, load_project
+
+    path = new_project(tmp_path / "scan.toml", "mzml", "trial")
+    samples = [run["sample"] for run in _data(path)["input"]["runs"]]
+    assert data_samples(load_project(path)) == list(dict.fromkeys(samples))
+
+
+def test_the_colours_page_lists_the_samples_with_their_defaults(qtbot, tmp_path, project):
+    """[analysis.colours] lists every sample in [analysis] samples' order with its default
+    colour, as the figures give it (the first black, the others in turn); a colour chosen
+    is written, a default removes the line, and the defaults after it follow (owner,
+    2026-11-18)."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from hxex.gui.colours_editor import OTHER, default_colours
+
+    _states(tmp_path / "SpecExport", ["WT", "D109H", "R120G"])
+    w = MainWindow(settings=QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat))
+    w.ask_to_save = lambda: QMessageBox.StandardButton.Discard
+    qtbot.addWidget(w)
+    w.open_project(project)
+    w.write_settings([("analysis.samples", '["WT", "R120G", "D109H"]')], "order")
+    editor = w.project_page.editor
+    editor.show_table("analysis.colours")
+    colours = editor.list_editor
+
+    def shown():
+        grid = colours.grid
+        return [(grid.item(r, 0).text(), grid.cellWidget(r, 1).currentText())
+                for r in range(grid.rowCount())]
+
+    assert shown() == [("WT", "default (black)"), ("R120G", "default (tab:blue)"),
+                       ("D109H", "default (tab:red)")]
+    colours.choose("WT", "tab:green")
+    assert _data(project)["analysis"]["colours"] == {"WT": "tab:green"}
+    assert shown()[0] == ("WT", "tab:green")
+    box = colours.grid.cellWidget(0, 1)
+    assert box.itemText(0) == "default (black)"  # what WT would take without its colour
+    colours.choose("R120G", "tab:blue")  # its default, chosen outright: written all the same
+    assert _data(project)["analysis"]["colours"]["R120G"] == "tab:blue"
+    colours.choose("WT", None)  # back to default: its line goes
+    assert "WT" not in _data(project)["analysis"].get("colours", {})
+    colours.ask_colour = lambda name, value: None  # the picker cancelled: nothing written
+    colours.choose("D109H", OTHER)
+    assert "D109H" not in _data(project)["analysis"].get("colours", {})
+    colours.ask_text = lambda name, value: (setattr(colours, "_message", "not a colour"), None)[1]
+    colours.choose("D109H", "Type a colour…")
+    assert colours.note.text() == "not a colour"
+    assert default_colours(["A", "B", "C"], {"B": "tab:blue"}) == {
+        "A": "#000000", "B": "#1f77b4", "C": "#d62728"}  # a chosen colour is not reused
+
+
+def test_choosing_from_the_list_writes_after_the_box_returns(qtbot, tmp_path, project):
+    from PySide6.QtWidgets import QMessageBox
+
+    _states(tmp_path / "SpecExport", ["WT", "D109H"])
+    w = MainWindow(settings=QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat))
+    w.ask_to_save = lambda: QMessageBox.StandardButton.Discard
+    qtbot.addWidget(w)
+    w.open_project(project)
+    editor = w.project_page.editor
+    editor.show_table("analysis.colours")
+    box = editor.list_editor.grid.cellWidget(0, 1)
+    index = box.findData("tab:purple")
+    box.setCurrentIndex(index)
+    box.activated.emit(index)  # as a click does
+    qtbot.waitUntil(lambda: "colours" in _data(project).get("analysis", {}), timeout=5000)
+    assert _data(project)["analysis"]["colours"] == {"D109H": "tab:purple"}
+
+
+def test_a_groups_page_offers_the_samples_before_there_are_results(qtbot, tmp_path, project):
+    """The group pages take the window's samples too: before there are results, those the
+    data hold (owner, 2026-11-18)."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from hxex.project_edit import add_group
+
+    _states(tmp_path / "SpecExport", ["A_alone", "B_alone", "AB"])
+    add_group(project, "A", "A_alone", ["A_alone"], unfinished=True)
+    w = MainWindow(settings=QSettings(str(tmp_path / "gui.ini"), QSettings.Format.IniFormat))
+    w.ask_to_save = lambda: QMessageBox.StandardButton.Discard
+    qtbot.addWidget(w)
+    w.open_project(project)
+    editor = w.project_page.editor
+    editor.show_table("analysis.groups.A")
+    page = editor.list_editor
+    page.fill()
+    box = page.samples.add_box
+    offered = [box.itemText(i) for i in range(box.count())]
+    assert "AB" in offered and "B_alone" in offered
