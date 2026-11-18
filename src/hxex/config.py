@@ -1096,7 +1096,7 @@ ANALYSIS_KEYS = ("reference", "samples", "times", "exclude_times", "ks", "residu
                  "overlay_two_only", "peptide_match", "head_to_head", "populations",
                  "borderline_evidence", "modified_peptides",
                  "controls", "merge", "colours",
-                 "fragments", "protection", "labelling", "summary")
+                 "fragments", "protection", "labelling", "summary", "groups")
 # removed (owner, 2026-10-19; docs/HISTORY.md item 106): refused with the reason
 _REMOVED_ANALYSIS_KEYS = ("protection_residues", "protection_r1", "protection_max_se")
 
@@ -1128,8 +1128,8 @@ def _analysis_from(data: Mapping, base: Path):
     if isinstance(data.get("fragments"), Mapping):
         data = {**data, "fragments": _times_in(data["fragments"], ("min_time",),
                                                "analysis.fragments")}
-    values = _false_to_none({k: v for k, v in data.items() if k not in ("regions", "sites")},
-                            AnalysisConfig)
+    values = _false_to_none({k: v for k, v in data.items()
+                             if k not in ("regions", "sites", "groups")}, AnalysisConfig)
     if values.get("labelling") is False:  # typed Any: the helper cannot tell
         values["labelling"] = None
     _check_conditions(values.get("labelling"), "[analysis.labelling]")
@@ -1170,6 +1170,8 @@ def _analysis_from(data: Mapping, base: Path):
                           for k, v in values["runs"].items()}
     values["annotations"] = {"regions": _annotation_items(data.get("regions"), "regions"),
                              "sites": _annotation_items(data.get("sites"), "sites")}
+    if _none(data.get("groups")) is not None:
+        values["groups"] = _groups_from(data["groups"])
     try:
         if isinstance(values.get("filters"), Mapping):
             from .analysis import SpeciesFilters
@@ -1203,26 +1205,65 @@ def _check_conditions(data, where: str) -> None:
                                "sample)")
 
 
-def _annotation_items(value, what: str) -> list:
-    """The items of ``[[analysis.regions]]`` or ``[[analysis.sites]]`` (false: none), each
-    with the keys and value forms of :class:`hxex.analysis.Region` or ``Site``."""
+def _annotation_items(value, what: str, table: str = "analysis") -> list:
+    """The items of ``[[analysis.regions]]`` or ``[[analysis.sites]]`` (false: none), or of a
+    group's (``table`` = ``"analysis.groups.NAME"``), each with the keys and value forms of
+    :class:`hxex.analysis.Region` or ``Site``."""
     from .analysis.compare import Region, Site
 
     cls, needed = (Region, ("name", "start", "end")) if what == "regions" else (Site,
                                                                                  ("residue",))
     items = _items(_none(value))
     if not isinstance(items, list):
-        raise ProjectError(f"[[analysis.{what}]] must be tables (one per item), or false")
+        raise ProjectError(f"[[{table}.{what}]] must be tables (one per item), or false")
     for n, item in enumerate(items, start=1):
-        where = f"[[analysis.{what}]] #{n}"
+        where = f"[[{table}.{what}]] #{n}"
         if not isinstance(item, Mapping):
             raise ProjectError(f"{where} must be a table")
         _check_keys(item, {f.name for f in fields(cls)}, where)
         missing = [k for k in needed if k not in item]
         if missing:
             raise ProjectError(f"{where} needs {', '.join(missing)}")
-        _check_types(item, cls, f"analysis.{what}")
+        _check_types(item, cls, f"{table}.{what}")
     return list(items)
+
+
+GROUP_KEYS = ("reference", "samples", "regions", "sites")  # of [analysis.groups.NAME]
+
+
+def _groups_from(data) -> dict[str, dict]:
+    """``[analysis.groups]``: one table per group (name -> its reference, samples, and its own
+    regions and sites), checked; the values for :class:`hxex.analysis.AnalysisGroup`. A kind
+    of annotation the group does not give is None (the group takes the shared ones); given as
+    false, it has none."""
+    if not isinstance(data, Mapping) or not data:
+        raise ProjectError("[analysis.groups] holds one table per group: "
+                           "[analysis.groups.NAME] with reference and samples")
+    out = {}
+    for name, item in data.items():
+        where = f"[analysis.groups.{name}]"
+        if not isinstance(item, Mapping):
+            raise ProjectError(f"{where} must be a table (reference, samples, and the group's "
+                               "own regions and sites)")
+        _check_keys(item, GROUP_KEYS, where)
+        missing = [k for k in ("reference", "samples") if k not in item]
+        if missing:
+            raise ProjectError(f"{where} needs {' and '.join(missing)}")
+        if not isinstance(item["reference"], str):
+            raise ProjectError(f"{where} reference = {toml_value(item['reference'])}: the "
+                               "name of one of the group's samples, in quotes")
+        samples = item["samples"]
+        texts = samples.values() if isinstance(samples, Mapping) else samples
+        if not isinstance(samples, (Mapping, list)) or not all(isinstance(v, str)
+                                                                for v in texts):
+            raise ProjectError(f"{where} samples: a list of sample names "
+                               '(["B_alone", "B_in_AB"]), or a table of label = sample '
+                               '({ alone = "B_alone", "A+B" = "B_in_AB" })')
+        out[str(name)] = {
+            "reference": item["reference"], "samples": samples,
+            **{kind: _annotation_items(item[kind], kind, f"analysis.groups.{name}")
+               for kind in ("regions", "sites") if kind in item}}
+    return out
 
 
 # the tables that hold a list of items (``[[name]]``; a single ``[name]`` is read as one item)
@@ -2560,6 +2601,13 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "# [[analysis.sites]]              # marked residues, for the figures",
         "# residue = 19",
         '# label = "S12"',
+        "# [analysis.groups.B]             # samples analysed apart, one folder per group",
+        '# reference = "B_alone"           # (no [analysis] reference or samples then)',
+        '# samples = { alone = "B_alone", "A+B" = "B_in_AB" }   # vial label = sample, or a list',
+        "# [[analysis.groups.B.regions]]   # the group's own: replace [[analysis.regions]]",
+        '# name = "N-terminal region"',
+        "# start = 1",
+        "# end = 64",
         "# [analysis.runs]                 # compare separate runs: the tables get a run column;",
         '# A = "runA.zip"                  # reference = "WT", or "A:WT" when WT is in several',
         '#                                 # runs; default: this project\'s bundle',
@@ -2854,6 +2902,10 @@ def _analysis_record(config, mode: str) -> dict[str, Any]:
     """The ``[analysis]`` table of ``config`` with every setting written out."""
     data = config.to_dict()
     data.pop("exclude")  # a project file gives the rules in [review] (analysis_settings_text)
+    # a group's analysis is written as an analysis of its own (its reference, samples, regions
+    # and sites), which repeats it; the header names the group (analysis_settings_text)
+    data.pop("groups")
+    data.pop("group")
     annotations = data.pop("annotations")
     data["regions"], data["sites"] = annotations["regions"], annotations["sites"]
     fasta = data.get("fasta")
@@ -2894,6 +2946,15 @@ def analysis_settings_text(config, results: Mapping[str, Mapping], *,
         f"hxex analyse {ANALYSIS_SETTINGS_FILE} --bundle BUNDLE. Paths are recorded as",
         "[input] record_paths says (\"name\": file names only).",
     ])
+    if config.group:
+        group = config.groups[config.group]
+        pairs = zip(group.labels, group.samples, strict=True)
+        labels = ("" if group.labels == group.samples else " (vial labels: "
+                  + ", ".join(f"{label} = {sample}" for label, sample in pairs) + ")")
+        lines += _record_header(f"The analysis of group {config.group}", [
+            f"[analysis.groups.{config.group}] of the project file, written as an analysis of",
+            f"its own: its reference, its samples{labels}, and the regions and sites it was",
+            "drawn with (the group's own of each kind it gives, else the shared ones)."])
     defaults = _analysis_record(AnalysisConfig(), "path")
     data = _falsified(_analysis_record(config, record_paths), defaults)
     lines += _toml_table("analysis", data, cls=AnalysisConfig)

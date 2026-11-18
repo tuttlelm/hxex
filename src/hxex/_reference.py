@@ -196,11 +196,19 @@ _DESCRIPTIONS: dict[str, str] = {
     "analysis.reference": "the sample the others are compared with (empty: no comparisons); "
                           '`"run:sample"` names one run\'s sample. A list (`["WT", "Mut"]`) or '
                           '`"all"` (every sample in turn) makes one analysis per reference, a '
-                          "folder each",
+                          "folder each. With [analysis.groups] each group names its own "
+                          "instead",
     "analysis.samples": "which samples, and their order in every figure and table (the "
                         "tables and the figures that compare samples put the reference first); "
                         "the default colours follow this order, the first black, whichever "
-                        "sample is the reference; empty: every sample, in alphabetical order",
+                        "sample is the reference; empty: every sample, in alphabetical order. "
+                        "With [analysis.groups] each group names its own instead",
+    "analysis.groups.reference": "the group's sample the others of the group are compared with",
+    "analysis.groups.samples": 'the group\'s samples, in order: a list (`["B_alone", '
+                               '"B_in_AB"]`), or a table of vial label = sample (`{ alone = '
+                               '"B_alone", "A+B" = "B_in_AB" }`). A label names one vial '
+                               "(condition) as seen from each group that holds it: \"A+B\" in "
+                               "group A and in group B is the same vial",
     "analysis.times": "time points of the per-time figures (empty: all)",
     "analysis.exclude_times": "time points left out of the whole analysis (unreliable ones; "
                               "the fits are kept)",
@@ -446,6 +454,23 @@ _INTROS: dict[str, str] = {
                       "(one file for every sample), not both. A file holds one sequence; a "
                       "header >NAME/START-END numbers its first residue START.",
     "analysis.regions": "Repeat the table for every region (regions may overlap).",
+    "analysis.groups": "Groups of samples analysed apart, each against its own reference: the "
+                       "proteins of a heterooligomer, each measured in every vial, or a series "
+                       "of one protein. One table per group ([analysis.groups.NAME], below); "
+                       "hxex analyse makes one analysis per group, a folder each "
+                       "(results_analysis_NAME). With groups, [analysis] reference and samples "
+                       "are refused (each group names its own); every other [analysis] setting "
+                       "applies to every group. A sample in no group is not analysed (hxex check "
+                       "says which); a sample may be in several groups. See "
+                       "[Groups of samples](experiments.md#groups-of-samples).",
+    "analysis.groups.NAME": "One group, named NAME (the name of its analysis folder).",
+    "analysis.groups.NAME.regions": "The group's own regions, in its own residue numbers: they "
+                                    "replace [[analysis.regions]] for this group (a group "
+                                    "without its own takes those; regions = false: none). "
+                                    "Repeat the table for every region.",
+    "analysis.groups.NAME.sites": "The group's own sites: they replace [[analysis.sites]] for "
+                                  "this group (a group without its own takes those; sites = "
+                                  "false: none). Repeat the table for every site.",
     "analysis.sites": "Repeat the table for every site (a modification, a mutation).",
     "analysis.fragments": "The fragment outputs of a run with fragment series (ladders, rates, "
                           "closure, per-residue rates); written whenever the run has fragments.",
@@ -654,7 +679,7 @@ def tables() -> list[Table]:
         Setting("table", "path", UNSET, _DESCRIPTIONS["review.table"]),), _INTROS["review"]))
     out.append(Table("review.exclude", True, _RULE, _INTROS["review.exclude"]))
     nested = ("filters", "choice", "regions", "sites", "runs", "merge", "controls", "fragments",
-              "labelling", "colours")
+              "labelling", "colours", "groups")
     out.append(Table("analysis", False, _settings(
         AnalysisConfig, "analysis", keys=[k for k in ANALYSIS_KEYS if k not in nested]),
         _INTROS["analysis"]))
@@ -668,6 +693,15 @@ def tables() -> list[Table]:
                      _INTROS["analysis.regions"]))
     out.append(Table("analysis.sites", True, _settings(Site, "analysis.sites"),
                      _INTROS["analysis.sites"]))
+    out.append(Table("analysis.groups", False, (), _INTROS["analysis.groups"]))
+    out.append(Table("analysis.groups.NAME", False, (
+        Setting("reference", "text", REQUIRED, _DESCRIPTIONS["analysis.groups.reference"]),
+        Setting("samples", "list or table", REQUIRED,
+                _DESCRIPTIONS["analysis.groups.samples"])), _INTROS["analysis.groups.NAME"]))
+    out.append(Table("analysis.groups.NAME.regions", True, _settings(Region, "analysis.regions"),
+                     _INTROS["analysis.groups.NAME.regions"]))
+    out.append(Table("analysis.groups.NAME.sites", True, _settings(Site, "analysis.sites"),
+                     _INTROS["analysis.groups.NAME.sites"]))
     out.append(Table("analysis.fragments", False, _settings(
         FragmentAnalysis, "analysis.fragments", skip=("labels", "exchange")),
         _INTROS["analysis.fragments"]))

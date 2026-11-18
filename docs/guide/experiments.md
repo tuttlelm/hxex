@@ -63,8 +63,10 @@ summed. See [Input formats](inputs.md).
   difference), per residue, per population, with Woods and butterfly plots. `peptide_match =
   "range"` pairs a mutant's peptide with the reference's over the same residues (the default,
   except for pooled data, which is compared by sequence).
-- Regions and sites (`[[analysis.regions]]`, `[[analysis.sites]]`) are drawn and summarised;
-  *hxex* derives none itself.
+- Regions and sites (`[[analysis.regions]]`, `[[analysis.sites]]`): regions are drawn, tabled,
+  and tested; sites are only drawn (see [Regions and sites](#regions-and-sites)). *hxex* derives
+  none itself.
+- Several proteins, or several series, in one project: [Groups of samples](#groups-of-samples).
 - Separate runs compared or pooled: see [Comparing separate runs](comparing-runs.md).
 - Peptide protection factors (opt-in, `protection = true`, with the labelling conditions in
   `[analysis.labelling]`): one factor per peptide, from the uptake against the intrinsic rates.
@@ -79,6 +81,76 @@ decides whether its peptides are compared with the reference's over the same res
 (`"range"`) or only where the sequences are identical (`"sequence"`). The default, `"auto"`,
 is `"range"`, except for pooled data, where it is `"sequence"`: there two sequences at one
 range are different proteins.
+
+### Regions and sites
+
+Regions and sites are stretches and residues of the protein you name, so that the figures and
+tables speak of them. *hxex* finds none by itself.
+
+```toml
+[[analysis.regions]]
+name = "N-terminal region"
+start = 1
+end = 63
+
+[[analysis.sites]]
+residue = 19
+label = "S19"
+```
+
+Repeat a table for every region or site; regions may overlap. Residues are numbered as the
+protein's sequence numbers them (the FASTA, or the peptides' own numbers).
+
+- **A region** is drawn as dashed lines at its two ends on every by-residue figure (the residue
+  overlays, the every-sample residue figure, and the Woods plots), and it is also a unit of the
+  analysis: `regions.csv` gives each region's fD per sample and time, the Regions figure
+  (`regions_<time>`) draws them as bars, and with a reference `compare_regions.csv`, the region
+  significance map, and the region composition maps say whether, and where in it, each sample
+  differs from the reference (see [Outputs](outputs.md)).
+- **A site** is only drawn: a dashed line at the residue, with its label above the Woods plots.
+  It is not tabled or tested; to test a stretch around a site, name it as a region.
+
+### Groups of samples
+
+A project may hold samples that should not be compared with one reference: the proteins of a
+heterooligomer, each measured in every vial it is in (exported once per protein per vial), or
+a pH series of one protein next to a mutant's. Give each set of samples a group:
+
+```toml
+[analysis.groups.A]
+reference = "A_alone"
+samples = { alone = "A_alone", "A+B" = "A_in_AB", "A+C" = "A_in_AC" }
+
+[analysis.groups.B]
+reference = "B_alone"
+samples = { alone = "B_alone", "A+B" = "B_in_AB", "B+C" = "B_in_BC" }
+
+[[analysis.groups.B.regions]]
+name = "N-terminal region"
+start = 1
+end = 64
+```
+
+- `samples` lists the group's samples (`["A_alone", "A_in_AB"]`), or names each with a label
+  for the vial it was measured in (`"A+B" = "A_in_AB"`). A label names one vial as seen from
+  every group that holds it: "A+B" in group A and in group B is the same vial, once with
+  protein A measured and once with protein B.
+- `reference` is the group's sample the others in the group are compared with.
+- With groups, `[analysis] reference` and `samples` are refused: each group names its own.
+  Every other `[analysis]` setting applies to every group.
+- A group's own `[[analysis.groups.NAME.regions]]` replace the shared `[[analysis.regions]]`
+  for that group, and its own `[[analysis.groups.NAME.sites]]` the shared sites, in the
+  group's own residue numbers. A group that gives none of a kind takes the shared ones (right
+  for a group of one protein); `regions = false` in a group gives it none. Own and shared are
+  never merged.
+- A sample may be in several groups; a sample in no group is not analysed (`hxex check` lists
+  them).
+
+`hxex analyse` then makes one analysis per group, each in its own folder named after the group
+(`results_analysis_A`, `results_analysis_B`), with every table and figure of an ordinary
+analysis of the group's samples against its reference. `hxex analyse hxex.toml --group B`
+makes only group B's. `hxex check` shows each group: its reference, its samples by label, and
+whether its regions and sites are its own or the shared ones.
 
 ---
 

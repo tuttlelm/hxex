@@ -3148,7 +3148,7 @@ def test_a_reference_list_or_all_makes_one_analysis_each(two_sample_bundle, tmp_
     assert analysis_references(results, AnalysisConfig()) == [""]
     with pytest.raises(ValueError, match="no reference sample 'X'"):
         analysis_references(results, AnalysisConfig(reference=["S", "X"]))
-    with pytest.raises(ValueError, match="one reference at a time"):
+    with pytest.raises(ValueError, match="one analysis at a time"):
         analysis_outputs(results, AnalysisConfig(reference=["S", "V"]))
     # hxex analyse: a folder per reference
     bundle = tmp_path / "results"

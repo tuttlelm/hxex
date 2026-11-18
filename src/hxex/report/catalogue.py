@@ -59,7 +59,12 @@ class Situation:
         from ..analysis.settings import population_rule
         from .analysis import _check_names, _fitted_ks, fragment_series_ids
 
-        _check_names(results, analysis)  # a reference that names no sample: refused
+        if analysis.by_group:  # every group's reference and samples
+            from .analysis import analysis_references
+
+            analysis_references(results, analysis)
+        else:
+            _check_names(results, analysis)  # a reference that names no sample: refused
         runs = results.runs if isinstance(results, RunSet) else {"": results}
         fitted = _fitted_ks(analysis, runs)
         split = [fragment_series_ids(r) for r in runs.values()]
@@ -162,14 +167,22 @@ def _kinds_include(page: str) -> Need:
 
 
 _OVERVIEW = Need("[figures] overview", "true", lambda s: bool(s.figures.overview))
-_REFERENCE = Need("[analysis] reference", "names a sample to compare the others with",
-                  lambda s: bool(s.analysis.reference))
+_REFERENCE = Need("[analysis] reference", "names a sample to compare the others with (or "
+                  "each group of [analysis.groups] its own)",
+                  lambda s: bool(s.analysis.reference) or s.analysis.by_group)
 _K2 = Need("[analysis] ks", "includes 2 (and the run fitted K = 2)", lambda s: 2 in s.ks)
 _TEST = Need("[analysis] populations", "\"population_test\" (the default when the run has "
              "[run.population_test])",
              lambda s: None if s.populations is None else s.populations == "population_test")
-_REGIONS = Need("[[analysis.regions]]", "at least one region",
-                lambda s: bool(s.analysis.annotations.regions))
+def _has_regions(analysis) -> bool:
+    """Whether the analysis (or, with groups, any group's) has a region."""
+    if analysis.by_group:
+        return any(analysis.one(g).annotations.regions for g in analysis.groups)
+    return bool(analysis.annotations.regions)
+
+
+_REGIONS = Need("[[analysis.regions]]", "at least one region (or a group's own)",
+                lambda s: _has_regions(s.analysis))
 _PROTECTION = Need("[analysis] protection", "true (with [analysis.labelling])",
                    lambda s: bool(s.analysis.protection))
 _FRAGMENTS = Need("[analysis.fragments]", "not false",

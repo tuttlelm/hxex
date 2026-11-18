@@ -953,7 +953,7 @@ check`, 3 strict comparisons by sequence, 4 the forms of the pool, 5 head-to-hea
 table, 6 the window (identity columns, filter by class and level; built). Check data: the private
 pooled dataset (`HXEX_POOLED_EXAMPLE`, both conditions) and the state exports beside it.
 
-### Groups of samples (design, owner 2026-11-18; not built)
+### Groups of samples (design, owner 2026-11-18; step 1 built, HISTORY 414)
 
 **The use case.** One project holds samples of several proteins, analysed together but each
 protein looked at on its own: heterooligomers of three proteins A, B, and C, each alone and in
@@ -995,7 +995,9 @@ label = "S12"
   every other `[analysis]` setting applies to every group.
 - **Regions and sites per group.** A group's own `[[...regions]]` and `[[...sites]]` replace the
   shared `[[analysis.regions]]` and `[[analysis.sites]]`; a group without its own takes the
-  shared ones (right for a group of one protein, such as a pH series). Never merged.
+  shared ones (right for a group of one protein, such as a pH series). Never merged. Built per
+  kind: a group with its own regions but no sites takes the shared sites (`sites = false` in
+  the group: none; owner confirmed, 2026-11-18).
 
 **Outputs.** `hxex analyse` makes one analysis per group, as it does per reference today
 (`results_analysis_GROUP`, with its folder listing, settings copy, and `made_from`): an ordinary

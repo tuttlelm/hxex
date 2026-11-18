@@ -227,6 +227,7 @@ class AnalysisWorkspace(QWidget):
         self._planned: dict[str, object] = {}
         self._drawn_from = None  # the analysis the figure shown was drawn from
         self._latest: str | None = None  # the reference of the latest analysis computed
+        self._by_group = False  # [analysis.groups]: one analysis per group, nothing shared
         self._key_cache: tuple = (None, None)  # (results object, its key): E-9
         self.refresh()
 
@@ -234,7 +235,8 @@ class AnalysisWorkspace(QWidget):
 
     @property
     def shown_reference(self) -> str:
-        """The reference whose analysis is shown ('' with none)."""
+        """The reference whose analysis is shown ('' with none), or with ``[analysis.groups]``
+        the group."""
         data = self.reference.currentData()
         return data if isinstance(data, str) else ""
 
@@ -253,8 +255,18 @@ class AnalysisWorkspace(QWidget):
     def shared_reference(self) -> str | None:
         """The reference of the analysis the figures common to every reference come from: the
         latest computed (so a Recompute, after a review decision say, renews them too); None
-        before any."""
+        before any. With ``[analysis.groups]`` the groups hold different samples, so nothing
+        is shared: the group shown, once computed."""
+        if self._by_group:
+            shown = self.shown_reference
+            return shown if shown in self._analyses else None
         return self._latest if self._latest in self._analyses else None
+
+    def _of(self, ref: str) -> str:
+        """`` against REF`` (or `` of group NAME``) for the status line; empty without one."""
+        if not ref:
+            return ""
+        return f" of group {ref}" if self._by_group else f" against {ref}"
 
     @property
     def shared_outputs(self):
@@ -289,6 +301,10 @@ class AnalysisWorkspace(QWidget):
             self.reference.setCurrentIndex(max(index, 0))
             self.reference.blockSignals(False)
         several = len(refs) > 1
+        # with [analysis.groups] the choice is the group (until the window's own group choice,
+        # PLAN Next steps 38 step 4)
+        self._by_group = config.by_group
+        self.reference_label.setText("group" if config.by_group else "against")
         self.reference.setVisible(several)
         self.reference_label.setVisible(several)
 
@@ -397,12 +413,12 @@ class AnalysisWorkspace(QWidget):
                 except Exception:  # noqa: BLE001 - the project file does not read: no hint
                     hint = "about half a minute for 25,000 spectra"
                 self.status.setText(
-                    "Not computed yet" + (f" against {ref}" if ref else "") + ": Compute "
+                    "Not computed yet" + self._of(ref) + ": Compute "
                     f"makes the figures hxex analyse would write for {len(self.results.fit):,} "
                     f"spectra ({hint}; nothing is written)."
                     + (f" The figures the same for every reference are shown from the analysis "
                        f"against {shared}" + (f" (out of date: {stale})" if stale else "") + "."
-                       if shared is not None else "")
+                       if shared is not None and not self._by_group else "")
                     + self._settings_note())
                 self._redraw_if_another()
         elif why:
@@ -412,7 +428,7 @@ class AnalysisWorkspace(QWidget):
         else:
             n = len(self.outputs.figures)
             ref = self.shown_reference
-            self.status.setText(f"{n} figure(s)" + (f" against {ref}" if ref else "")
+            self.status.setText(f"{n} figure(s)" + self._of(ref)
                                 + ", as hxex analyse would write them" + self._settings_note())
             self._redraw_if_another()
             self.compute_button.setText("Recompute")
@@ -468,7 +484,8 @@ class AnalysisWorkspace(QWidget):
                 config = self._settings()[0]
             except Exception:  # noqa: BLE001 - the project file does not read: said elsewhere
                 config = None
-            if config is not None and not config.reference and not config.runs:
+            if config is not None and not config.reference and not config.runs \
+                    and not config.groups:
                 samples = list(config.samples) or self.results.samples()
         if len(samples) < 2:
             self.no_reference.hide()
@@ -576,7 +593,7 @@ class AnalysisWorkspace(QWidget):
                 config = self._settings()[0]
                 self._fill_references(config)
                 if not config.single_reference:
-                    config = config.with_reference(self.shown_reference)
+                    config = config.one(self.shown_reference)
                 situation = Situation.of(analysis=config, results=self.results)
                 planned = plan(situation)
             except Exception as exc:  # noqa: BLE001 - settings these results refuse
@@ -596,8 +613,10 @@ class AnalysisWorkspace(QWidget):
                 if kind is not None and kind.fragments:
                     stems.sort(key=natural_key)
             kinds = [p for p in planned if p.kind.command == ANALYSE]
-            sections = analysis_sections(kinds, situation.fragments, self.shown_reference,
-                                         self.shared_reference)
+            sections = analysis_sections(
+                kinds, situation.fragments,
+                config.reference if config.group else self.shown_reference,
+                self.shared_reference, group=config.group or None)
             for heading, words, group in sections:
                 if not group:
                     continue
@@ -839,7 +858,7 @@ class AnalysisWorkspace(QWidget):
             return
         ref = self.shown_reference
         if not config.single_reference:
-            config = config.with_reference(ref)
+            config = config.one(ref)
         stamp = table_stamp(self._project())
         if self._project() is not None and self.window is not None \
                 and stamp != getattr(self.window, "results_review_stamp", stamp):
@@ -867,8 +886,7 @@ class AnalysisWorkspace(QWidget):
         path = getattr(self.window, "results_path", None)
         key = self.results_key()
         self.status.setText(f"Computing the analysis of {n:,} spectra"
-                            + (f" against {ref}" if ref else "")
-                            + f" ({compute_time(results, config)})…")
+                            + self._of(ref) + f" ({compute_time(results, config)})…")
         self.busy.show()
         self.stop_button.show()
         self.compute_button.setEnabled(False)
@@ -1000,17 +1018,23 @@ class AnalysisWorkspace(QWidget):
 
 
 def analysis_sections(kinds, fragments: bool | None, shown_reference: str | None,
-                      shared_reference: str | None) -> list[tuple[str, str, list]]:
+                      shared_reference: str | None,
+                      group: str | None = None) -> list[tuple[str, str, list]]:
     """The parts of the Analysis list: ``(heading, tooltip, planned kinds)`` for the peptides'
     figures (MS1) the same for every reference, those compared with the reference, and the
     fragment ions' (MS2/MS3), the last only when the results may hold fragment series
-    (``fragments`` not False)."""
+    (``fragments`` not False). ``group``: the group of ``[analysis.groups]`` shown (its own
+    samples, so nothing is the same for another group); ``shown_reference`` is then the
+    group's reference."""
     drawn_once = ("drawn once, from the latest analysis computed (against "
                   + (shared_reference if shared_reference else "the reference computed")
                   + "), and shown whichever reference is chosen")
     peptides = [p for p in kinds if not p.kind.fragments]
+    if group:
+        drawn_once = f"drawn for the samples of group {group} only"
     return [
-        ("Peptides (MS1): same for every reference",
+        ((f"Peptides (MS1) of group {group}: not compared" if group else
+          "Peptides (MS1): same for every reference"),
          "figures of the peptides, from their MS1 spectra, that do not compare samples with "
          "the reference: " + drawn_once,
          [p for p in peptides if not p.kind.compares]),

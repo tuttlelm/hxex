@@ -85,6 +85,95 @@ def _same_sample(a: str, b: str) -> bool:
 
 
 @dataclass(frozen=True)
+class AnalysisGroup:
+    """One group of ``[analysis.groups]`` (docs/ANALYSIS.md "Groups of samples"): samples
+    analysed together against their own ``reference``, apart from the other groups' (one
+    protein of a heterooligomer seen in each vial, a pH series of one protein).
+
+    - ``reference``: one of ``samples`` (its sample name).
+    - ``samples``: the group's samples, in their order in the figures and tables.
+    - ``labels``: one per sample, the vial (condition) it was measured in: a label names the
+      same vial seen from each group that holds it, which lines the groups up across the
+      analysis and tells which proteins share a vial. Without labels each sample is its own.
+    - ``annotations``: the group's own regions and sites, each kind replacing the shared
+      ``[[analysis.regions]]`` or ``[[analysis.sites]]`` (None for a kind the group does not
+      give: it takes the shared ones; never merged).
+    """
+
+    reference: str
+    samples: tuple[str, ...]
+    labels: tuple[str, ...] = ()
+    regions: tuple | None = None  # hxex.analysis.Region items, or None: the shared ones
+    sites: tuple | None = None  # hxex.analysis.Site items, or None: the shared ones
+
+    def __post_init__(self):
+        from .compare import Region, Site
+
+        samples = tuple(str(s) for s in self.samples)
+        labels = tuple(str(v) for v in self.labels) or samples
+        if not samples:
+            raise ValueError("samples: name the group's samples")
+        if len(labels) != len(samples):
+            raise ValueError("one label per sample")
+        for what, names in (("sample", samples), ("label", labels)):
+            twice = sorted({n for n in names if names.count(n) > 1})
+            if twice:
+                raise ValueError(f"the {what} {', '.join(map(repr, twice))} is named twice")
+        reference = str(self.reference or "")
+        if not reference:
+            raise ValueError("reference: name the sample the group's others are compared with")
+        if not any(_same_sample(reference, s) for s in samples):
+            raise ValueError(f"the reference {reference!r} is not among the group's samples")
+        object.__setattr__(self, "reference", reference)
+        object.__setattr__(self, "samples", samples)
+        object.__setattr__(self, "labels", labels)
+        for name, cls in (("regions", Region), ("sites", Site)):
+            items = getattr(self, name)
+            if items is not None:
+                object.__setattr__(self, name, tuple(
+                    i if isinstance(i, cls) else cls(**i) for i in items))
+
+    def label_of(self, sample: str) -> str:
+        """The vial label of one of the group's samples."""
+        return self.labels[self.samples.index(sample)]
+
+    def annotations(self, shared: Annotations) -> Annotations:
+        """The regions and sites of the group's analysis: its own of each kind, else
+        ``shared``'s."""
+        return Annotations(
+            regions=shared.regions if self.regions is None else self.regions,
+            sites=shared.sites if self.sites is None else self.sites)
+
+    def to_dict(self) -> dict:
+        out: dict[str, Any] = {"reference": self.reference,
+                               "samples": (list(self.samples) if self.labels == self.samples
+                                           else dict(zip(self.labels, self.samples, strict=True)))}
+        for name in ("regions", "sites"):
+            items = getattr(self, name)
+            if items is not None:
+                out[name] = Annotations(**{name: items}).to_dict()[name]
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Mapping) -> AnalysisGroup:
+        """A group from its table: ``samples`` a list of samples, or a table of label =
+        sample."""
+        unknown = set(data) - {"reference", "samples", "regions", "sites"}
+        if unknown:
+            raise ValueError(f"unknown key(s) {', '.join(sorted(unknown))}: a group has "
+                             "reference, samples, and its own regions and sites")
+        samples = data.get("samples")
+        if isinstance(samples, Mapping):
+            labels, samples = tuple(samples), tuple(samples.values())
+        elif isinstance(samples, (list, tuple)):
+            labels, samples = (), tuple(samples)
+        else:
+            raise ValueError("samples must be a list of samples, or a table of label = sample")
+        return cls(reference=data.get("reference", ""), samples=samples, labels=labels,
+                   regions=data.get("regions"), sites=data.get("sites"))
+
+
+@dataclass(frozen=True)
 class AnalysisConfig:
     """What :func:`hxex.report.write_analysis` computes and draws (the ``[analysis]`` table).
 
@@ -96,6 +185,13 @@ class AnalysisConfig:
       writes a folder for each), and an analysis itself takes one. (The ``reference`` of the
       exchange and labelling conditions is an intrinsic-rate set.)
     - ``samples``: the samples, in this order (empty: all, the reference first).
+    - ``groups``: groups of samples analysed apart (name -> :class:`AnalysisGroup`; docs/
+      ANALYSIS.md "Groups of samples"): each its own reference, samples and regions and sites,
+      one analysis each (:attr:`analysis_names`, :meth:`one`; ``hxex analyse`` writes a folder
+      for each, named after the group). ``reference`` and ``samples`` are then the groups' own
+      (set together with ``groups`` is refused: one way in); every other setting applies to
+      every group. ``group`` names the group an analysis is of (:meth:`with_group`; empty
+      otherwise).
     - ``times`` (s, or text with a unit such as ``"5 min"``): the time points of the per-time
       figures (empty: all); ``exclude_times``: time points left out of the whole analysis
       (unreliable ones; the fits in the bundle are kept; the controls are not times).
@@ -231,9 +327,13 @@ class AnalysisConfig:
     labelling: Any = None  # ExchangeConditions, or sample -> ExchangeConditions
     exclude: tuple = ()  # hxex.exclusions.Exclusion rules: spectra treated as rejected
     summary: Mapping[str, Any] | None = None  # item -> text, or sample -> text
+    groups: Mapping[str, AnalysisGroup] | None = None
+    group: str = ""  # the group this analysis is of (with_group), empty otherwise
 
     def __post_init__(self):
         from ..kint import read_conditions
+
+        self._check_groups()
 
         if isinstance(self.reference, (list, tuple)):  # several: one name stays a name
             names = tuple(dict.fromkeys(str(r) for r in self.reference))
@@ -348,6 +448,64 @@ class AnalysisConfig:
                 if ref != ALL_REFERENCES and not any(_same_sample(ref, s) for s in self.samples):
                     raise ValueError(f"the reference {ref!r} is not among the samples")
 
+    def _check_groups(self) -> None:
+        """``groups`` as :class:`AnalysisGroup` (from tables too), and the one way in."""
+        if not self.groups:
+            object.__setattr__(self, "groups", None)
+            if self.group:
+                raise ValueError(f"group {self.group!r}: there are no groups")
+            return
+        groups = {}
+        for name, value in self.groups.items():
+            name = str(name)
+            if not name.strip():
+                raise ValueError("a group needs a name")
+            try:
+                groups[name] = (value if isinstance(value, AnalysisGroup)
+                                else AnalysisGroup.from_dict(value))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"[analysis.groups.{name}] {exc}") from None
+        object.__setattr__(self, "groups", groups)
+        if self.group:
+            if self.group not in groups:
+                raise ValueError(f"group {self.group!r} is not one of the groups "
+                                 f"({', '.join(groups)})")
+        elif self.reference or self.samples:
+            raise ValueError("[analysis] reference and samples go in each group with "
+                             "[analysis.groups] (its reference and samples): delete them from "
+                             "[analysis]")
+
+    @property
+    def analysis_names(self) -> tuple[str, ...]:
+        """The analyses these settings make, by name: the groups (until one is chosen,
+        :meth:`with_group`), else the references as written (:attr:`references`; none: one
+        analysis without a reference)."""
+        if self.groups and not self.group:
+            return tuple(self.groups)
+        return self.references
+
+    @property
+    def by_group(self) -> bool:
+        """Whether the analyses are the groups' (``[analysis.groups]``), one per group."""
+        return bool(self.groups) and not self.group
+
+    def one(self, name: str) -> AnalysisConfig:
+        """The analysis ``name`` of :attr:`analysis_names`: a group's (:meth:`with_group`), or
+        against one reference (:meth:`with_reference`); itself when it is one analysis."""
+        if self.by_group:
+            return self.with_group(name)
+        return self if self.single_reference else self.with_reference(name)
+
+    def with_group(self, name: str) -> AnalysisConfig:
+        """The analysis of the group ``name``: its reference and samples, and its own regions
+        and sites (each kind it gives replacing the shared ones)."""
+        if not self.groups or name not in self.groups:
+            raise ValueError(f"no group {name!r}" + (f" (the groups: {', '.join(self.groups)})"
+                                                     if self.groups else ""))
+        g = self.groups[name]
+        return replace(self, reference=g.reference, samples=g.samples,
+                       annotations=g.annotations(self.annotations), group=name)
+
     @property
     def references(self) -> tuple[str, ...]:
         """The references as written: none, one, several, or ``('all',)``."""
@@ -357,8 +515,10 @@ class AnalysisConfig:
 
     @property
     def single_reference(self) -> bool:
-        """Whether this is one analysis: no reference, or one sample (not a list or ``'all'``)."""
-        return isinstance(self.reference, str) and self.reference != ALL_REFERENCES
+        """Whether this is one analysis: no reference, or one sample (not a list or ``'all'``),
+        and not the groups' analyses before one is chosen."""
+        return (not self.by_group and isinstance(self.reference, str)
+                and self.reference != ALL_REFERENCES)
 
     def with_reference(self, reference: str) -> AnalysisConfig:
         """This analysis against one ``reference`` (a sample of :attr:`references`, or of every
@@ -411,6 +571,8 @@ class AnalysisConfig:
                                             for g in fields(value)}
             elif f.name == "annotations":
                 value = value.to_dict()
+            elif f.name == "groups":
+                value = None if value is None else {k: g.to_dict() for k, g in value.items()}
             elif f.name == "exclude":
                 value = [r.to_dict() for r in value]
             elif f.name == "labelling":

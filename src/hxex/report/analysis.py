@@ -293,11 +293,37 @@ def _check_names(results, config: AnalysisConfig) -> None:
         resolve_sample(run_names, sample_names, s)
 
 
+def ungrouped_samples(results, config: AnalysisConfig) -> list[str]:
+    """The samples of ``results`` in none of ``config``'s groups (``[analysis.groups]``):
+    not analysed. Empty without groups, or for results that do not list their samples."""
+    states = _sample_states(results)
+    if not config.groups or states is None:
+        return []
+    run_names, sample_names = [s[0] for s in states], [s[1] for s in states]
+    grouped = set()
+    for group in config.groups.values():
+        for name in group.samples:
+            try:
+                grouped.add(resolve_sample(run_names, sample_names, name))
+            except ValueError:
+                continue
+    return [label(*state) for state in states if tuple(state) not in grouped]
+
+
 def analysis_references(results, config: AnalysisConfig) -> list[str]:
-    """The references ``config`` makes analyses against, one analysis each: ``['']`` with
-    none, the one or the several named, or with ``'all'`` every sample of the results in the
-    order of ``[analysis] samples`` (else the analysis's own order), named as the settings name
-    them (``run:sample`` for one run's sample of several runs)."""
+    """The analyses ``config`` makes, one each, by name: with ``[analysis.groups]`` the groups
+    (each group's reference and samples checked against the results first); else the
+    references: ``['']`` with none, the one or the several named, or with ``'all'`` every
+    sample of the results in the order of ``[analysis] samples`` (else the analysis's own
+    order), named as the settings name them (``run:sample`` for one run's sample of several
+    runs)."""
+    if config.by_group:
+        for name in config.groups:
+            try:
+                _check_names(results, config.with_group(name))
+            except ValueError as exc:
+                raise ValueError(f"[analysis.groups.{name}] {exc}") from None
+        return list(config.groups)
     refs = config.references
     if not refs:
         return [""]
@@ -1398,9 +1424,9 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
     first, in memory, as there. ``cancel`` is asked between the steps (raising
     :class:`hxex.hooks.Cancelled`), so the window stops a computation nobody wants any more."""
     if not config.single_reference:
-        raise ValueError(f"one reference at a time: {', '.join(config.references)} make an "
-                         "analysis each (analysis_references, AnalysisConfig.with_reference; "
-                         "hxex analyse writes a folder for each)")
+        raise ValueError(f"one analysis at a time: {', '.join(config.analysis_names)} make an "
+                         "analysis each (analysis_references, AnalysisConfig.one; hxex analyse "
+                         "writes a folder for each)")
     if config.exclude or review:  # rejected in memory, the bundle's fits kept
         from ..exclusions import exclude_from_results
         from ..review_table import apply_view, refuse_unfitted

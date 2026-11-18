@@ -10886,3 +10886,34 @@ CSVs or mzML if wanted.
     states (prep methods) already share a correction (the states read the same control files;
     808 of 814 tested K = 1 rows); the few corrected differently are PLAN Next steps 37.
 
+
+414. **Groups of samples in the analysis, step 1: each group its own analysis against its
+    own reference, with its own regions and sites (owner, 2026-11-18; PLAN Next steps 38,
+    docs/ANALYSIS.md "Groups of samples").** `[analysis.groups.NAME]` takes `reference` and
+    `samples` (a list, or a table of vial label = sample: one label names a vial as seen from
+    each group that holds it) and the group's own `[[...regions]]` and `[[...sites]]`
+    (`hxex.analysis.AnalysisGroup`; `AnalysisConfig.groups`, `group`, `analysis_names`,
+    `by_group`, `one`, `with_group`). With groups, `[analysis] reference` and `samples` are
+    refused (one way in); every other setting applies to every group. Own regions replace the
+    shared ones and own sites the shared sites, each kind apart (a group with its own regions
+    but none of its own sites takes the shared sites; `sites = false` in the group: none;
+    owner confirmed); never merged. `hxex analyse` makes one folder per group (`results_analysis_GROUP`) through
+    the path of several references, with `--group NAME[,NAME]` to choose (`--reference` and a
+    single `--out` for several groups refused; two group names that clean to one folder name
+    refused); it logs the samples in no group (`hxex.report.ungrouped_samples`). Each folder's
+    `analysis_settings_used.toml` writes the group as an analysis of its own (reference,
+    samples, the regions and sites drawn with), headed by the group's name and vial labels, so
+    it reads back and repeats it. `hxex check` prints a `groups` line per group (reference,
+    samples by label, regions and sites own or shared), names the samples read in no group,
+    and counts a group's sample the project does not read as a problem (folder and scan
+    formats; not with `[analysis.runs]`, whose names `hxex analyse` checks). `hxex figures` and
+    the catalogue see each group's reference and regions. The window's Analysis page offers
+    the groups in its choice ("group") and shares nothing between them (the figures the same
+    for every reference were shared across references; groups hold different samples); the
+    Project editor leaves the group tables to the file and names them on the `[analysis]`
+    page, and the Sequence view draws the shared regions, until step 4. Guide: experiments.md
+    "Regions and sites" (regions are drawn, tabled, and tested; sites only drawn: the page had
+    said "summarised") and "Groups of samples"; settings.md, commands.md, and figures.md
+    regenerated; template example. Checked on the private three-protein heterooligomer
+    dataset: three folders, each with only its group's three samples and its own 15-16
+    regions, about 47 s each.

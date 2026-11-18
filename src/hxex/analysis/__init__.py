@@ -103,7 +103,7 @@ from .runs import (
     sample_setting,
     shared_measurements,
 )
-from .settings import AnalysisConfig
+from .settings import AnalysisConfig, AnalysisGroup
 from .species import (
     K2_AVERAGE_SEPARATION,
     SpeciesFilters,
@@ -146,6 +146,7 @@ __all__ = [
     "closure_reference",
     "ladder_steps",
     "AnalysisConfig",
+    "AnalysisGroup",
     "ProtectionByTime",
     "ProtectionComparison",
     "ProtectionTable",

@@ -43,6 +43,10 @@ Conventions: a key left out keeps its default. TOML has no null, so `false` stan
 - [`[analysis.summary]`](#analysissummary)
 - [`[[analysis.regions]]`](#analysisregions)
 - [`[[analysis.sites]]`](#analysissites)
+- [`[analysis.groups]`](#analysisgroups)
+- [`[analysis.groups.NAME]`](#analysisgroupsNAME)
+- [`[[analysis.groups.NAME.regions]]`](#analysisgroupsNAMEregions)
+- [`[[analysis.groups.NAME.sites]]`](#analysisgroupsNAMEsites)
 - [`[analysis.fragments]`](#analysisfragments)
 - [`[analysis.fragments.labels]`](#analysisfragmentslabels)
 - [`[analysis.fragments.exchange]`](#analysisfragmentsexchange)
@@ -429,8 +433,8 @@ The post-fitting analysis that `hxex analyse` writes (`hxex.analysis`). See docs
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `reference` | text or list | `""` | the sample the others are compared with (empty: no comparisons); `"run:sample"` names one run's sample. A list (`["WT", "Mut"]`) or `"all"` (every sample in turn) makes one analysis per reference, a folder each |
-| `samples` | list | `[]` | which samples, and their order in every figure and table (the tables and the figures that compare samples put the reference first); the default colours follow this order, the first black, whichever sample is the reference; empty: every sample, in alphabetical order |
+| `reference` | text or list | `""` | the sample the others are compared with (empty: no comparisons); `"run:sample"` names one run's sample. A list (`["WT", "Mut"]`) or `"all"` (every sample in turn) makes one analysis per reference, a folder each. With [analysis.groups] each group names its own instead |
+| `samples` | list | `[]` | which samples, and their order in every figure and table (the tables and the figures that compare samples put the reference first); the default colours follow this order, the first black, whichever sample is the reference; empty: every sample, in alphabetical order. With [analysis.groups] each group names its own instead |
 | `times` | list | `[]` | time points of the per-time figures (empty: all) |
 | `exclude_times` | list | `[]` | time points left out of the whole analysis (unreliable ones; the fits are kept) |
 | `ks` | list | `[1, 2]` | the fixed K values analysed (1 is needed); left at the default, a K the run did not fit is dropped (a k_max = 1 run is analysed at K = 1) |
@@ -525,6 +529,39 @@ Repeat the table for every region (regions may overlap).
 ## `[[analysis.sites]]`
 
 Repeat the table for every site (a modification, a mutation).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `residue` | integer | required | the residue number |
+| `label` | text | `""` | the label drawn ("S12") |
+
+## `[analysis.groups]`
+
+Groups of samples analysed apart, each against its own reference: the proteins of a heterooligomer, each measured in every vial, or a series of one protein. One table per group ([analysis.groups.NAME], below); hxex analyse makes one analysis per group, a folder each (results_analysis_NAME). With groups, [analysis] reference and samples are refused (each group names its own); every other [analysis] setting applies to every group. A sample in no group is not analysed (hxex check says which); a sample may be in several groups. See [Groups of samples](experiments.md#groups-of-samples).
+
+
+## `[analysis.groups.NAME]`
+
+One group, named NAME (the name of its analysis folder).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `reference` | text | required | the group's sample the others of the group are compared with |
+| `samples` | list or table | required | the group's samples, in order: a list (`["B_alone", "B_in_AB"]`), or a table of vial label = sample (`{ alone = "B_alone", "A+B" = "B_in_AB" }`). A label names one vial (condition) as seen from each group that holds it: "A+B" in group A and in group B is the same vial |
+
+## `[[analysis.groups.NAME.regions]]`
+
+The group's own regions, in its own residue numbers: they replace [[analysis.regions]] for this group (a group without its own takes those; regions = false: none). Repeat the table for every region.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | text | required | the region's name |
+| `start` | integer | required | first residue (1-based, inclusive) |
+| `end` | integer | required | last residue (inclusive) |
+
+## `[[analysis.groups.NAME.sites]]`
+
+The group's own sites: they replace [[analysis.sites]] for this group (a group without its own takes those; sites = false: none). Repeat the table for every site.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

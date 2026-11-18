@@ -456,7 +456,9 @@ class ProjectEditor(QWidget):
         super().__init__(parent)
         from .._reference import tables
 
-        self.tables = tables()
+        # [analysis.groups] is written in the file for now: its tables are named by the group
+        # (PLAN Next steps 38, step 4: groups in the project editor)
+        self.tables = [t for t in tables() if not t.name.startswith("analysis.groups")]
         # the samples of the results open, offered where a setting lists samples (the window
         # sets it; none: typed)
         self.sample_names = None
@@ -765,12 +767,20 @@ class ProjectEditor(QWidget):
             except TypeError:
                 shown = str(value)
             found.setdefault(first, []).append(f"{key[len(prefix) + len(first) + 1:]} = {shown}")
-        if not found:
-            return None
-        lines = [f"[{name}.{sub}] " + ", ".join(items) for sub, items in sorted(found.items())]
-        return _note("Also in the file, for one sample or run each (this page does not edit "
-                     "them; a text editor does; they override the settings above for it): "
-                     + "; ".join(lines))
+        groups = found.pop("groups", None) if name == "analysis" else None
+        notes = []
+        if groups:  # PLAN Next steps 38 step 4 will edit them here
+            names = list(dict.fromkeys(item.split(".", 1)[0] for item in groups))
+            notes.append(f"Groups of samples in the file ([analysis.groups]: {', '.join(names)}"
+                         "): each analysed apart, its reference and samples in place of "
+                         "[analysis] reference and samples. A text editor changes them.")
+        if found:
+            lines = [f"[{name}.{sub}] " + ", ".join(items)
+                     for sub, items in sorted(found.items())]
+            notes.append("Also in the file, for one sample or run each (this page does not "
+                         "edit them; a text editor does; they override the settings above for "
+                         "it): " + "; ".join(lines))
+        return _note(" ".join(notes)) if notes else None
 
     def _add_row(self, layout: QFormLayout, table, setting, prefix: bool = False) -> None:
         row = SettingRow(table.name, setting, self.path.parent if self.path else None,

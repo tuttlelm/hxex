@@ -119,10 +119,11 @@ Also spelt `hxex analyze`.
 |---|---|
 | `hxex.toml\|BUNDLE ...` | the project file, hxex.toml (its [analysis] settings, and [analysis.runs] or output.bundle; a file with only [analysis] is enough), a bundle, or several bundles to compare as separate runs (NAME=BUNDLE, or BUNDLE named after its file; the tables get a run column) |
 | `--bundle` `BUNDLE` | the bundle (instead of the project's output.bundle; relative to the current folder, not to the project file's) |
-| `--out` `OUT` | the output directory (default: [analysis] out, else the bundle's name + _analysis + _REFERENCE when there is a reference, e.g. results_analysis_WT) |
+| `--out` `OUT` | the output directory (default: [analysis] out, else the bundle's name + _analysis + _REFERENCE when there is a reference, e.g. results_analysis_WT, or + _GROUP for each group of [analysis.groups]) |
 | `--overwrite` | replace hxex's files in the analysis folder when it holds earlier output (or [output] overwrite = true) |
 | `--keep-previous` | move the analysis folder to NAME.N first when it holds earlier output (or [output] keep_previous = true) |
 | `--reference` `REFERENCE` | the reference sample (instead of [analysis] reference; `RUN:sample` when the sample is in several runs); several, separated by commas, or all (every sample): a folder each |
+| `--group` `GROUP` | the group(s) of [analysis.groups] to analyse, separated by commas (default: every group) |
 | `--format` `{pdf,png,svg}` | figure file format |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 

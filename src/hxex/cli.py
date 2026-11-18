@@ -177,12 +177,15 @@ def build_parser() -> argparse.ArgumentParser:
                                     "relative to the current folder, not to the project file's)")
     p.add_argument("--out", help="the output directory (default: [analysis] out, else the "
                                  "bundle's name + _analysis + _REFERENCE when there is a "
-                                 "reference, e.g. results_analysis_WT)")
+                                 "reference, e.g. results_analysis_WT, or + _GROUP for each "
+                                 "group of [analysis.groups])")
     _output_options(p, "the analysis folder")
     p.add_argument("--reference", help="the reference sample (instead of [analysis] reference; "
                                        "RUN:sample when the sample is in several runs); "
                                        "several, separated by commas, or all (every sample): "
                                        "a folder each")
+    p.add_argument("--group", help="the group(s) of [analysis.groups] to analyse, separated by "
+                                   "commas (default: every group)")
     p.add_argument("--format", dest="fig_format", choices=("pdf", "png", "svg"),
                    help="figure file format")
     _threads_option(p)
@@ -579,6 +582,7 @@ def cmd_check(args) -> int:
         _say(f"{key:14s} {value}")
     inp = project.input
     peptide_roles: dict | None = None  # the control roles of each peptide (folder formats)
+    read_samples: list[str] | None = None  # the samples the project reads, where known
     if inp is None:
         _say(f"{'input':14s} none (a project file for hxex analyse)")
     elif inp.spectra is not None:
@@ -613,6 +617,7 @@ def cmd_check(args) -> int:
                                      peptide_ranges=inp.peptide_ranges,
                                      peptide_region=inp.peptide_region)
             samples = Counter(e.sample for e in entries)
+            read_samples = sorted(s for s in samples if s)
             _say(f"{'entries':14s} {len(entries)} in {inp.data_dir}")
             peptide_roles = {}
             roles = _folder_control_files(inp, entries, peptide_roles)
@@ -663,6 +668,8 @@ def cmd_check(args) -> int:
     else:
         rows: list[dict] = []
         before = len(problems)
+        read_samples = sorted({str(r.sample) for r in inp.runs if r.sample
+                               and (not inp.samples or r.sample in inp.samples)})
         problems += _check_scan_files(project, rows)
         problems += _check_copied_runs(project)
         if inp.pooled_fasta is not None and inp.peptides.is_file():  # raw files of a pool
@@ -678,6 +685,8 @@ def cmd_check(args) -> int:
             problems += _check_exclusions(project, SpectrumIndex.from_rows(rows), inp.format)
     if inp is not None:
         _say(f"{'correction':14s} {_correction_text(project, peptide_roles)}")
+    if project.analysis is not None and project.analysis.groups:
+        problems += _group_lines(project.analysis, read_samples)
     if inp is not None and inp.retention_times is not None and not inp.retention_times.is_file():
         problems.append(f"input.retention_times {inp.retention_times}: no such file")
     if inp is not None and inp.rt_elution_windows is not None:
@@ -714,6 +723,37 @@ def cmd_check(args) -> int:
         return EXIT_ERROR
     _say("ok")
     return 0
+
+
+def _group_lines(analysis, read: list[str] | None) -> list[str]:
+    """``hxex check``'s ``groups`` lines (one per group of ``[analysis.groups]``: its
+    reference, its samples by label, and whether its regions and sites are its own or the
+    shared ones) and the samples read in no group; returned: the problems (a group's sample
+    that the project does not read). ``read``: the samples read, None where unknown (stored
+    spectra, an analysis-only file). Separate runs (``[analysis.runs]``) name their samples
+    by run, so they are not checked here (``hxex analyse`` does)."""
+    shared = analysis.annotations
+    problems = []
+    for n, (name, group) in enumerate(analysis.groups.items()):
+        samples = ", ".join(s if label == s else f"{label} = {s}"
+                            for label, s in zip(group.labels, group.samples, strict=True))
+        own = []
+        for kind in ("regions", "sites"):
+            items = getattr(group, kind)
+            count = len(getattr(shared, kind)) if items is None else len(items)
+            own.append(f"{count} {kind}" + (" (shared)" if items is None and count else
+                                            "" if items is None else " (its own)"))
+        _say(f"{'' if n else 'groups':14s} {name}: reference {group.reference}; samples "
+             f"{samples}; {', '.join(own)}")
+        if read is not None and not analysis.runs:
+            problems += [f"[analysis.groups.{name}] samples: no sample {s!r} among those read "
+                         f"({', '.join(read) or 'none'})" for s in group.samples
+                         if s not in read]
+    if read is not None and not analysis.runs:
+        grouped = {s for g in analysis.groups.values() for s in g.samples}
+        if left := [s for s in read if s not in grouped]:
+            _say(f"{'':14s} in no group, so not analysed: {', '.join(left)}")
+    return problems
 
 
 def _device_text(project) -> tuple[str, str | None]:
@@ -800,7 +840,7 @@ def _output_lines(project) -> list[str]:
                  else "up to date" if stamp == created else "made from earlier results")
         lines.append(f"{folder.name}: {state} {writes(command)}")
     analysis = project.analysis  # none: hxex analyse uses the default settings
-    refs = [r for r in (analysis.references if analysis is not None else ()) or ("",)]
+    refs = [r for r in (analysis.analysis_names if analysis is not None else ()) or ("",)]
     every = "all" in refs  # every sample in turn: each of the bundle's analysis folders
     if analysis is not None and analysis.out:
         wanted = [Path(analysis.out)]
@@ -2441,6 +2481,18 @@ def cmd_analyse(args) -> int:
                 return EXIT_ERROR
             runs = {"": bundle}
     changes = {}
+    if config.groups and args.reference:
+        log.error("--reference: with [analysis.groups] each group names its reference; "
+                  "choose groups with --group NAME")
+        return EXIT_ERROR
+    chosen = [n.strip() for n in (args.group or "").split(",") if n.strip()]
+    if chosen and not config.groups:
+        log.error("--group: the project has no [analysis.groups]")
+        return EXIT_ERROR
+    if unknown := [n for n in chosen if n not in config.groups]:
+        log.error("--group %s: no such group (the groups: %s)", ", ".join(unknown),
+                  ", ".join(config.groups))
+        return EXIT_ERROR
     if args.reference:  # one, several (commas), or all
         names = [n.strip() for n in args.reference.split(",") if n.strip()]
         changes["reference"] = names[0] if len(names) == 1 else tuple(names)
@@ -2459,7 +2511,13 @@ def cmd_analyse(args) -> int:
             log.error("%s", problem)
             return EXIT_ERROR
     named = Path(args.out) if args.out else Path(config.out) if config.out else None
-    if named is not None and not config.single_reference:
+    names = chosen or list(config.analysis_names)
+    if named is not None and config.by_group and len(names) > 1:
+        log.error("%s: the groups (%s) make a folder each, named after the group "
+                  "(results_analysis_GROUP); leave out --out and [analysis] out, or give one "
+                  "group with --group NAME", named, ", ".join(names))
+        return EXIT_ERROR
+    if named is not None and not config.by_group and not config.single_reference:
         log.error("%s: several references (%s) make a folder each, named after the reference "
                   "(results_analysis_NAME); leave out --out and [analysis] out, or give one "
                   "reference with --reference NAME", named, ", ".join(config.references))
@@ -2473,6 +2531,13 @@ def cmd_analyse(args) -> int:
 
     def prepared(outs: dict[str, Path]) -> bool:
         """The folders checked and made ready, before anything is computed."""
+        by_folder: dict[Path, list[str]] = {}
+        for name, out in outs.items():
+            by_folder.setdefault(out.resolve(), []).append(name)
+        if same := [v for v in by_folder.values() if len(v) > 1]:
+            log.error("%s would write into one folder (their names differ only in characters "
+                      "a folder name cannot hold): rename one", " and ".join(same[0]))
+            return False
         for out in outs.values():
             for name, path in runs.items():
                 if _same_folder(out, path):
@@ -2488,7 +2553,7 @@ def cmd_analyse(args) -> int:
 
     # with "all" the references are the results' samples, known once they are open
     outs = ({} if ALL_REFERENCES in config.references
-            else {ref: folder(ref) for ref in (config.references or ("",))})
+            else {name: folder(name) for name in (names or ("",))})
     if outs and not prepared(outs):
         return EXIT_ERROR
     stop = _Stop()
@@ -2518,12 +2583,20 @@ def cmd_analyse(args) -> int:
                      ", ".join(outs))
             if not prepared(outs):
                 return EXIT_ERROR
+        if config.by_group:
+            from .report import analysis_references, ungrouped_samples
+
+            analysis_references(results, config)  # every group's samples named in the results
+            if left := ungrouped_samples(results, config):
+                log.info("in no group of [analysis.groups], so not analysed: %s",
+                         ", ".join(left))
         for ref, out in outs.items():
-            one = config if config.single_reference else config.with_reference(ref)
-            if len(outs) > 1:
-                log.info("the analysis against %s", ref)
-            with _progress(args, name=f"analysis against {ref}" if len(outs) > 1
-                           else "analysis") as progress:
+            one = config.one(ref)
+            what = f"group {ref}" if config.by_group else f"against {ref}"
+            if len(outs) > 1 or config.by_group:
+                log.info("the analysis %s", "of " + what if config.by_group else what)
+            with _progress(args, name=f"analysis {'of ' if config.by_group else ''}{what}"
+                           if len(outs) > 1 or config.by_group else "analysis") as progress:
                 written = write_analysis(
                     results, one, out, base=base, record_paths=record_paths, review=review,
                     progress=progress, cancel=stop,
@@ -2576,7 +2649,10 @@ def cmd_figures(args) -> int:
             " (settings only: " + ("--settings-only" if args.settings_only else
                                    "no results yet") + ")"))
     analysis = situation.analysis
-    if not analysis.single_reference:  # one analysis per reference, the same figures each
+    if analysis.by_group:  # one analysis per group, the same figures each
+        _say(f"hxex analyse makes one analysis per group of [analysis.groups], a folder each: "
+             f"{', '.join(analysis.groups)}")
+    elif not analysis.single_reference:  # one analysis per reference, the same figures each
         names = (analysis_references(results, analysis) if read else analysis.references)
         _say(f"hxex analyse makes one analysis per reference, a folder each: "
              f"{', '.join(names)}" + ("" if read or "all" not in names else

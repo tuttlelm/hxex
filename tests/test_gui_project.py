@@ -585,6 +585,22 @@ def test_per_sample_tables_are_listed_on_their_page(editor, project):
     assert any('[analysis.fasta.A] WT = "a.fasta"' in t for t in notes)
 
 
+def test_groups_are_named_on_the_analysis_page_not_edited(editor, project):
+    """[analysis.groups] is written in the file until the editor has a page for it (PLAN Next
+    steps 38, step 4): no page named NAME, and the [analysis] page names the groups."""
+    from PySide6.QtWidgets import QLabel
+
+    project.write_text(project.read_text() + '\n[analysis.groups.B]\nreference = "B1"\n'
+                       'samples = ["B1"]\n[[analysis.groups.B.regions]]\nname = "N"\n'
+                       'start = 1\nend = 5\n', encoding="utf-8")
+    editor.reload()
+    assert not [t for t in editor.tables if "groups" in t.name]
+    _page(editor, "analysis")
+    notes = [w.text() for w in editor.page.findChildren(QLabel)]
+    assert any("Groups of samples in the file ([analysis.groups]: B)" in t for t in notes)
+    assert not any("for one sample or run each" in t for t in notes)
+
+
 def test_a_value_none_of_the_choices_is_shown_as_such(editor, project):
     """The format list showed "specexport" for a file saying mzML (B-12); the Tables view
     stopped the window opening the project for it (B-3)."""

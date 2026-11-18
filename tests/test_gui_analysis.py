@@ -553,3 +553,31 @@ def test_stop_ends_the_computation_and_keeps_the_figures(qtbot, tmp_path, projec
     qtbot.waitUntil(lambda: "end" in outcome, timeout=120000)
     _settled()
     assert outcome["end"] == "cancelled" and page.outputs is first
+
+
+def test_groups_are_chosen_and_share_nothing(qtbot, tmp_path, project):
+    """With [analysis.groups] the choice above the list is the group; each group's figures,
+    those that compare no samples too, are its own (the groups hold different samples)."""
+    project.write_text(project.read_text().replace('reference = "S"\n', "") +
+                       '[analysis.groups.G1]\nreference = "S"\nsamples = ["S", "V"]\n'
+                       '[analysis.groups.G2]\nreference = "V"\nsamples = ["V"]\n',
+                       encoding="utf-8")
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    assert page.reference_label.text() == "group" and page.reference.count() == 2
+    assert page.no_reference.isHidden()  # the groups name their references
+    page.compute()
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    assert page.shown_reference == "G1" and "of group G1" in page.status.text()
+    heads = [page.list.topLevelItem(i).text(0) for i in range(page.list.topLevelItemCount())
+             if page.list.topLevelItem(i).data(0, 256) is None]
+    assert heads == ["Peptides (MS1) of group G1: not compared",
+                     "Peptides (MS1): compared with the reference S"]
+    assert _items(page)["coverage"].childCount() >= 1
+    page.reference.setCurrentIndex(1)
+    assert page.outputs is None and "Not computed yet of group G2" in page.status.text()
+    assert _items(page)["coverage"].childCount() == 0  # G1's coverage is not G2's

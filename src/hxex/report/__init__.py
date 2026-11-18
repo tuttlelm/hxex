@@ -7,7 +7,13 @@ save them. The curves are computed in NumPy, but the result types come from ``hx
 importing this package also imports PyTorch.
 """
 
-from .analysis import AnalysisOutputs, analysis_outputs, analysis_references, write_analysis
+from .analysis import (
+    AnalysisOutputs,
+    analysis_outputs,
+    analysis_references,
+    ungrouped_samples,
+    write_analysis,
+)
 from .compare import (
     plot_butterfly,
     plot_peptide_differences,
@@ -180,6 +186,7 @@ __all__ = [
     "AnalysisOutputs",
     "analysis_outputs",
     "analysis_references",
+    "ungrouped_samples",
     "series_kinds",
     "series_figures",
     "series_info",
