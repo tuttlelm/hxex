@@ -1973,6 +1973,21 @@ Planned, not built:
    plots); step 3 built (HISTORY 417: `cross_group_regions.csv` and the figure); step 4
    built (HISTORY 420: the project editor's groups pages, the Sequence view by group,
    and the regions across the groups on the Analysis page).
+39. **A rerun after one elution-window edit** (owner, 2026-11-18: for the future; the
+   current behaviour makes sense for now). Today an edited window costs about as much as a
+   fresh run on the private pooled raw project (17,104 spectra: about 22 min on the GPU), for
+   two reasons. (a) The per-bin noise rule of the fit reuse (HISTORY 326, `reuse.kept_curve`):
+   the earlier curve is kept only when b1 moved by less than 1 % of its standard error *and*
+   the same undeuterated controls entered it (`n_controls`, `n_series`); one window edit
+   changed the count by one control (4,321 to 4,320, 1,461 series, b1 12.6 both times), so
+   no fit, population test (10.5 min), or bootstrap (5 min) was kept. Option: drop the
+   counts from the rule and keep the b1 test (measure first how far b1 moves for such
+   edits); unchanged series then keep fits made with a very slightly different curve, as
+   they already do when only b1 moves. (b) The read: the read plan (HISTORY 397,
+   `stored_read`) holds the whole elution-window table, so one changed row reads every file
+   again (about 5.5 min there). Option: read again only the files whose rows changed and
+   take the others' spectra from the bundle (needs the plan per file). (a) is small; (b) is
+   about a session.
 
 ## Risks and open decisions
 
