@@ -11158,3 +11158,52 @@ CSVs or mzML if wanted.
     known yet at that point and are not used). Bundles read with a window table before this keep
     their drift ranges until read again. Test: tests/test_mzml.py
     test_the_drift_range_is_measured_in_the_window_the_spectrum_is_read_with (fails before).
+
+427. **Searching each file's elution peak at its own offset** (2026-11-19; scratch only, no
+    hxex change; PLAN Next steps 33 step 4). Owner's idea: replicates have similar LC profiles
+    shifted a little, so align each file's run before `find_peak` chooses the peak. Prompted by
+    the pooled raw project, where an undeuterated replicate eluting 5-6 s early had `find_peak`
+    take a later local maximum in 44 % of its ions (PLAN 33 step 4, the case to understand).
+    Arms, from `find_peak`'s own chromatograms (`io.mzml._chromatogram`) of every file: today's
+    search (it reproduced the run's windows for 12,477 of 12,720 pooled controls and 18,959 of
+    18,972 benchmark spectra); the search centred on the table time plus the file's offset (a
+    smooth per-file curve: offsets from its clear peaks, one local maximum with its half-maximum
+    span inside the search, the median of the anchors within +-90 s, at least 10); and a
+    consensus of the other files' traces, moved by their offsets (nearest or tallest maximum).
+    Per-file offsets: -15 to +11 s on the pooled raw project, varying along the gradient; 0 to
+    10 s on the intact-peptide benchmark's raw-file runs (the table time is the sample's median
+    there), the alternating-column injections visible as their own group.
+    Scored first without a fit on the spectra the arms place differently, summed and picked as
+    the run does: undeuterated controls by the share of picked intensity on the natural
+    envelope's bins (pooled 0.59 -> 0.82, aligned better in 277, today in 109; benchmark 0.85 ->
+    0.97, 70 / 23), fully deuterated controls by their distance from the other replicates
+    (pooled 1.98 -> 1.51 D, 325 / 257; benchmark 0.31 -> 0.16 D, 39 / 18), labelled benchmark
+    spectra the same way (0.49 -> 0.21 D, 460 / 278). The consensus added nothing beyond the
+    offset (worse for undeuterated controls; its tallest-maximum form worse still): dropped. The
+    aligned search lost mostly where its window summed to much less than today's; keeping
+    today's window when the aligned one sums to less than 0.5 of it removed about half the losses
+    and kept most of the gains (pooled undeuterated 250 / 60, benchmark labelled 413 / 157).
+    Full runs (find_peak off, each file's window from the arm; aligned with the 0.5 guard), on
+    the spectra whose window moved. Benchmark (1,692 moved): K > 1 undeuterated 13.2 -> 8.2 %,
+    fully deuterated 16.2 -> 10.8 %, labelled K = 3 7.0 -> 2.0 %; undeuterated |centroid| median
+    0.098 -> 0.005 D; labelled replicate sd median 0.216 -> 0.105 D; charge-state spread median
+    0.195 -> 0.091 D, q90 5.4 -> 0.39 D; `off_mz` 56 -> 6, `spectrum_off_mz` 124 -> 25, `mz_shift`
+    54 -> 3, `low_intensity` 436 -> 161, `poor_fit` 69 -> 22. Pooled raw project (3,117 moved):
+    undeuterated |centroid| 0.455 -> 0.060 D, replicate sd and charge spread smaller, screened
+    undeuterated 24.9 -> 12.7 %; but deuterated spectra read K > 1 more often (fully deuterated
+    19.7 -> 26.3 %, labelled 45.8 -> 55.4 %). Looked at: partly width (a wider window sums more
+    signal and shows more misfit, on both datasets), mostly another chromatographic peak (1,220
+    of 1,389 moved fully deuterated windows do not overlap today's). The pages show weak,
+    heavily overlapped spectra unusable in either window (owner: not a window issue), and the
+    aligned search sometimes leaving a clear peak for a taller neighbour that is another
+    species: `find_peak`'s +-30 s search moves with the offset, takes in the neighbour, and its
+    height pushes the true peak below the 10 % threshold. Counted only on spectra passing hxex's
+    checks (no `low_intensity`, `poor_fit`, `undeut_high`, or m/z flag; not removed by the loose
+    screens), the aligned windows give many more of them (pooled undeuterated 362 -> 787 of
+    1,259 moved, labelled 213 -> 304 of 469; benchmark labelled 765 -> 1,113 of 1,325); among
+    those passing in both, pooled K > 1 still rises by 3-8 points, the benchmark's does not, and
+    the checks pass overlapped spectra like those on the pages. Reading (owner agreed): the
+    offset is the right prior for where to search; the choice among candidates needs identity
+    scores (PLAN 33 step 4); the pooled populations question belongs to overlap detection. Found
+    on the way: the drift-order bug (HISTORY 426). Scripts and outputs: private study folder
+    (README there).

@@ -1861,6 +1861,17 @@ Planned, not built:
       median, and where `find_peak` went elsewhere in them it went about 16 s late, to a later
       local maximum. To check: whether the two ran on one LC column (alternating columns were
       seen on the benchmark).
+      *Where to search, measured (scratch, 2026-11-19, HISTORY 427, "Searching each
+      file's elution peak at its own offset"):* centring `find_peak`'s search on the table time
+      plus the file's own offset (a smooth per-file curve from its clear peaks) beats today's
+      search on the benchmark on every measure and gives many more spectra that pass hxex's
+      checks on both datasets; a guard keeps today's window when the aligned one sums to less
+      than half of it. Proposed design for this step: that offset, with the guard, as the prior
+      on where the peptide elutes; the choice among the candidates in reach still needs the
+      identity scores above, because the nearest-maximum rule cannot tell the peptide from a
+      taller neighbour (the +-30 s search moves with the offset, takes in a tall neighbour, and
+      its height pushes the true peak below the 10 % threshold), and pooled data have many
+      neighbours. Not measured: per-column offsets on the benchmark (step 5).
    5. **Elution groups as a diagnostic.** Injections that alternate between two columns show up
       in the relative elution order of the peptides: `hxex check` / `hxex info` could report the
       groups, and windows would be carried only within a group. First look for the pattern in a
