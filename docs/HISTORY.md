@@ -11085,3 +11085,17 @@ CSVs or mzML if wanted.
     sample's line (the file keeps only choices); anything else writes it, even the default's
     own colour. The write runs after the list's signal returns (it rebuilds the rows, the list
     among them). tests/test_gui_project.py.
+
+423. **A changed region puts the window's analysis out of date (owner, 2026-11-18).** The
+    owner changed a group's regions after computing its analysis, and Compute kept the old
+    regions. The Analysis page tells a change of `[analysis]` by its settings as written
+    (`ProjectState.of_tables`), which held the plain settings and the names of the tables but
+    not the entries of a list of tables: a region's residues or name changed, or a region or
+    site added to a list that was there, went unseen, for the shared `[[analysis.regions]]` and
+    `[[analysis.sites]]` as for a group's own, so the analysis read as up to date and
+    "(across the groups)" reused the old group analyses (HISTORY 420). `of_tables` now also gives
+    `lists` (each list of tables with its entries), and the Analysis page compares them. The
+    window's `[figures]`/`[review]` comparison takes the same dict, so a `[[review.exclude]]`
+    rule added or changed now reads the results again too (it went unseen the same way).
+    Tests: tests/test_gui_state.py, tests/test_gui_analysis.py (a group's region end changed
+    after computing: out of date, and the regions across the groups recompute that group).

@@ -345,7 +345,7 @@ class AnalysisWorkspace(QWidget):
         state = self.window.fresh_project_state()  # the window's one parsed state (Q-2)
         config = state.analysis
         of = state.of_tables("analysis")
-        text = (of["values"], of["tables"])
+        text = (of["values"], of["tables"], of["lists"])  # lists: regions, sites, groups' own
         # relative paths from the project file's real folder, as hxex analyse takes them (a
         # project file reached through a link: audit of 2026-11-15, E-25)
         return config, project.resolve().parent, repr(text)

@@ -43,7 +43,14 @@ def test_the_project_state_holds_both_readings_of_the_file(project):
     assert state.bundle is not None and state.bundle.exists()
     assert state.input is None  # an analysis-only project file
     assert state.of_tables("analysis") == {"values": {"analysis.reference": "S"},
-                                           "tables": ["analysis"]}
+                                           "tables": ["analysis"], "lists": {}}
+    # a list of tables' entries count too: a region's residues changed is a change
+    project.write_text(project.read_text() + '[[analysis.regions]]\nname = "N"\nstart = 1\n'
+                       'end = 5\n', encoding="utf-8")
+    regions = ProjectState.read(project).of_tables("analysis")["lists"]
+    assert regions == {"analysis.regions": [{"name": "N", "start": 1, "end": 5}]}
+    project.write_text(project.read_text().replace("end = 5", "end = 6"), encoding="utf-8")
+    assert ProjectState.read(project).of_tables("analysis")["lists"] != regions
     assert state.signature is not None
     assert ProjectState.read(None) == ProjectState()
 

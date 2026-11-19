@@ -620,3 +620,37 @@ def test_the_regions_across_the_groups_are_a_choice_of_their_own(qtbot, tmp_path
     # each group's analysis was made on the way, and is shown without computing it again
     page.reference.setCurrentIndex(1)
     assert page.outputs is not None and "of group G2" in page.status.text()
+
+
+def test_a_groups_regions_changed_after_computing_put_it_out_of_date(qtbot, tmp_path, project):
+    """A region's residues changed in a group's own list (owner, 2026-11-18: Compute kept the
+    old regions): the group's analysis is out of date, and "(across the groups)" computes that
+    group again instead of reusing it."""
+    from hxex.gui.analysis_workspace import ACROSS
+
+    project.write_text(project.read_text().replace('reference = "S"\n', "") +
+                       '[analysis.groups.G1]\nreference = "S"\nsamples = ["S"]\n'
+                       '[[analysis.groups.G1.regions]]\nname = "all"\nstart = 1\nend = 30\n'
+                       '[analysis.groups.G2]\nreference = "V"\nsamples = ["V"]\n'
+                       '[[analysis.groups.G2.regions]]\nname = "all"\nstart = 1\nend = 30\n',
+                       encoding="utf-8")
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    page.compute()  # group G1
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    assert page.why_out_of_date() == ""
+    project.write_text(project.read_text().replace("end = 30\n[analysis.groups.G2]",
+                                                   "end = 8\n[analysis.groups.G2]"),
+                       encoding="utf-8")
+    qtbot.waitUntil(lambda: "settings changed" in page.why_out_of_date(), timeout=10000)
+    page.reference.setCurrentIndex([page.reference.itemData(i)
+                                    for i in range(page.reference.count())].index(ACROSS))
+    page.compute()
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=180000)
+    table = page.outputs.tables["cross_group_regions"]
+    ends = {(g, int(e)) for g, e in zip(table["group"], table["end"], strict=True)}
+    assert ("G1", 8) in ends and ("G1", 30) not in ends  # G1 computed again

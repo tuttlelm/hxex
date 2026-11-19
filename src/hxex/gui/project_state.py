@@ -136,6 +136,35 @@ class ProjectState:
 
     def of_tables(self, *tables: str) -> dict:
         """The settings of ``tables`` as written, for telling a change of them: ``values``
-        (key -> value) and ``tables`` (those switched on, sorted)."""
+        (key -> value), ``tables`` (those switched on, sorted), and ``lists``: each list of
+        tables under them with its entries (``analysis.groups.B.regions`` -> its regions), which
+        ``values`` leaves out; without them a region's residues changed, or a region or an
+        exclusion rule added, went unseen (owner, 2026-11-18: Compute kept the old regions)."""
         return {"values": {k: v for k, v in self.values.items() if k.split(".")[0] in tables},
-                "tables": sorted(n for n in self.tables if n.split(".")[0] in tables)}
+                "tables": sorted(n for n in self.tables if n.split(".")[0] in tables),
+                "lists": self._lists(tables)}
+
+    def _lists(self, tables) -> dict[str, list]:
+        import tomllib
+
+        if self.text is None:
+            return {}
+        try:
+            data = tomllib.loads(self.text)
+        except tomllib.TOMLDecodeError:
+            return {}
+        out: dict[str, list] = {}
+
+        def walk(item: Mapping, prefix: str) -> None:
+            for key, value in item.items():
+                name = f"{prefix}.{key}"
+                if isinstance(value, Mapping):
+                    walk(value, name)
+                elif isinstance(value, list) and value and all(isinstance(v, Mapping)
+                                                               for v in value):
+                    out[name] = [dict(v) for v in value]
+
+        for table in tables:
+            if isinstance(data.get(table), Mapping):
+                walk(data[table], table)
+        return out
