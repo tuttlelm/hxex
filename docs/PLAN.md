@@ -1317,6 +1317,10 @@ Planned, not built:
      read itself is skipped when nothing that decides it changed: the run takes the replaced
      bundle's stored spectra (`hxex.stored_read`: the read plan recorded with them and the
      data files' identities); `--reread` reads.
+     Since 2026-11-18 (HISTORY 425) the window shows which
+     spectra the table now reads differently from the run (red rows in the Results tree and
+     List, a count under the tree) and puts one back to the run's window
+     (`hxex.io.elution_windows.pending_windows`, `restore_run_windows`).
    - *To settle*: a spectrum's id names the scans it summed (`.../scans247-257`), so a new window
      gives a new id and its review entries would go stale; they should follow the spectrum by
      file and peptide ion. SETTLED by item 27 (built).
@@ -1842,6 +1846,21 @@ Planned, not built:
       elution editor's spreading to other files) should score candidates on the m/z position of
       their envelope, the drift time, and agreement between charges (the m/z check, the drift
       peak choice of HISTORY 378, and the profile fit's offset hold the pieces). Builds on 2-3.
+      *A case to understand (owner, 2026-11-18):* on the pooled raw project with `find_peak`
+      for the controls, one undeuterated replicate's window went to a small later peak while
+      every other file of the sample sat on its own elution peak. That file eluted about 15 s
+      earlier than its replicates (the trace match puts them 6-21 s after it), so its true apex
+      was 16 s before the peptide table's time and the small peak 15 s after it: `find_peak`'s
+      nearest-local-maximum rule took the small one. Not yet confirmed by tracing `find_peak`
+      itself (the drift gate or the m/z check could have removed the true peak's scans). A
+      match against the replicates' traces, as the elution editor's spreading uses, would
+      have placed it.
+      Counted over every ion: it happens mostly in that one replicate (its `find_peak` apex
+      outside HDExaminer's window for 44 % of its ions, against 16-22 % in the other
+      controls), and in a second undeuterated replicate (33 %); both elute 5-6 s early by
+      median, and where `find_peak` went elsewhere in them it went about 16 s late, to a later
+      local maximum. To check: whether the two ran on one LC column (alternating columns were
+      seen on the benchmark).
    5. **Elution groups as a diagnostic.** Injections that alternate between two columns show up
       in the relative elution order of the peptides: `hxex check` / `hxex info` could report the
       groups, and windows would be carried only within a group. First look for the pattern in a

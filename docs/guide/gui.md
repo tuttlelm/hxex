@@ -556,6 +556,25 @@ file](inputs.md#a-peptides-own-window-in-one-file)). A spectrum's id names the s
 so a spectrum with a new window has a new id after the run; your review decisions for it follow
 it to the new id (see [When a spectrum's id changes](project-file.md#the-user-review-table)).
 
+Until that run, the results do not have the windows you saved. So that you can see which
+spectra a run would change, a spectrum whose window in the table differs from the one the run
+read it with is drawn in red in the Results tree and the List, and so are its time point,
+series, and peptide rows, so that you can find it with the tree folded. A line under the tree
+counts them ("3 spectra have windows saved since the run (red): rerun to apply"), and hovering
+over a red spectrum shows both windows. A window saved again over the same scans the run summed
+is not red. The red follows the table: after a save or an **Undo**, after the table is changed
+in **Tables** or in another program, and after the run, which reads the new windows and so
+clears it.
+
+**Back to the run's window** (in the tab's bar, with or without **Edit window**) writes the
+table so that the selected red spectrum is read as the run read it: the row a save added is
+removed, or the rows the run had are put back as they were, for every sample that reads the
+file. When the saved window is the peptide's and other charge states (or ions) of it in this
+file take it too, *hxex* asks whether to put the peptide's window back for all of them (**The
+whole peptide**) or to give this one alone the run's window (**This one only**). It reads the
+run's windows from the results, so it works whatever was saved since, and **Undo** takes it
+back as it takes back a save.
+
 Every level also has a **data** tab, named with its number of rows as in Analysis
 (**data (12)**): the selection's rows of the tables `hxex report` writes, as it writes them
 (every K and population, corrected and uncorrected; the `[figures]` K and correction the

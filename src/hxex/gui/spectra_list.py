@@ -426,6 +426,17 @@ class SpectraList(QWidget):
             max(self.model.rowCount() - 1, 0), max(self.model.columnCount() - 1, 0))
         self.model.dataChanged.emit(top, bottom)
 
+    def set_red(self, spectrum_ids) -> None:
+        """Draw the rows of ``spectrum_ids`` in red (windows saved since the run), the others
+        as before."""
+        red = set(spectrum_ids)
+        if red == self.model.red:
+            return
+        self.model.red = red
+        top, bottom = self.model.index(0, 0), self.model.index(
+            max(self.model.rowCount() - 1, 0), max(self.model.columnCount() - 1, 0))
+        self.model.dataChanged.emit(top, bottom, [Qt.ItemDataRole.ForegroundRole])
+
     def current_row(self) -> dict | None:
         index = self.grid.selectionModel().currentIndex()
         if not index.isValid() or index.row() >= len(self.model.rows):

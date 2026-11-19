@@ -21,6 +21,16 @@ import textwrap
 TIP_WIDTH = 60  # characters: the widest a tooltip line runs before wrapping
 ERROR_COLOUR = "#b00020"  # a problem said in the window (a problem line, a failed figure)
 
+
+def error_text_colour():
+    """:data:`ERROR_COLOUR` as text drawn on the window's background: a lighter red on a dark
+    background, where the dark red does not read."""
+    from PySide6.QtGui import QColor, QGuiApplication, QPalette
+
+    base = QGuiApplication.palette().color(QPalette.ColorRole.Base)
+    return QColor("#ff6b81" if base.lightness() < 128 else ERROR_COLOUR)
+
+
 _OPEN, _CLOSE = "([{", ")]}"
 
 

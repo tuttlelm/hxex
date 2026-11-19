@@ -22,7 +22,7 @@ import threading
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -54,7 +54,7 @@ from .results_tree import (
 from .review_panel import ReviewPanel
 from .spectra_list import SpectraList, list_rows
 from .tasks import Latest
-from .tips import set_choice_tips, tip
+from .tips import error_text_colour, set_choice_tips, tip
 from .window_edit import has_fragments, ions_legend, spread_files, view_tips, view_words
 
 log = logging.getLogger(__name__)
@@ -314,6 +314,26 @@ class ResultsWorkspace(QWidget):
         side.setContentsMargins(0, 0, 0, 0)
         side.addWidget(self.left_tabs, 1)
         side.addWidget(self.left_status)
+        # the spectra whose windows were saved since the run (their rows red in the tree and
+        # the list; owner, 2026-11-18): a rerun reads them with the new windows
+        from ..io.elution_windows import PendingSet
+        from .watched_file import WatchedFile
+
+        self.pending = PendingSet()
+        self._pending_series: set[int] = set()  # the series holding one
+        self.pending_label = QLabel()
+        self.pending_label.setWordWrap(True)
+        self.pending_label.setStyleSheet(f"color: {error_text_colour().name()};")
+        self.pending_label.setContentsMargins(4, 0, 4, 0)
+        self.pending_label.hide()
+        side.addWidget(self.pending_label)
+        # the elution-window table, watched: changed in the Tables view or elsewhere, the marks
+        # follow (a save can report several changes: once settled)
+        self._pending_settle = QTimer(self)
+        self._pending_settle.setSingleShot(True)
+        self._pending_settle.setInterval(300)
+        self._pending_settle.timeout.connect(self.refresh_pending)
+        self._table_watch = WatchedFile(self, lambda _path: self._pending_settle.start())
         self._left_tab_changed(0)
         # the "left out" column is worked out again only when asked (owner: no recalculation
         # in the middle of a review session)
@@ -484,6 +504,8 @@ class ResultsWorkspace(QWidget):
                                                   project_state=self._project_state)
                 self.window_editor.reset(getattr(self, "results_path", None))
                 self.window_editor.recording = getattr(self.window, "recording", None)
+                self.window_editor.pending = lambda: self.pending
+                self.window_editor.saved.connect(lambda _path: self.refresh_pending())
                 if self.window is not None:
                     self.window_editor.message.connect(
                         lambda text: self.window.statusBar().showMessage(text, 15000))
@@ -623,6 +645,7 @@ class ResultsWorkspace(QWidget):
         self._fill_overview_pages()
         self._show_tabs("start")  # the first look: the run's overview
         self._draw_overview()
+        self.refresh_pending()
 
     # --- the elution tab -----------------------------------------------------------------------
 
@@ -947,6 +970,8 @@ class ResultsWorkspace(QWidget):
                 self.window_editor.update()
             else:
                 self._draw_plain_trace()
+            if self.window_editor is not None:
+                self.window_editor.pending_changed()
 
         def others(first) -> None:
             if self.compare.currentData() == "ions":
@@ -1484,6 +1509,7 @@ class ResultsWorkspace(QWidget):
                                         min(names + 4 * pad, 480)))
         total = sum(len(p.series) for p in self.tree_data)
         self.count.setText(f"{n_series} of {total} series" if self.results is not None else "")
+        self._mark_pending()
         if keep:  # (audit of 2026-11-15, C-8: after a Find the tree had no current row)
             self._find(keep)
 
@@ -1518,6 +1544,85 @@ class ResultsWorkspace(QWidget):
                 self._show_left_out(leaf, spectrum.left_out)
             self._sum_children(child)
             item.addChild(child)
+        self._mark_series(item)
+
+    # --- windows saved since the run ----------------------------------------------------------
+
+    def refresh_pending(self) -> None:
+        """Work out again which spectra the elution-window table now reads differently from
+        the run (:func:`hxex.io.elution_windows.pending_windows`; no data file is opened), and
+        show them: red rows in the tree and the list, a line under them, and the elution tab's
+        Back to the run's window. Called when results are shown, after the elution tab writes
+        the table, and when the table or the project file changes on disk."""
+        from ..io.elution_windows import PendingSet, pending_windows, table_path
+
+        path = getattr(self, "results_path", None)
+        pending, problem, watched = PendingSet(), "", None
+        if self.results is not None and path is not None and Path(path).suffix == ".toml" \
+                and self._traceable():
+            try:
+                pending = pending_windows(self.results, path)
+                named_path, named = table_path(path)
+                watched = named_path if named else None
+            except Exception as exc:  # noqa: BLE001 (a table that does not read: said)
+                problem = f"The elution-window table does not read: {exc}"
+        if watched is None or self._table_watch.path != watched:
+            self._table_watch.watch(watched)
+        self.pending = pending
+        self._pending_series = {p.data_id for p in pending.by_id.values()}
+        n = len(pending)
+        text = problem or (
+            f"{n} spectr{'um has a window' if n == 1 else 'a have windows'} saved since the "
+            "run (red): rerun to apply" if n else "")
+        self.pending_label.setText(text)
+        self.pending_label.setToolTip(tip(
+            "Windows saved in the elution-window table since the run differ from the ones the "
+            "run read these spectra with. To use them, run the project again with overwrite "
+            "enabled; Back to the run's window in the elution tab puts one back.") if n else "")
+        self.pending_label.setVisible(bool(text))
+        self.list.set_red(pending.by_id)
+        self._mark_pending()
+        if self.window_editor is not None:
+            self.window_editor.pending_changed()
+
+    @staticmethod
+    def _paint(item: QTreeWidgetItem, red: bool) -> None:
+        colour = error_text_colour() if red else None
+        for c in range(item.columnCount()):
+            item.setData(c, Qt.ItemDataRole.ForegroundRole, colour)
+
+    def _mark_series(self, item: QTreeWidgetItem) -> bool:
+        """A series row, its time points, and their spectra red where a spectrum's window was
+        saved since the run; whether any is."""
+        by_id = self.pending.by_id
+        _pep, series = item.data(0, PAYLOAD)
+        red = series.data_id in self._pending_series
+        for j in range(item.childCount()):
+            point = item.child(j)
+            any_point = False
+            for k in range(point.childCount()):
+                leaf = point.child(k)
+                spectrum = leaf.data(0, PAYLOAD)[3]
+                saved = by_id.get(spectrum.spectrum_id)
+                self._paint(leaf, saved is not None)
+                leaf.setToolTip(0, tip(spectrum.spectrum_id + (
+                    f"; window saved since the run: {_window_text(saved.window)} (the run: "
+                    f"{_window_text(saved.run_window or saved.summed)}); rerun to apply"
+                    if saved is not None else "")))
+                any_point |= saved is not None
+            self._paint(point, any_point)
+        self._paint(item, red)
+        return red
+
+    def _mark_pending(self) -> None:
+        """Every row of the tree red where a spectrum under it has a window saved since the
+        run (the peptide and series rows too, so that they are found folded)."""
+        for t in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(t)
+            red = False
+            for j in range(top.childCount()):
+                red |= self._mark_series(top.child(j))
+            self._paint(top, red)
 
     # --- exporting -------------------------------------------------------------------------
 
@@ -2124,6 +2229,13 @@ class ResultsWorkspace(QWidget):
                     self.tree.setCurrentItem(leaf)
                     return True
         return False
+
+
+def _window_text(window) -> str:
+    """A window in minutes, or what the reader chooses when the table gives none."""
+    if window is None:
+        return "none (the peptide table or the peak search)"
+    return f"{window[0]:.4f}-{window[1]:.4f} min"
 
 
 def _same_choice(box: QComboBox, index: int) -> None:

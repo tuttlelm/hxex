@@ -1029,6 +1029,10 @@ class MainWindow(QMainWindow):
         [figures] or [review] changed, load them again (they carry those settings), keeping the
         place in the tree; when its [analysis] changed, the tree's 'left out' column is worked
         out again. Other settings do not change results already made."""
+        if self.project_results and not self.loading:
+            # the table it names, or the table's name, may have changed: the windows saved
+            # since the run follow
+            self.results_page.refresh_pending()
         analysis = self._figure_and_review_settings(("analysis",))
         analysis_before, self._analysis_text = self._analysis_text, analysis
         now = self._figure_and_review_settings()

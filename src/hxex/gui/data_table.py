@@ -39,7 +39,7 @@ from .table_copy import (
     saved_or_said,
     set_clipboard,
 )
-from .tips import rich_tip, tip
+from .tips import error_text_colour, rich_tip, tip
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +142,8 @@ class RowsModel(QAbstractTableModel):
         self.columns: list[str] = []
         self.rows: list[dict] = []
         self.marked: dict[str, str] = {}  # filtered columns: their filter in words
+        # rows drawn in red, by their spectrum_id (windows saved since the run)
+        self.red: set[str] = set()
 
     def set_rows(self, columns: list[str], rows: list[dict]) -> None:
         self.beginResetModel()
@@ -165,6 +167,9 @@ class RowsModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.TextAlignmentRole and isinstance(
                 value, (int, float, np.integer, np.floating)) and not isinstance(value, bool):
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        if role == Qt.ItemDataRole.ForegroundRole and self.red \
+                and str(self.rows[index.row()].get("spectrum_id", "")) in self.red:
+            return error_text_colour()
         return None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802

@@ -117,6 +117,9 @@ class WindowEditor(QObject):
         # the window's context manager recording a write of the project file for the Project
         # editor's Undo (hxex.gui.window.MainWindow.recording; None: not recorded; Q-1)
         self.recording = None
+        # the spectra whose windows were saved since the run (the Results workspace's
+        # hxex.io.elution_windows.PendingSet; None: not known)
+        self.pending: Callable[[], object] | None = None
         self._target: tuple | None = None  # (trace reader, spectrum id) the boxes were set for
         self._has_drift = False  # the spectrum was summed over a drift range
         self._drift_shown: tuple | None = None  # the drift range the table or the run gives
@@ -176,6 +179,12 @@ class WindowEditor(QObject):
         self.undo.setToolTip(tip("undo the last save"))
         self.undo.clicked.connect(self._undo)
         self.undo.setEnabled(False)
+        # the run's window again, for a spectrum whose window was saved since the run (owner,
+        # 2026-11-18): from the run's record, whatever happened since (no save history needed)
+        self.back = QPushButton("Back to the run's window")
+        self.back.setToolTip(tip("no window saved since the run for this spectrum"))
+        self.back.clicked.connect(self._back)
+        self.back.setEnabled(False)
         # two rows of their own under the figure's buttons (in the buttons' row they made the
         # window wider than the screen: owner, 2026-11-08): the switch and the window, then
         # saving; each wraps between its groups where the window is narrower (one row set the
@@ -188,6 +197,7 @@ class WindowEditor(QObject):
                                 QLabel("min")), drift_group, self.each_k,
                          self.each_file]
         row.addWidget(self.edit)
+        row.addWidget(self.back)  # shown without editing too: the tree's red rows lead here
         for w in self.controls:
             row.addWidget(w)
         for w in (_group(self.save, QLabel("for"), self.scope), self.undo):
@@ -823,3 +833,105 @@ class WindowEditor(QObject):
         self.undo.setEnabled(bool(self.history))
         self.message.emit(f"{Path(last.path).name}: the last saved window undone")
         self.saved.emit(str(last.path))
+
+    # --- back to the run's window ------------------------------------------------------------
+
+    def _pending_entry(self, ctx: TraceContext | None):
+        """The selected spectrum's window saved since the run (a PendingWindow), or None."""
+        if ctx is None or self.pending is None:
+            return None
+        pending = self.pending()
+        return None if pending is None else pending.get(ctx.spectrum_id)
+
+    def pending_changed(self) -> None:
+        """Back to the run's window enabled while the spectrum shown has a window saved since
+        the run (and the results came from their project file)."""
+        ctx = self.context()
+        entry = self._pending_entry(ctx)
+        on = entry is not None and self._project(ctx) is not None
+        self.back.setEnabled(on)
+        if on:
+            from .results_workspace import _window_text
+
+            self.back.setToolTip(tip(
+                f"The run read this spectrum with {_window_text(entry.run_window or entry.summed)}"
+                f"; the elution-window table now gives {_window_text(entry.window)}. Writes the "
+                "table so that the next run reads it as the run did (Undo takes it back)."))
+        else:
+            self.back.setToolTip(tip("no window saved since the run for this spectrum"))
+
+    def _whole_or_ion(self, followers: list[str], fragments: bool) -> str | None:
+        """Asks whether the peptide's row goes back for the whole peptide (``followers``, the
+        other ions taking it now, move too) or this ion gets a row of its own with the run's
+        window: ``"whole"``, ``"ion"``, or None (cancelled)."""
+        what = "ion(s)" if fragments else "charge state(s)"
+        box = QMessageBox(QMessageBox.Icon.Question, "Back to the run's window",
+                          f"The peptide's window in this file was changed since the run, and "
+                          f"{len(followers)} other {what} of it take that window too: "
+                          f"{', '.join(followers)}. Put the peptide's window back for all of "
+                          f"them, or give only this {'ion' if fragments else 'charge state'} "
+                          "the run's window?", parent=self.panel)
+        whole = box.addButton("The whole peptide", QMessageBox.ButtonRole.AcceptRole)
+        alone = box.addButton("This one only", QMessageBox.ButtonRole.RejectRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is whole:
+            return "whole"
+        return "ion" if clicked is alone else None
+
+    def _back(self) -> None:
+        from ..io.elution_windows import (
+            peptide_row_changed,
+            peptide_row_shared,
+            restore_run_windows,
+        )
+        from .window_edit import has_fragments, samples_reading
+
+        ctx = self.context()
+        entry = self._pending_entry(ctx)
+        project = self._project(ctx) if ctx is not None else None
+        if entry is None or project is None:
+            self.message.emit("nothing to put back: no window saved since the run for this "
+                              "spectrum")
+            return
+        pending = self.pending()
+        peptide, siblings, shared = self._peptide(ctx)
+        fragments = has_fragments(ctx.reader)
+        # the samples reading this file (one injection, one window), as a save writes them
+        samples = samples_reading(ctx.reader, ctx.spectrum_id, ctx.data_id, siblings, peptide)
+        entries = [e for e in (pending.at(sample, entry.file, entry.peptide, entry.ion)
+                               for sample in dict.fromkeys((entry.sample, *samples)))
+                   if e is not None]
+        followers = peptide_row_shared(pending, entry)
+        if followers:
+            answer = self._whole_or_ion(followers, fragments)
+            if answer is None:
+                self.message.emit("not put back")
+                return
+            whole = answer == "whole"
+        else:  # the peptide's row moves no other ion: put back with it, else the ion's own
+            whole = peptide_row_changed(pending, entry)
+        record = self.recording
+        try:
+            with (record("an elution window put back to the run's") if record is not None
+                  else contextlib.nullcontext()):
+                saved = restore_run_windows(project, pending, entries, whole=whole,
+                                            ions=siblings, shared=shared)
+        except Exception as exc:  # noqa: BLE001 (said in the window: nothing was written)
+            self.message.emit(f"not put back: {exc}")
+            return
+        self.history.append(saved)
+        self.undo.setEnabled(True)
+        what = (f"the whole peptide {peptide}" if whole else entry.ion)
+        self.message.emit(f"{entry.file}: {what} back to the run's window (the "
+                          "elution-window table; Undo takes it back)")
+        self.saved.emit(str(saved.path))
+        self._boxes_again()
+
+    def _boxes_again(self) -> None:
+        """The spectrum shown is back to the run's window: its boxes set again from the table
+        (while editing; an Undo keeps the window being edited and its preview)."""
+        if self.active:
+            self._target = None
+            self.update()

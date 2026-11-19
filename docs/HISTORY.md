@@ -11115,3 +11115,32 @@ CSVs or mzML if wanted.
     not used (fulldeut_marked = false)"). The index axis reads "FD (27 h)" (as the spectra
     titles) and "FD file". `[analysis.controls]` settings are not read (the page draws the
     run's controls). Test: tests/test_report.py; guide outputs.md and controls.md.
+
+425. **Windows saved since the run: red in the Results tree, and back to the run's window
+    (owner, 2026-11-18).** In a review session the loop "adjust an elution window, save,
+    rerun" was hard to keep track of: nothing showed which spectra had a saved window the
+    results did not have yet. `hxex.io.elution_windows.pending_windows(results, project)`
+    compares, per spectrum, the window and drift range the project's elution-window table
+    gives it now with those the run's rows gave it (the read record's `elution_windows`, the
+    rows the read used; `window_for` on both, so the comparison is of each spectrum's
+    resulting window, not of the rows). A window from the table where the run had none (the
+    peptide table or `find_peak` chose) is compared with the scans the run summed: equal when it
+    starts at or before the first scan and ends at or after the last, by less than half the
+    time per entry of the file's scan table (from the id's scan positions; saved windows are
+    snapped to scan times and rounded outwards by 1e-4 min, F-1), so a window saved again over
+    the run's own scans is not pending. No data file is opened. A table the project file does
+    not name counts as none (the reader takes none). Read records written before the windows
+    were recorded mark nothing, said once in the log. In the window (`ResultsWorkspace
+    .refresh_pending`): pending spectra in red in the tree, with their time point, series, and
+    peptide rows (the owner chose red parent rows over a count), and in the List; a line under
+    the tree counts them; it is worked out again when results are shown, after the elution tab
+    writes the table (Save, Undo, Back), when the table changes on disk (a `WatchedFile` on the
+    named table), and when the project file changes. The elution tab's **Back to the run's
+    window** (`restore_run_windows`, in the tab's first row, also without editing) writes the
+    table so the spectrum reads as the run did, for every sample reading the file: its own ion
+    rows put back as the run read them (removed when the run had none), and when its peptide's
+    row changed, either every row of the peptide in that file put back (**The whole peptide**,
+    asked when other ions of it take the changed row; taken without asking when none does), or
+    the ion given a row of its own with the run's window (the run's row's, else the scans it
+    summed). One write, recorded for the Project editor's Undo, and on the tab's Undo list. Tests:
+    tests/test_elution_pending.py, tests/test_gui_elution_pending.py; guide gui.md; PLAN 26.

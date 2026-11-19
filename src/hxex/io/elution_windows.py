@@ -35,14 +35,17 @@ A table without a ``peptide`` column (written before peptide rows existed) holds
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ._common import not_text_error, open_text
 from .entries import _rows, _table_reader
 from .errors import ReadError
+
+log = logging.getLogger(__name__)
 
 COLUMNS = ("sample", "file", "peptide", "ion", "rt_start", "rt_end", "drift_start", "drift_end")
 REQUIRED = ("sample", "file", "rt_start", "rt_end")
@@ -582,3 +585,328 @@ def saved_window(project_path: str | Path, key: tuple[str, str, str],
     if window is None:
         return None
     return window, drift, ("peptide" if used[0].is_peptide else "ion")
+
+
+# --- windows saved since the run: what the next read will do differently (owner, 2026-11-18)
+
+RT_ROUNDING = 2e-4  # minutes: a window written to the table is rounded outwards to 1e-4
+DRIFT_ROUNDING = 2e-3  # ms: a drift range, to 1e-3
+
+_SAID: set[int] = set()  # read records whose missing elution-window record was logged
+
+
+@dataclass(frozen=True)
+class PendingWindow:
+    """A spectrum whose next read will sum other scans than the run did: the elution-window
+    table now gives it ``window`` (minutes) and ``drift`` (ms; None: none, the reader chooses),
+    where the table as the run read it gave ``run_window`` and ``run_drift`` (None: no row; the
+    peptide table or ``find_peak`` chose). ``summed`` is the first and last scan the run summed
+    (minutes), ``summed_drift`` the drift range it summed (None: not gated). ``sample``,
+    ``file``, ``peptide`` (as :func:`peptide_label` names it), and ``ion`` (as the spectrum ids
+    name it) are the spectrum's place in the table."""
+
+    spectrum_id: str
+    sample: str
+    file: str
+    peptide: str
+    ion: str
+    run_window: tuple[float, float] | None
+    run_drift: tuple[float, float] | None
+    window: tuple[float, float] | None
+    drift: tuple[float, float] | None
+    summed: tuple[float, float]
+    summed_drift: tuple[float, float] | None = None
+    data_id: int = -1  # its series
+
+    @property
+    def place(self) -> tuple[str, str, str, str]:
+        return self.sample, self.file, self.peptide, self.ion
+
+
+@dataclass
+class PendingSet:
+    """The spectra of one set of results whose windows were saved since the run
+    (:func:`pending_windows`), by spectrum id; ``run_rows`` the table's rows the run read with,
+    ``rows`` the table's rows now, ``ions`` the ions with spectra per (sample, file, peptide), and
+    ``note`` why nothing was compared (empty when it was)."""
+
+    by_id: dict[str, PendingWindow] = field(default_factory=dict)
+    run_rows: list[ElutionWindow] = field(default_factory=list)
+    rows: list[ElutionWindow] = field(default_factory=list)
+    ions: dict[tuple[str, str, str], set[str]] = field(default_factory=dict)
+    note: str = ""
+
+    def __len__(self) -> int:
+        return len(self.by_id)
+
+    def __contains__(self, spectrum_id) -> bool:
+        return spectrum_id in self.by_id
+
+    def get(self, spectrum_id: str) -> PendingWindow | None:
+        return self.by_id.get(spectrum_id)
+
+    def at(self, sample: str, file: str, peptide: str, ion: str) -> PendingWindow | None:
+        """The pending spectrum at that place in the table (the first, for a kinetics-free
+        fixed run there is one per place)."""
+        for p in self.by_id.values():
+            if p.place == (sample, file, peptide, ion):
+                return p
+        return None
+
+
+def _same_scans(window: tuple[float, float], summed: tuple[float, float], reach: float) -> bool:
+    """Whether ``window`` (minutes) selects the scans ``summed`` (the first and last scan
+    summed): it starts at or before the first, ends at or after the last, and by less than
+    ``reach`` (half the time between the file's scans) beyond them (saved windows are snapped
+    to scan times and rounded outwards; audit of 2026-11-15, F-1)."""
+    (a, b), (s0, s1) = window, summed
+    return (s0 - reach < a <= s0 + RT_ROUNDING) and (s1 - RT_ROUNDING <= b < s1 + reach)
+
+
+def _same_drift(drift: tuple[float, float], summed: tuple[float, float] | None) -> bool:
+    return summed is not None and all(abs(x - y) <= DRIFT_ROUNDING
+                                      for x, y in zip(drift, summed, strict=True))
+
+
+def _scan_positions(local_id: str) -> tuple[str, int, int] | None:
+    """(the id before its scans, first, last scan position) of a local spectrum id."""
+    import re
+
+    m = re.search(r"/scans?(\d+)(?:-(\d+))?$", local_id)
+    if m is None:
+        return None
+    return local_id[:m.start()], int(m.group(1)), int(m.group(2) or m.group(1))
+
+
+def pending_spectra(source: Mapping | None, spectrum_ids, data_ids, rt_start, rt_end,
+                    drift_start=None, drift_end=None,
+                    rows: Sequence[ElutionWindow] = ()) -> PendingSet:
+    """The spectra (``spectrum_ids`` of series ``data_ids``, with the first and last scan they
+    summed, ``rt_start``, ``rt_end``, minutes, and the drift range, ms, NaN when not gated)
+    read with ``source`` (a bundle's ``spectra_source``) that the elution-window table's
+    ``rows`` would read differently: the window and drift range the rows give each one
+    (:func:`window_for`) against those the run's rows gave (the record's ``elution_windows``,
+    the rows the read used). A window from the table where the run had none is compared with
+    the scans the run summed. Nothing opens a data file. Kinetics runs never take windows."""
+    from .mzml import MzmlRun, MzmlTarget, run_name, target_label
+
+    out = PendingSet(rows=list(rows))
+    if not source or source.get("reader") not in ("mzml", "thermo"):
+        out.note = "the results were not read from scan files"
+        return out
+    if "elution_windows" not in source:
+        out.note = ("the results' read record does not hold the elution windows it used (read "
+                    "before hxex recorded them): windows saved since cannot be told apart")
+        if id(source) not in _SAID:
+            _SAID.add(id(source))
+            log.info("windows saved since the run: %s", out.note)
+        return out
+    run_rows = [ElutionWindow.from_dict(w) for w in source.get("elution_windows") or []]
+    out.run_rows = run_rows
+    runs = [MzmlRun.from_dict(r) for r in source.get("runs") or []]
+    heads = {f"{r.sample}/{run_name(r)}": (r.sample, run_name(r)) for r in runs if r.fixed}
+    targets = [MzmlTarget.from_dict(t) for t in source.get("targets") or []]
+    names = [(target_label(t), peptide_label(t.entry)) for t in targets]
+    of_series = {int(s["data_id"]): int(s["target"]) for s in source.get("series") or []}
+    then_ions, then_peps = by_key(run_rows), by_peptide(run_rows)
+    now_ions, now_peps = by_key(rows), by_peptide(rows)
+    n = len(spectrum_ids)
+    d_start = [math.nan] * n if drift_start is None else drift_start
+    d_end = [math.nan] * n if drift_end is None else drift_end
+    for sid, d, s0, s1, g0, g1 in zip(spectrum_ids, data_ids, rt_start, rt_end, d_start, d_end,
+                                      strict=True):
+        sid = str(sid)
+        t_i = of_series.get(int(d))
+        local = sid.split(":", 1)[-1]
+        parts = _scan_positions(local)
+        if t_i is None or parts is None:
+            continue
+        ion, peptide = names[t_i]
+        head, first, last = parts
+        if not head.endswith("/" + ion):
+            continue
+        place = heads.get(head[:-len(ion) - 1])
+        if place is None:  # a kinetics run, or a run the record does not hold
+            continue
+        sample, file = place
+        out.ions.setdefault((sample, file, peptide), set()).add(ion)
+        then_w, then_d, _ = window_for(ion, peptide, sample, file, then_ions, then_peps)
+        now_w, now_d, _ = window_for(ion, peptide, sample, file, now_ions, now_peps)
+        if (then_w, then_d) == (now_w, now_d):
+            continue
+        s0, s1 = float(s0), float(s1)
+        if not (math.isfinite(s0) and math.isfinite(s1)):
+            continue
+        summed = (s0, s1)
+        summed_drift = (float(g0), float(g1)) if math.isfinite(float(g0)) else None
+        reach = max(RT_ROUNDING, 0.5 * (s1 - s0) / (last - first)) if last > first \
+            else RT_ROUNDING
+        same_window = now_w == then_w or (now_w is not None and _same_scans(now_w, summed,
+                                                                            reach))
+        same_drift = now_d == then_d or (now_d is not None and _same_drift(now_d, summed_drift))
+        if same_window and same_drift:
+            continue
+        out.by_id[sid] = PendingWindow(sid, sample, file, peptide, ion, then_w, then_d, now_w,
+                                       now_d, summed, summed_drift, int(d))
+    return out
+
+
+def project_rows(project_path: str | Path) -> list[ElutionWindow]:
+    """The rows of the elution-window table the project file names (none when it names none:
+    the reader then takes none, whatever lies beside the project file)."""
+    path, named = table_path(project_path)
+    if not named or not path.is_file():
+        return []
+    return _cached("rows", path, lambda: read_elution_windows(path))
+
+
+def pending_windows(results, project_path: str | Path | None) -> PendingSet:
+    """The spectra of ``results`` whose windows in the elution-window table of
+    ``project_path`` (its project file) differ from those the run read them with
+    (:func:`pending_spectra`): a rerun would sum other scans for them. An empty set, with a
+    ``note``, when that cannot be told (no project file, results not read from scan files, a
+    read record without its windows); ValueError when the table does not read."""
+    settings = getattr(results, "settings", None)
+    source = None if settings is None else settings.spectra_source
+    binned = getattr(results, "binned", None)
+    if binned is None or project_path is None or Path(project_path).suffix != ".toml":
+        return PendingSet(note="no project file")
+    rows = project_rows(project_path)
+    return pending_spectra(source, binned.spectrum_id, binned.data_id, binned.rt_start,
+                           binned.rt_end, binned.drift_start, binned.drift_end, rows)
+
+
+def peptide_row_changed(pending: PendingSet, entry: PendingWindow) -> bool:
+    """Whether the row of ``entry``'s peptide in its file gives another window now than the
+    one the run read with (added, changed, or removed)."""
+    key = (entry.sample, entry.file, entry.peptide)
+    then = by_peptide(pending.run_rows).get(key)
+    now = by_peptide(pending.rows).get(key)
+    return (None if then is None else then.window) != (None if now is None else now.window)
+
+
+def peptide_row_shared(pending: PendingSet, entry: PendingWindow) -> list[str]:
+    """The other ions of ``entry``'s peptide in its file (with spectra) that take the
+    peptide's row now, when that row differs from the one the run read with: putting the
+    peptide's row back would move them too (the window asks: the whole peptide, or this ion
+    alone). Empty when the peptide's row is as the run read it."""
+    key = (entry.sample, entry.file, entry.peptide)
+    if not peptide_row_changed(pending, entry):
+        return []
+    ions = by_key(pending.rows)
+    out = []
+    for ion in sorted(pending.ions.get(key, ()) - {entry.ion}):
+        own = ions.get((*key, ion)) or ions.get((entry.sample, entry.file, "", ion))
+        if own is None or own.window is None:
+            out.append(ion)
+    return out
+
+
+def _number_text(value) -> str:
+    return "" if value is None else format(float(value), ".10g")
+
+
+def restore_run_windows(project_path: str | Path, pending: PendingSet,
+                        entries: Sequence[PendingWindow], *, whole: bool,
+                        ions: Sequence[str] = (), shared: bool = False) -> SavedWindow:
+    """Write the project's elution-window table so that the spectra ``entries`` (of
+    ``pending``) are read with the windows the run read them with ("Back to the run's window").
+
+    ``whole``: every row of the peptide in each entry's file (the peptide's row, and the rows
+    of ``ions``, its ions as the spectrum ids name them; rows naming an ion without a peptide
+    unless another peptide has an ion of that name, ``shared``) is put back as the run read it,
+    or removed when the run had none. Otherwise only the entry's own ion rows are put back,
+    and, when its peptide's row now gives another window than the run read it with, the ion is
+    given a row of its own with the run's window (the run's row's, else the scans it summed,
+    rounded outwards). One write, checked as the project reads the table first (ValueError:
+    nothing written); Undo writes the bytes back (:func:`undo_window`)."""
+    from .user_tables import Table, read_table, table_problem, write_table
+
+    project_path = Path(project_path)
+    path, named = table_path(project_path)
+    if not named:
+        raise ValueError("the project file names no elution-window table ([input] "
+                         "rt_elution_windows): the run's windows cannot be written back")
+    before = path.read_bytes() if path.is_file() else None
+    table = (read_table(path) if before is not None else Table(list(COLUMNS))).copy()
+    names = [c.strip().lower() for c in table.columns]
+    for column in COLUMNS:
+        if column not in names:
+            table.columns.append(column)
+            names.append(column)
+            for r in table.rows:
+                r.append("")
+    at = {c: names.index(c) for c in COLUMNS}
+    run_by = {w.key: w for w in pending.run_rows}
+
+    def cell(r, column):
+        return r[at[column]].strip()
+
+    def find(key):
+        return [r for r in table.rows if (cell(r, "sample"), cell(r, "file"),
+                                          cell(r, "peptide"), cell(r, "ion")) == key]
+
+    def put_back(key) -> None:
+        """The row at ``key`` (sample, file, peptide or "", ion or "") as the run read it."""
+        run = run_by.get(key)
+        found = find(key)
+        if run is None:
+            table.rows[:] = [r for r in table.rows if r not in found]
+            return
+        if found:
+            row = found[0]
+        else:
+            row = [""] * len(table.columns)
+            table.rows.append(row)
+        values = dict(zip(("sample", "file", "peptide", "ion"), key, strict=True))
+        values.update(rt_start=_number_text(run.rt_start), rt_end=_number_text(run.rt_end),
+                      drift_start=_number_text(run.drift_start),
+                      drift_end=_number_text(run.drift_end))
+        for column, value in values.items():
+            row[at[column]] = value
+
+    last = None
+    for e in entries:
+        place = (e.sample, e.file)
+        mine = [(*place, e.peptide, e.ion)] + ([] if shared else [(*place, "", e.ion)])
+        if whole:
+            keys = [(*place, e.peptide, "")] + [(*place, e.peptide, i) for i in ions] + (
+                [] if shared else [(*place, "", i) for i in ions])
+            for key in dict.fromkeys([*keys, *mine]):
+                put_back(key)
+        else:
+            for key in mine:
+                put_back(key)
+            rows = [ElutionWindow(cell(r, "sample"), cell(r, "file"), cell(r, "ion") or None,
+                                  *(float(cell(r, c)) if cell(r, c) else None
+                                    for c in ("rt_start", "rt_end", "drift_start", "drift_end")),
+                                  cell(r, "peptide") or None) for r in table.rows]
+            window, _drift, _used = window_for(e.ion, e.peptide, e.sample, e.file,
+                                               by_key(rows), by_peptide(rows))
+            run_window = e.run_window
+            if window != run_window and not (run_window is None and window is None):
+                found = find((*place, e.peptide, e.ion))
+                if found:
+                    row = found[0]
+                else:
+                    row = [""] * len(table.columns)
+                    row[at["sample"]], row[at["file"]] = place
+                    row[at["peptide"]], row[at["ion"]] = e.peptide, e.ion
+                    table.rows.append(row)
+                if run_window is not None:
+                    row[at["rt_start"]] = _number_text(run_window[0])
+                    row[at["rt_end"]] = _number_text(run_window[1])
+                else:
+                    row[at["rt_start"]] = _text(e.summed[0], 4, up=False)
+                    row[at["rt_end"]] = _text(e.summed[1], 4, up=True)
+        found = find((*place, e.peptide, e.ion)) or find((*place, e.peptide, ""))
+        last = found[0] if found else last
+    problem = table_problem("input.rt_elution_windows", table, project_path)
+    if problem:
+        raise ValueError(problem)
+    write_table(table, path)
+    forget_cached(path)
+    row = {c: v for c, v in zip(table.columns, last, strict=True)} if last is not None else {}
+    return SavedWindow(((path, before, path.read_bytes()),), row, False,
+                       samples=tuple(dict.fromkeys(e.sample for e in entries)),
+                       project=project_path.absolute())
