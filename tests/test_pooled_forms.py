@@ -198,6 +198,10 @@ def test_pooled_outputs_compare_each_form_with_the_same_form_of_the_reference(re
     assert len(strips) == 1  # X1's own residues, 14 to 19
     box = strips[0].get_path().transformed(strips[0].get_patch_transform()).get_extents()
     assert (box.x0, box.x1) == pytest.approx((13.5, 19.5))
+    # drawn over the grid lines, under the residue values (owner, 2026-11-18)
+    grid = fig.axes[0].xaxis.get_zorder()  # the grid lines are drawn with their axis
+    values = min(line.get_zorder() for line in fig.axes[0].get_lines() if line.get_xydata().size)
+    assert grid < strips[0].get_zorder() < values
     legend = [t.get_text() for t in fig.legends[0].get_texts()]
     assert legend == ["R", "V", "measured by this form's own peptides"]
 

@@ -23,6 +23,7 @@ from .coverage import SampleStyle, legend_columns
 
 FORM_PANEL = 2.6  # inches of page height per form
 OWN_FILL, OWN_EDGE = "0.91", "black"  # the strip of a form's own residues: no sample's colour
+OWN_ZORDER = 1.6  # the strip: above the grid (1.5), below the residue lines (1.7) and points
 OWN_LABEL = "measured by this form's own peptides"
 
 
@@ -68,7 +69,7 @@ def provisional(fig: Figure, spans: Sequence[tuple[float, float]] | None = None,
                    for a in ax.get_shared_x_axes().get_siblings(ax)):
                 for a, b in spans:
                     ax.axvspan(a, b, ymin=0.0, ymax=0.04, facecolor=OWN_FILL,
-                               edgecolor=OWN_EDGE, lw=0.6, zorder=0.8)
+                               edgecolor=OWN_EDGE, lw=0.6, zorder=OWN_ZORDER)
     else:
         where = f"outside residues {_spans_text(spans)} (those of its own peptides)"
     note = (f"Provisional, a form of a pool: {where} the values mix the forms that share "
@@ -175,7 +176,7 @@ def plot_pooled_forms(
             ax.get_legend().remove()
         for a, b in own_spans(form, nterm_subtract, registry):
             ax.axvspan(a, b, ymin=0.0, ymax=0.05, facecolor=OWN_FILL, edgecolor=OWN_EDGE,
-                       lw=0.8, zorder=0.8)
+                       lw=0.8, zorder=OWN_ZORDER)
         also = [c for c in form.candidates if c not in form.members]
         title = f"{form.name}: {len(form.own)} of its {len(form.peptides)} peptides are its own"
         if also:
