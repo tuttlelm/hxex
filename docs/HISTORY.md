@@ -11099,3 +11099,19 @@ CSVs or mzML if wanted.
     rule added or changed now reads the results again too (it went unseen the same way).
     Tests: tests/test_gui_state.py, tests/test_gui_analysis.py (a group's region end changed
     after computing: out of date, and the regions across the groups recompute that group).
+
+424. **The uptake page tells the control in use from a marked file set aside (owner,
+    2026-11-18).** With `[run.controls] fulldeut_at = "27 h"` and `fulldeut_marked = false`
+    (the private targeted Orbitrap dataset: the marked TD file reads low), the page drew the
+    27 h control as an ordinary time point and put the "FD" label on the TD file at the axis
+    end, the one the correction does not use (5.6 D under the 7.0 D level); the index axis
+    showed two "FD" ticks. `uptake_data` now gives `serves` per row
+    (`series.control_serves`: every control serves except the marked ones `undeut_marked` or
+    `fulldeut_marked = false` set aside, as `controls.fit_controls` decides, read from the
+    run's settings). A time point serving as a control stays at its time, labelled with its
+    time over its role ("27 h" over "FD"; a time tick within 6 % of the axis of it is left
+    out so the labels do not meet); a marked file set aside is drawn as a hollow grey square
+    at the end, labelled "FD file" (or "UN file"), and named in the legend ("marked FD file,
+    not used (fulldeut_marked = false)"). The index axis reads "FD (27 h)" (as the spectra
+    titles) and "FD file". `[analysis.controls]` settings are not read (the page draws the
+    run's controls). Test: tests/test_report.py; guide outputs.md and controls.md.

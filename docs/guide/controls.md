@@ -91,7 +91,8 @@ fulldeut_at = "20 h"
 `undeut_at` does the same for the undeuterated control, for example the equilibrium end point of
 a back-exchange run. When the data also have a marked fully deuterated file that you do not
 trust (one that reads low, say), add `fulldeut_marked = false`: the marked file then does not
-serve as the control, only the spectra at `fulldeut_at` do, and its spectra stay fitted. The
+serve as the control, only the spectra at `fulldeut_at` do, and its spectra stay fitted
+(the uptake page draws them hollow and grey, labelled `FD file`). The
 same settings exist in `[analysis.controls]` for an analysis of an existing bundle. The time must be one at which spectra were measured; otherwise *hxex* lists the
 times it has. For a scan-format file, giving the run both `time` and `role` in `[[input.runs]]`
 does the same thing.

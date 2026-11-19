@@ -789,7 +789,9 @@ def uptake_data(
     controls) and ``role`` of every row (``'FD'``, ``'UN'`` or ``''``: whether the spectrum is a
     control, by its role; a control's ``time`` is NaN unless it was also a time point), and
     ``rejected`` (the review rejected the spectrum, or an [[review.exclude]] rule excluded
-    it: drawn hollow and grey)."""
+    it: drawn hollow and grey), and ``serves`` (:func:`control_serves`: the control is the one
+    the correction uses; False for a marked control that ``[run.controls] undeut_marked`` or
+    ``fulldeut_marked = false`` set aside, and for every spectrum without a role)."""
     info = series_info(results, data_id)
     cols: dict[str, list] = {n: [] for n in (
         "index", "time", "time_index", "rep", "rank", "mean", "mean_se", "population",
@@ -813,6 +815,8 @@ def uptake_data(
                 cols[name].append(value)
     out: dict = {n: np.array(v) for n, v in cols.items()}
     out["role"] = np.asarray(out["role"], dtype=str)
+    out["serves"] = control_serves(results, results.fit.role[out["index"].astype(np.int64)],
+                                   out["time"]) if len(out["index"]) else np.zeros(0, bool)
     status = results.review_status
     ctrl = results.controls
     # rejected or excluded by the review, or a control spectrum the quality screens left out
@@ -831,6 +835,30 @@ def uptake_data(
         "un_source": un_source, "fd_source": fd_source,
     })
     return out
+
+
+def control_serves(results: Results, roles, times) -> np.ndarray:
+    """For each spectrum (its ``roles`` and ``times``), whether it serves as the control its
+    role names: every spectrum with a role does, except where ``[run.controls]
+    undeut_marked`` or ``fulldeut_marked`` is false; then only the spectra at ``undeut_at`` or
+    ``fulldeut_at`` serve, and the marked ones stay fitted but are not used (as
+    :func:`hxex.controls.fit_controls` decides). False for a spectrum without a role."""
+    from ..spectra import time_point
+
+    roles = np.asarray(roles, dtype=str)
+    times = np.asarray(times, dtype=float)
+    serves = np.isin(roles, (UNDEUT, FULLDEUT))
+    run = results.settings.run if results.settings is not None else None
+    config = getattr(run, "controls", None)
+    for label, at, marked in ((UNDEUT, "undeut_at", "undeut_marked"),
+                              (FULLDEUT, "fulldeut_at", "fulldeut_marked")):
+        when = getattr(config, at, None)
+        if when is None or getattr(config, marked, True):
+            continue
+        hit = roles == label
+        if hit.any():
+            serves[hit] &= time_point(times[hit]) == time_point([when])[0]
+    return serves
 
 
 # the fully deuterated stand-ins by their flag (hxex.controls), in the words of the legend
@@ -916,19 +944,30 @@ def plot_uptake(
     # x = "time": the series' own controls that are not time points as well, at the axis ends
     # (undeuterated left, fully deuterated right), so that the levels behind the correction show
     ends = (~keep & (d["role"] != "")) if x == "time" else np.zeros(len(xs), dtype=bool)
+    # a marked control that [run.controls] undeut_marked or fulldeut_marked = false set aside
+    # (owner, 2026-11-18): drawn hollow and grey, "FD file" on the axis, named in the legend
+    unused = (d["role"] != "") & ~d["serves"]
     control_at: dict[str, float] = {}  # where the controls are drawn, labelled on the axis
     if ends.any():
         xs = xs.copy()
         left, right = _end_positions(xs[keep], scale)
         for role, at in (("UN", left), ("FD", right)):
-            if (ends & (d["role"] == role)).any():
-                xs[ends & (d["role"] == role)] = at
-                control_at[role] = at
+            here = ends & (d["role"] == role)
+            if here.any():
+                xs[here] = at
+                control_at[role if (here & ~unused).any() else f"{role} file"] = at
+    # a time point serving as a control ([run.controls] undeut_at, fulldeut_at) stays at its
+    # time, labelled with its time and its role ("27 h" over "FD")
+    timed_at: dict[str, float] = {}
+    if x == "time":
+        for role in ("UN", "FD"):
+            for t in np.unique(d["time"][keep & ~unused & (d["role"] == role)]):
+                timed_at[f"{format_time(float(t))}\n{role}"] = float(t)
     drawn = keep | ends
     reps = np.unique(d["rep"][drawn]) if drawn.any() else np.unique(d["rep"])
-    rejected = d["rejected"]
+    rejected = d["rejected"] & ~unused
     for r in reps:
-        sel = drawn & (d["rep"] == r) & ~rejected
+        sel = drawn & (d["rep"] == r) & ~rejected & ~unused
         color, marker = rep_style(int(r))
         ax.errorbar(xs[sel], d["mean"][sel],
                     yerr=np.where(np.isfinite(d["mean_se"][sel]), d["mean_se"][sel], 0.0),
@@ -944,6 +983,16 @@ def plot_uptake(
         ax.scatter(xs[out], d["mean"][out], s=20 + 160 * np.nan_to_num(d["population"][out]),
                    facecolors="none", edgecolors="grey", marker="v", lw=1.2,
                    label="rejected / excluded", gid="rejected")
+    aside = drawn & unused
+    if aside.any():
+        ax.errorbar(xs[aside], d["mean"][aside],
+                    yerr=np.where(np.isfinite(d["mean_se"][aside]), d["mean_se"][aside], 0.0),
+                    fmt="none", ecolor="grey", elinewidth=1.0, alpha=0.6, capsize=0,
+                    gid="errors:not_used")
+        ax.scatter(xs[aside], d["mean"][aside],
+                   s=20 + 160 * np.nan_to_num(d["population"][aside]), facecolors="none",
+                   edgecolors="grey", marker="s", lw=1.2, label=_not_used_label(d["role"][aside]),
+                   gid="not_used")
     if reference is not None and d["n_amides"] is not None:
         for t in np.unique(d["time"][keep]):
             known = reference.at(float(t), d["n_amides"])
@@ -963,17 +1012,22 @@ def plot_uptake(
         ticks = np.unique(d["time_index"])
         labels = []
         for t in ticks:
-            time = d["time"][d["time_index"] == t][0]
-            role = d["role"][d["time_index"] == t][0]
-            labels.append(role or format_time(time, time_scale))
+            at = d["time_index"] == t
+            time, role = d["time"][at][0], d["role"][at][0]
+            if role and (unused[at]).all():
+                labels.append(f"{role} file")  # a marked control set aside
+            elif role and np.isfinite(time):
+                labels.append(f"{role} ({format_time(time, time_scale)})")  # as titles say
+            else:
+                labels.append(role or format_time(time, time_scale))
         ax.set_xticks(ticks, labels, rotation=45 if len(ticks) > 8 else 0, fontsize=8)
         ax.set_xlabel("time point")
     else:
         ax.set_xlabel("time (s)")
         ax.set_xscale(scale)
-        if control_at:
-            _label_controls(ax, control_at, xs[keep], scale)
-            d["control_at"] = control_at
+        if control_at or timed_at:
+            _label_controls(ax, control_at, xs[keep], scale, timed_at)
+            d["control_at"] = {**control_at, **timed_at}
     ax.set_ylabel(_deuterium_label(d["corrected"], d["uncorrected_series"]))
     ax.set_title(d["label"], fontsize=9)
     if legend:  # outside the axes, on the right
@@ -987,12 +1041,16 @@ def plot_uptake(
 
 
 def _label_controls(ax: Axes, control_at: dict[str, float], times: np.ndarray,
-                    scale: str) -> None:
-    """On a time axis, the controls' positions labelled ``UN`` and ``FD`` on the axis itself (as
-    the index axis labels them), and no time tick beyond the times drawn: a number out there
-    would read as the controls' time (owner, 2026-11-03)."""
+                    scale: str, timed_at: dict[str, float] | None = None) -> None:
+    """On a time axis, the controls' positions labelled on the axis itself (``control_at``:
+    label -> position, ``UN`` and ``FD`` at the axis ends, as the index axis labels them), and
+    no time tick beyond the times drawn: a number out there would read as the controls' time
+    (owner, 2026-11-03). ``timed_at``: time points serving as a control, labelled with their
+    time over their role at their own time; a time tick close to one is left out so the
+    labels do not meet (owner, 2026-11-18)."""
     from matplotlib.ticker import Formatter, Locator
 
+    timed_at = dict(timed_at or {})
     times = times[np.isfinite(times) & ((times > 0) if scale == "log" else True)]
     if not len(times):
         lo, hi = -np.inf, np.inf
@@ -1002,9 +1060,15 @@ def _label_controls(ax: Axes, control_at: dict[str, float], times: np.ndarray,
     def middle(a, b):  # halfway between a data time and a control, on the axis' scale
         return float(np.sqrt(a * b)) if scale == "log" else (a + b) / 2
 
-    lo = middle(lo, control_at["UN"]) if "UN" in control_at and np.isfinite(lo) else -np.inf
-    hi = middle(hi, control_at["FD"]) if "FD" in control_at and np.isfinite(hi) else np.inf
-    names = {round(v, 9): k for k, v in control_at.items()}
+    before = [v for v in control_at.values() if np.isfinite(lo) and v < lo]
+    after = [v for v in control_at.values() if np.isfinite(hi) and v > hi]
+    lo = middle(lo, max(before)) if before else -np.inf
+    hi = middle(hi, min(after)) if after else np.inf
+    marks = {**control_at, **timed_at}
+    names = {round(v, 9): k for k, v in marks.items()}
+
+    def on_scale(v):
+        return np.log10(v) if scale == "log" else v
 
     class Ticks(Locator):
         def __init__(self, base, add):
@@ -1012,7 +1076,12 @@ def _label_controls(ax: Axes, control_at: dict[str, float], times: np.ndarray,
 
         def __call__(self):
             kept = [v for v in self.base() if lo <= v <= hi]
-            return sorted(kept + (list(control_at.values()) if self.add else []))
+            if self.add and timed_at and self.axis is not None:
+                a, b = (on_scale(v) for v in self.axis.get_view_interval())
+                room = 0.06 * abs(b - a)
+                kept = [v for v in kept if (v > 0 or scale != "log") and all(
+                    abs(on_scale(v) - on_scale(t)) > room for t in timed_at.values())]
+            return sorted(kept + (list(marks.values()) if self.add else []))
 
     class Labels(Formatter):
         def __init__(self, base):
@@ -1031,6 +1100,16 @@ def _label_controls(ax: Axes, control_at: dict[str, float], times: np.ndarray,
     xaxis.set_major_locator(Ticks(xaxis.get_major_locator(), True))
     xaxis.set_major_formatter(Labels(xaxis.get_major_formatter()))
     xaxis.set_minor_locator(Ticks(xaxis.get_minor_locator(), False))
+
+
+def _not_used_label(roles) -> str:
+    """The legend's words for marked controls set aside by ``[run.controls] undeut_marked``
+    or ``fulldeut_marked = false``."""
+    lines = []
+    for role, key in (("UN", "undeut_marked"), ("FD", "fulldeut_marked")):
+        if role in set(np.asarray(roles, dtype=str).tolist()):
+            lines.append(f"marked {role} file, not used\n({key} = false)")
+    return "\n".join(lines)
 
 
 def _end_positions(times: np.ndarray, scale: str) -> tuple[float, float]:
@@ -1057,13 +1136,17 @@ def _uptake_legend(ax: Axes, d: dict, lo, hi, reference: bool) -> list:
     from matplotlib.lines import Line2D
 
     handles, _ = ax.get_legend_handles_labels()
-    handles = [h for h in handles if h.get_gid() and h.get_gid().startswith(("rep:", "rejected"))]
+    handles = [h for h in handles
+               if h.get_gid() and h.get_gid().startswith(("rep:", "rejected", "not_used"))]
     out = []
     for h in handles:
         gid = h.get_gid()
         if gid == "rejected":
             out.append(Line2D([], [], ls="none", marker="v", ms=7, markerfacecolor="none",
                               markeredgecolor="grey", label="rejected / excluded"))
+        elif gid == "not_used":
+            out.append(Line2D([], [], ls="none", marker="s", ms=7, markerfacecolor="none",
+                              markeredgecolor="grey", label=h.get_label()))
         else:
             color, marker = rep_style(int(gid.split(":")[1]))
             out.append(Line2D([], [], ls="none", marker=marker, ms=7, color=color,

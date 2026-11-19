@@ -1772,3 +1772,43 @@ def test_a_legend_above_a_panel_wraps_rather_than_squeezing_it():
     rows = -(-10 // ncol)
     assert ncol == -(-10 // rows)  # balanced: no nearly empty last row
     assert legend_columns(ax, []) == 1
+
+
+def test_the_uptake_page_labels_a_time_point_serving_as_control_and_a_file_set_aside(results):
+    """``[run.controls] fulldeut_at`` with ``fulldeut_marked = false`` (owner, 2026-11-18): the
+    time point serving as the control stays at its time, labelled with its time over FD; the
+    marked file set aside is drawn hollow at the end, labelled "FD file" and named in the
+    legend, on the time axis (linear and log) and on the index axis."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    run = results.settings.run
+    controls = dataclasses.replace(run.controls, fulldeut_at=60.0, fulldeut_marked=False)
+    configs = {**results.settings.configs,
+               "run": dataclasses.replace(run, controls=controls).to_dict()}
+    fit = results.fit
+    role = np.array(fit.role, dtype="<U8")
+    role[(fit.data_id == 0) & (fit.time == 60.0)] = "fulldeut"
+    aside = dataclasses.replace(results, fit=dataclasses.replace(fit, role=role),
+                                settings=dataclasses.replace(results.settings, configs=configs))
+    d = uptake_data(aside, 0)
+    assert d["serves"][(d["role"] == "FD") & (d["time"] == 60.0)].all()
+    assert not d["serves"][(d["role"] == "FD") & np.isnan(d["time"])].any()
+    assert d["serves"][d["role"] == "UN"].all() and not d["serves"][d["role"] == ""].any()
+    for scale in ("linear", "log"):
+        fig = plot_uptake(aside, 0, x="time", scale=scale)
+        FigureCanvasAgg(fig).draw()
+        ax = fig.axes[0]
+        labels = {t.get_text(): t.get_position()[0] for t in ax.get_xticklabels() if t.get_text()}
+        assert labels["1 min\nFD"] == 60.0 and labels["FD file"] > 60.0 and "FD" not in labels
+        hollow = [a for a in ax.get_children() if a.get_gid() == "not_used"][0]
+        assert set(hollow.get_offsets()[:, 0].tolist()) == {labels["FD file"]}
+        points = np.concatenate([a.get_offsets()[:, 0] for a in ax.get_children()
+                                 if (a.get_gid() or "").startswith("rep:")])
+        assert labels["FD file"] not in points.tolist()  # the set-aside file is not a replicate
+        legend = " ".join(t.get_text() for t in fig.legends[0].get_texts())
+        assert "marked FD file, not used\n(fulldeut_marked = false)" in legend
+    index = plot_uptake(aside, 0, x="index")
+    assert [t.get_text() for t in index.axes[0].get_xticklabels()] == ["UN", "FD (1 min)",
+                                                                       "FD file"]
+    # the marked controls serve as before when fulldeut_marked is true
+    assert uptake_data(results, 0)["serves"][uptake_data(results, 0)["role"] != ""].all()

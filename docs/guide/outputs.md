@@ -247,7 +247,12 @@ no new run, only `hxex report` again. (Given the bundle instead, `hxex report re
     spectra are drawn at the ends of the axis, the undeuterated ones before the first time and
     the fully deuterated ones after the last, labelled `UN` and `FD` on the axis itself (no
     time is marked beyond the last time point, so they are not read as times), hollow and grey
-    when rejected or left out by the quality screens. The dotted lines mark the levels the correction uses (0
+    when rejected or left out by the quality screens. A time point that serves as a control
+    (`[run.controls] undeut_at` or `fulldeut_at`) stays at its time, labelled with its time over
+    its role (`27 h` over `FD`; `FD (27 h)` on the index axis). A marked control file that
+    `undeut_marked` or `fulldeut_marked = false` sets aside is drawn as a hollow grey square at
+    the end, labelled `UN file` or `FD file`, and named in the legend: it is fitted, not used.
+    The dotted lines mark the levels the correction uses (0
     and the amide count when corrected; else the undeuterated and fully deuterated means); when
     a level came from a stand-in rather than the series' own control, the legend names it, for
     example "FD level (amide count): median stand-in". With `x = "index"` the controls are
