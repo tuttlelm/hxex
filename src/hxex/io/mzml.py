@@ -1524,34 +1524,10 @@ def _read_runs(
     no_noise: list[str] = []  # reduced files that record no noise (scan_cut "auto")
     common = dict(project=project, config=config, tie=tie, picker=picker, registry=registry,
                   joins=joins)
-    # drift ranges (drift_gate): measured on the undeuterated controls before anything is read,
-    # when the files have ion mobility bins
-    gates = None
-    if config.drift_gate == "auto" and fmt.reader == "mzml" and any(
-            MzmlFile(p).ion_mobility for p in dict.fromkeys(opened)):
-        gates, gate_notes = _drift_profiles(fmt, runs, opened, targets, windows, config=config,
-                                            tie=tie, picker=picker, registry=registry,
-                                            cancel=cancel)
-    unclear: set[int] = set()
-    unclear_of = None  # the set the series without a clear drift range are added to
-    if gates is not None:
-        common.update(gates=gates)
-        unclear_of = unclear
-    elution_cut: set[str] = set()
-    if config.find_fragment_peak:
-        common.update(elution_cut=elution_cut)
-    # finding retention times from the exact m/z (find_retention_time): the undeuterated
-    # controls are read first and searched while they are open, wherever the project lists
-    # them; "automatic" then reads the other runs' series found elsewhere at their found time
-    # and numbers the series in that order, "suggest" numbers them in the runs' order (the
-    # numbers of a read without the search)
     from .retention_search import RetentionSearch, with_rt
 
-    search = RetentionSearch.start(config, picker, registry, targets, runs, tie)
-    automatic = search is not None and search.mode == "automatic"
-    order = list(range(len(runs)))
-    if search is not None:
-        order.sort(key=lambda n: not search.reads(runs[n]))
+    # the runs' targets with their windows from the rt_elution_windows table (and, once the
+    # retention search has run, its found times): the drift ranges below are measured on them
     moved: dict[tuple[str, int], float] = {}
     edited = by_key(elution_windows)  # (sample, file, peptide, ion) -> an ion's own window
     edited_peptides = by_peptide(elution_windows)  # (sample, file, peptide) -> all its ions'
@@ -1572,6 +1548,32 @@ def _read_runs(
                     used.update(w.key for w in rows)
         return out
 
+    # drift ranges (drift_gate): measured on the undeuterated controls before anything is read,
+    # when the files have ion mobility bins
+    gates = None
+    if config.drift_gate == "auto" and fmt.reader == "mzml" and any(
+            MzmlFile(p).ion_mobility for p in dict.fromkeys(opened)):
+        gates, gate_notes = _drift_profiles(fmt, runs, opened, targets, windows, config=config,
+                                            tie=tie, picker=picker, registry=registry,
+                                            cancel=cancel, targets_of=targets_of)
+    unclear: set[int] = set()
+    unclear_of = None  # the set the series without a clear drift range are added to
+    if gates is not None:
+        common.update(gates=gates)
+        unclear_of = unclear
+    elution_cut: set[str] = set()
+    if config.find_fragment_peak:
+        common.update(elution_cut=elution_cut)
+    # finding retention times from the exact m/z (find_retention_time): the undeuterated
+    # controls are read first and searched while they are open, wherever the project lists
+    # them; "automatic" then reads the other runs' series found elsewhere at their found time
+    # and numbers the series in that order, "suggest" numbers them in the runs' order (the
+    # numbers of a read without the search)
+    search = RetentionSearch.start(config, picker, registry, targets, runs, tie)
+    automatic = search is not None and search.mode == "automatic"
+    order = list(range(len(runs)))
+    if search is not None:
+        order.sort(key=lambda n: not search.reads(runs[n]))
     def by_target():
         """The series by (sample, target position), whichever row of its peptide a target is."""
         return {(sample, i): series[(sample, joins.get((sample, i), i))]
@@ -2338,14 +2340,17 @@ def _drift_found(f: _SharedFile, run: MzmlRun, targets, windows, gated: set[int]
 
 
 def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[Path],
-                    targets, windows, *, config, tie, picker, registry, cancel
-                    ) -> tuple[dict[tuple, DriftRange], dict]:
+                    targets, windows, *, config, tie, picker, registry, cancel,
+                    targets_of=None) -> tuple[dict[tuple, DriftRange], dict]:
     """The drift range of every peptide ion with an undeuterated control and signal
     (``drift_gate``, :mod:`hxex.io.drift_gate`): its scans in every undeuterated control (a run
     with a fixed time), as its spectra would take them, read with their drift times, on m/z
     corrected by each file's own offset (:func:`_drift_found`). A file listed by several
     samples is read once for all of them (:class:`_SharedFile`), and the profiles are added in
-    the order of the runs. Also returns what the read record keeps beside the ranges: the run's
+    the order of the runs. ``targets_of(run)`` gives a run's targets as its spectra take them
+    (with a window of the ``rt_elution_windows`` table where one is given), so a profile sums
+    the scans of the window the spectrum is read with; None: ``targets`` as they are. Also
+    returns what the read record keeps beside the ranges: the run's
     position scatter and the files' offsets (:func:`hxex.io.drift_gate.drift_record`)."""
     gated = {i for i, t in enumerate(targets) if _gated_kind(t)}
     profiles = DriftProfiles()
@@ -2358,7 +2363,8 @@ def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[
             for n in members:
                 check_cancel(cancel)
                 found_in[n], offsets[_run_file_name(opened[n])] = _drift_found(
-                    f, runs[n], targets, windows, gated, config=config, tie=tie, picker=picker,
+                    f, runs[n], targets if targets_of is None else targets_of(runs[n]),
+                    windows, gated, config=config, tie=tie, picker=picker,
                     registry=registry)
     for n in controls:
         for key, found in found_in[n]:

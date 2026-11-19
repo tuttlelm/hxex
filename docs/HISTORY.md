@@ -11144,3 +11144,17 @@ CSVs or mzML if wanted.
     the ion given a row of its own with the run's window (the run's row's, else the scans it
     summed). One write, recorded for the Project editor's Undo, and on the tab's Undo list. Tests:
     tests/test_elution_pending.py, tests/test_gui_elution_pending.py; guide gui.md; PLAN 26.
+
+426. **The drift range is measured in the window the spectrum is read with** (2026-11-19).
+    Found while comparing per-file retention windows on the intact-peptide benchmark: with
+    `drift_gate = "auto"`, the drift ranges were measured on the undeuterated controls before the
+    `rt_elution_windows` table was applied (`io/mzml.py` `_read_runs` gave `_drift_profiles` the
+    plain targets). With a window table and `find_peak` off, each control's drift profile was
+    summed over the peptide table's window, much wider (one sample's drift step did not end in 8
+    min, against 14 s with the windows), and could take another species' drift peak; with
+    `find_peak` on, the drift range followed find_peak's window, never a window saved for that
+    spectrum in the elution editor. Now `_drift_profiles(targets_of=)` takes each run's targets
+    as its spectra take them (the table's windows; the retention search's found times are not
+    known yet at that point and are not used). Bundles read with a window table before this keep
+    their drift ranges until read again. Test: tests/test_mzml.py
+    test_the_drift_range_is_measured_in_the_window_the_spectrum_is_read_with (fails before).

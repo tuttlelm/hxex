@@ -1577,6 +1577,32 @@ def _drifting(scans, species):
     return out
 
 
+def test_the_drift_range_is_measured_in_the_window_the_spectrum_is_read_with(tmp_path):
+    """The undeuterated control's first scans hold the peptide (drift 5.3 ms), its later ones a
+    brighter ion on the same m/z grid at 5.75 ms. The peptide table's window covers both; the
+    rt_elution_windows table keeps the first scans: the drift range is measured there (the
+    peptide's), not over the table's window (2026-11-19: it was measured before the table was
+    applied)."""
+    from hxex.io.elution_windows import ElutionWindow, peptide_label
+
+    early = [{"time": 1.0 + 0.1 * k, "filter": "Full ms"} for k in range(3)]
+    late = [{"time": 1.3 + 0.1 * k, "filter": "Full ms"} for k in range(3)]
+    peptide = {5.1: 0.02, 5.2: 0.4, 5.3: 1.0, 5.4: 0.5, 5.5: 0.05}
+    other = {5.7: 1.0, 5.8: 0.6}
+    un = write_mzml(tmp_path / "un.mzML", _drifting(early, [(1, 1e5, peptide)])
+                    + _drifting(late, [(1, 3e5, other)]), indexed=True)
+    lab = write_mzml(tmp_path / "lab.mzML", _drifting(early + late, [(4, 1e5, peptide)]))
+    runs = [MzmlRun(un, "WT", role="undeut"), MzmlRun(lab, "WT", time=60.0)]
+    target = MzmlTarget(ENTRY, rt_window=(60.0, 90.0))
+    whole = read_mzml(runs, [target], project="p")
+    np.testing.assert_allclose(whole.drift_start, 5.7)  # the table's window: the other ion's
+    row = ElutionWindow("WT", "un.mzML", None, 1.0, 1.2, peptide=peptide_label(ENTRY))
+    s = read_mzml(runs, [target], project="p", elution_windows=[row])
+    np.testing.assert_allclose(s.drift_start, 5.2)
+    np.testing.assert_allclose(s.drift_end, 5.4)
+    assert s.source["elution_windows"] == [row.to_dict()]
+
+
 def test_drift_gate_keeps_each_peptides_drift_range(tmp_path, caplog):
     """Scans with ion mobility bins: the peptide (drift 5.2-5.4 ms, apex 5.3) and another ion
     on the same m/z grid at a later drift time (5.7-5.8 ms, its envelope further up). The drift
