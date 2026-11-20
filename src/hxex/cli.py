@@ -135,7 +135,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "[run.controls] changed (or, without the table, when the bundle's "
                         "spectra hold the controls and it has none); the fits kept. Quality "
                         "flags made by an earlier "
-                        "version of hxex are assessed again either way")
+                        "version of hxex are assessed again either way. Any other change of the "
+                        "project since the results were made (another [run] or [input] "
+                        "setting, or which spectra are controls: undeut_at, fulldeut_at) is "
+                        "refused, naming each change: hxex run applies those")
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
     _threads_option(p)
     p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
@@ -1650,6 +1653,16 @@ def cmd_resume(args) -> int:
         if project.output.bundle is None:
             log.error("%s names no [output] bundle", bundle)
             return EXIT_ERROR
+        # a change resume does not apply is refused, never recorded as if applied (PLAN Next
+        # steps 40, owner 2026-11-20)
+        if unapplied := _unapplied_changes(project, project.output.bundle):
+            log.error("%s: the project differs from the results in %s in what hxex resume does "
+                      "not apply (it keeps the bundle's reading, picking, fits, and control "
+                      "roles):\n%s\nRun 'hxex run %s --overwrite' (or --keep-previous) to "
+                      "apply them (the fits of unchanged series are kept), or set them back to "
+                      "resume", args.bundle, project.output.bundle,
+                      "\n".join(f"  {line}" for line in unapplied), args.bundle)
+            return EXIT_ERROR
         chosen = table_choices(project.review)
         check_table_choices(chosen, project.run.fit.k_values)
         if problem := _choices_not_fitted(chosen, project.output.bundle):
@@ -1771,17 +1784,19 @@ def _k_max_to_resume(project, bundle):
     stored = (((bundle_manifest(bundle) or {}).get("configs") or {}).get("run") or {}).get("fit")
     if not stored or stored.get("k_max") == project.run.fit.k_max:
         return None
+    given = _run_tables_given(project)
+    if given is not None and "fit" not in given:  # a file for the analysis without [run.fit]
+        return None
     return project.run.fit
 
 
 def _test_to_resume(project, bundle):
     """The population test settings ``hxex resume`` gives the bundle of ``project``: the
     project's ``[run.population_test]`` when the bundle has no test or one with other settings
-    (None: nothing to do), or an exit code when the bundle cannot take it (its fits differ from
-    the project's ``[run.fit]``: run again). The other ``[run]`` settings that differ from the
-    bundle's are named in the log, and are not applied (the ``[run.controls]`` settings are,
-    by resume itself)."""
-    from .io.bundle import bundle_manifest, settings_changed
+    (None: nothing to do), or an exit code when the bundle cannot take it (its test was made
+    with simulations and the project's takes the chi-square reference). The other ``[run]``
+    settings that differ from the bundle's were refused before (:func:`_unapplied_changes`)."""
+    from .io.bundle import bundle_manifest
     from .pipeline import RunConfig
 
     stored = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("run")
@@ -1790,8 +1805,6 @@ def _test_to_resume(project, bundle):
     normal = lambda c: json.loads(json.dumps(c.to_dict()))  # noqa: E731 - as the manifest
     held = normal(RunConfig.from_dict(stored))  # a key added since takes its default
     wanted = normal(project.run)
-    changed = [c for c in settings_changed({"run": held}, {"run": wanted})
-               if c != "fit.backend.device"]
     test = project.run.population_test
     if test is None:
         if held.get("population_test") is not None:
@@ -1808,24 +1821,168 @@ def _test_to_resume(project, bundle):
                       "them (set the project back), or run again with 'hxex run --overwrite' "
                       "(or --keep-previous)", bundle)
             return EXIT_ERROR
-    # resume fits more or fewer K itself (k_max: moving between presets); any other change of
-    # the fit settings needs a new run
-    fits = [c for c in changed if c.startswith("fit.") and c != "fit.k_max"]
-    if fits and (test is not None or "fit.k_max" in changed):
-        log.error("%s: the bundle's fits were made with other [run.fit] settings (%s): resume "
-                  "keeps the bundle's fits (it can only fit more or fewer K, k_max); run again "
-                  "with 'hxex run --overwrite' (or --keep-previous) for the project's", bundle,
-                  ", ".join(fits))
-        return EXIT_ERROR
-    # resume applies these itself: the bootstrap, the test, k_max, and the controls (worked out
-    # again from the stored fits when [run.controls] changed, HISTORY 288)
-    other = [c for c in changed
-             if not c.startswith(("bootstrap", "population_test", "controls", "fit.k_max"))]
-    if other:
-        log.info("%s: %d [run] setting(s) differ from the bundle's and are not applied by "
-                 "resume (they need 'hxex run'): %s", bundle, len(other),
-                 ", ".join(other[:8]) + (", ..." if len(other) > 8 else ""))
+    # any other change of the [run] settings was refused before (_unapplied_changes)
     return test
+
+
+# the [run] settings hxex resume applies itself (the bootstrap, the population test, k_max:
+# moving between presets), and those that say where and how a computation runs, not what it
+# gives (the device and precision, as hxex.reuse leaves them out; the chunks of the fit)
+_RESUME_APPLIES = ("bootstrap", "population_test", "fit.k_max")
+_NOT_RESULTS = ("fit.backend", "memory_budget_bytes", "max_chunk")
+# the control settings that decide which spectra are controls, and so their fits (at K = 1)
+# and the sets of the population test: resume keeps the stored roles
+_ROLE_KEYS = ("undeut_at", "fulldeut_at", "undeut_marked", "fulldeut_marked")
+
+
+def _under(path: str, prefixes) -> bool:
+    return any(path == p or path.startswith(p + ".") for p in prefixes)
+
+
+def _at(record, path: str):
+    """The value at the dotted ``path`` of a nested record (None where absent)."""
+    for part in path.split("."):
+        if not isinstance(record, Mapping):
+            return None
+        record = record.get(part)
+    return record
+
+
+def _value_text(value) -> str:
+    from .config import toml_value
+
+    if value is None:
+        return "unset"
+    text = toml_value(value) if isinstance(value, (bool, int, float, str)) else json.dumps(
+        value, default=str)
+    return text if len(text) <= 40 else text[:37] + "..."
+
+
+def _setting_name(path: str) -> str:
+    """``[run.controls] fulldeut_at`` for ``controls.fulldeut_at``; ``[run] controls`` for a
+    whole table."""
+    head, _, key = path.rpartition(".")
+    return f"[run.{head}] {key}" if head else f"[run] {key}"
+
+
+def _unapplied_changes(project, bundle) -> list[str]:
+    """The changes of ``project`` since the results in ``bundle`` were made that ``hxex
+    resume`` does not apply, one line each (empty when none; PLAN Next steps 40): ``[run]``
+    settings other than the bootstrap, the population test, and ``k_max`` (the control
+    settings count only for the roles, :data:`_ROLE_KEYS`, and for turning the correction
+    off; the device, precision, and chunks are left out); and, for a project with an
+    ``[input]`` table, what decides the read (:func:`hxex.stored_read.read_plan`, recorded
+    with the spectra), ``[[input.exclude]]``, and ``time_scale``. A project file without
+    ``[input]`` (for the analysis) is compared only in the ``[run]`` tables it writes."""
+    from .controls import ControlConfig
+    from .io.bundle import bundle_manifest, settings_changed
+    from .pipeline import RunConfig
+
+    manifest = bundle_manifest(bundle) if bundle is not None else None
+    stored = ((manifest or {}).get("configs") or {}).get("run")
+    if stored is None:
+        return []  # resume itself refuses a bundle without its run settings
+    normal = lambda c: json.loads(json.dumps(c, default=str))  # noqa: E731 - as the manifest
+    held = normal(RunConfig.from_dict(stored).to_dict())  # a key added since: its default
+    wanted = normal(project.run.to_dict())
+    given = _run_tables_given(project)
+    out = []
+    for path in settings_changed({"run": held}, {"run": wanted}):
+        if (_under(path, _RESUME_APPLIES) or _under(path, _NOT_RESULTS)
+                or _under(path, ("controls",))):
+            continue
+        if given is not None and path.split(".")[0] not in given:
+            continue
+        out.append(f"{_setting_name(path)}: {_value_text(_at(wanted, path))}, was "
+                   f"{_value_text(_at(held, path))}")
+    # the controls: resume works the correction out again (HISTORY 288), with the stored roles
+    if given is None or "controls" in given:
+        mine, theirs = project.run.controls, held.get("controls")
+        if mine is None and isinstance(theirs, Mapping):
+            out.append("[run] controls: false, was a back-exchange correction (resume never "
+                       "takes the bundle's correction away)")
+        defaults = ControlConfig()
+        for key in _ROLE_KEYS:
+            now = getattr(mine, key) if isinstance(mine, ControlConfig) else getattr(
+                defaults, key)
+            was = (theirs.get(key, getattr(defaults, key)) if isinstance(theirs, Mapping)
+                   else getattr(defaults, key))
+            if normal(now) != normal(was):
+                out.append(f"[run.controls] {key}: {_role_text(key, now)}, was "
+                           f"{_role_text(key, was)} (which spectra are controls)")
+    if project.input is not None:
+        out += _input_changes(project, bundle, manifest)
+    return out
+
+
+def _role_text(key: str, value) -> str:
+    from .io import format_time
+
+    if key.endswith("_at"):
+        return "unset" if value is None else format_time(float(value))
+    return _value_text(value)
+
+
+def _run_tables_given(project) -> set[str] | None:
+    """The ``[run]`` keys a project file without ``[input]`` writes (its preset's among them),
+    which ``hxex resume`` compares with the bundle's; None for a project with ``[input]`` (every
+    setting compared: a run would apply each, defaults included)."""
+    if project.input is not None:
+        return None
+    import tomllib
+
+    try:
+        with open(project.path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, TypeError, tomllib.TOMLDecodeError):
+        return set()
+    keys = set((data.get("run") or {}).keys()) if isinstance(data.get("run"), Mapping) else set()
+    if project.preset is not None:
+        keys |= {name.split(".")[1] for name in project.preset.given
+                 if name.startswith("run.") and name.count(".") >= 1}
+    return keys
+
+
+def _input_changes(project, bundle, manifest) -> list[str]:
+    """The ``[input]`` changes of ``project`` since ``bundle`` was read (see
+    :func:`_unapplied_changes`): the read plan without the reading code's fingerprint (another
+    hxex reads the same) and the picker (a ``[run]`` setting, named there), then
+    ``[[input.exclude]]`` and ``time_scale`` against the project file the bundle records."""
+    from .io import BundleError, open_bundle
+    from .stored_read import PLAN_KEY, plan_differences, read_plan
+
+    out = []
+    inp = project.input
+    if inp.spectra is None:  # a project reading stored spectra has no read plan of its own
+        try:
+            with open_bundle(bundle) as b:
+                source = b.spectra_source() or {}
+        except (BundleError, OSError, ValueError):
+            source = {}
+        stored = source.get(PLAN_KEY) if isinstance(source, Mapping) else None
+        if stored is None:
+            log.info("%s does not record what its read depended on (made before 2026-11-16, or "
+                     "from Python): changes of [input] are not checked", bundle)
+        else:
+            now = read_plan(project)
+            if now is None:
+                out.append("[input]: what the read depends on could not be worked out from the "
+                           "settings")
+            else:
+                trim = lambda plan: {k: v for k, v in plan.items()  # noqa: E731
+                                     if k not in ("reader", "picker")}
+                out += plan_differences(trim(stored), trim(now))
+    record = ((manifest.get("configs") or {}).get("project_file") or {}).get("input")
+    if isinstance(record, Mapping):
+        normal = lambda v: json.loads(json.dumps(v, default=str))  # noqa: E731
+        rules = normal([r.to_dict() for r in inp.exclude])
+        if rules != normal(record.get("exclude") or []):
+            out.append(f"[[input.exclude]]: {len(rules)} rule(s), was "
+                       f"{len(record.get('exclude') or [])}")
+        if "time_scale" in record and normal(inp.time_scale) != normal(record["time_scale"]):
+            out.append(f"[input] time_scale: {_value_text(inp.time_scale)}, was "
+                       f"{_value_text(record['time_scale'])}")
+    return out
 
 
 def cmd_report(args) -> int:

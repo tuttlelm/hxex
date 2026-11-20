@@ -281,4 +281,4 @@ def test_resume_refuses_other_fit_settings_beside_k_max(tmp_path, capsys):
     capsys.readouterr()
     assert cli.main(["resume", str(path)]) == 1
     err = capsys.readouterr().err
-    assert "fit.adam_steps" in err and "hxex run --overwrite" in err
+    assert "[run.fit] adam_steps: 70, was 60" in err and "--overwrite" in err

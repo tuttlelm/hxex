@@ -377,7 +377,8 @@ def spectra_table(results: Results, rows=None, *, analysis=None,
     every replicate and charge state of its peptide in its sample at its time, as ``hxex
     analyse`` decides it with the analysis settings ``analysis``, its defaults when None,
     :func:`hxex.analysis.set_test.spectrum_sets`; empty without the population test, or for
-    a spectrum in no set; information only: ``K`` stays the spectrum's own; ``sets``: those
+    a spectrum in no set; 0 for a set whose every spectrum the test held out: not tested;
+    information only: ``K`` stays the spectrum's own; ``sets``: those
     sets already worked out, one per spectrum of the run, or None for none), ``centroid``
     and ``centroid_corrected`` (the population-weighted mean of the
     components) and ``mean_<r>``, ``mean_corrected_<r>``, ``population_<r>``,

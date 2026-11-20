@@ -11207,3 +11207,46 @@ CSVs or mzML if wanted.
     scores (PLAN 33 step 4); the pooled populations question belongs to overlap detection. Found
     on the way: the drift-order bug (HISTORY 426). Scripts and outputs: private study folder
     (README there).
+
+428. **`hxex resume` refuses what it does not apply; a set held out of the test entirely is
+    not tested** (2026-11-20; PLAN Next steps 40, first step). Case (the private targeted
+    Orbitrap dataset, 2026-11-18): a project changed `fulldeut_at` and commented out the fully
+    deuterated run, then resumed. `resume` worked the controls out again with the stored roles
+    (the `new_controls` path calls `fit_controls` without `apply_control_roles`), kept the
+    removed run's spectra (resume never reads), and recorded the project's settings as if
+    applied; one peptide stayed on a stand-in correction, its high population read above
+    `max_fD`, and the population test (set) reported one population for sets it had not tested.
+    Built: (1) `hxex resume hxex.toml` compares the project with the results before doing
+    anything (`cli._unapplied_changes`) and refuses, one line per change with its value now and
+    before, naming `hxex run hxex.toml --overwrite` (or `--keep-previous`): every `[run]` setting
+    except those resume applies (`[run.bootstrap]`, `[run.population_test]`, `[run.fit] k_max`,
+    and `[run.controls]`) and those that say where a computation runs, not what it gives
+    (`[run.fit.backend]`, `memory_budget_bytes`, `max_chunk`); in `[run.controls]`, the four
+    settings that decide which spectra are controls (`undeut_at`, `fulldeut_at`,
+    `undeut_marked`, `fulldeut_marked`) and `controls = false` with a correction in the
+    results; and, for a project with `[input]`, the read plan recorded with the spectra
+    (`hxex.stored_read`, HISTORY 397; without the reading code's fingerprint, so another hxex
+    does not count, and without the picker, named under `[run]`), `[[input.exclude]]`, and
+    `time_scale`. A bundle read before plans were recorded is not checked for `[input]` (one
+    log line says so). A project file without `[input]` (for the analysis) is compared only in
+    the `[run]` tables it writes; found on the way: such a file without `[run.fit]` asked resume
+    to move the results to the default `k_max` (and was refused for the fit settings), now it
+    keeps the results' `k_max`. Before, a `[run.fit]` change was refused only with a
+    population test or another `k_max`, and every other change was logged at info level and
+    left unapplied. Consequence: a bundle made before a default changed (for example the
+    per-bin noise of HISTORY 213) is refused until the project sets the bundle's value or the
+    run is redone; the refusal names the setting. (2) A population-test set whose spectra were
+    all held out of the test by the test itself (each not tested by the run's test at the first
+    step, or with a population above `max_fD` in its two-population fit) is not tested:
+    `SetTest.K` 0 (`set_test.NOT_TESTED_K`), `set_test_K` 0 in `species_uptake.csv` (as for a
+    set the filters left out entirely), `best_set_K` 1 (the values come from the K = 1 fits),
+    `best_set_reason` "population test (set): not tested: no spectrum to test (N spectra with a
+    population above full deuteration ...)", `set_K` 0 in `spectra.csv`, "not tested" in the
+    window's K marks and the fits-at-each-K note, and a count in the analysis log. It counts in
+    no tier (its `set_p_1` is empty) and not in the summary table's two-or-more counts. Sets
+    whose spectra were all kept at one population by the screens, `review_K = 1`, or
+    `undeuterated_cap` still read one population (the reason now says so): that is a decision,
+    the screens' or the user's. Before, both read "no spectrum to test: one population". Guide:
+    population-test.md "Peptides and times not tested" and its resume paragraph,
+    back-exchange-correction.md, outputs.md, commands.md (generated); the window's Resume
+    tooltip no longer says changed controls need only `resume`.

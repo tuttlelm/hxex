@@ -57,7 +57,9 @@ COMMANDS = (("Check", "check", "check the project file and show what would be re
              "are fitted again, and your review decisions are kept"),
             ("Resume", "resume",
              "add to the results without fitting again: a stopped or changed bootstrap, the K "
-             "your review chose, the population test, changed controls, or the quality flags"),
+             "your review chose, the population test, a changed back-exchange correction (not "
+             "which spectra are controls), or the quality flags; any other change of the "
+             "project is refused, and Run applies it"),
             ("Report", "report", "write the tables again (with the review applied)"),
             ("Analyse", "analyse", "compare the samples: the analysis tables and figures"),
             ("Info", "info", "what the results hold"))

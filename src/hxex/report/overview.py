@@ -144,6 +144,8 @@ def set_note(d: dict) -> str | None:
     from ..analysis.set_test import set_step
 
     t = d.get("set")
+    if t is not None and int(t.K) == 0:  # every spectrum of the set held out of its test
+        return t.reason or "population test (set): not tested"
     if t is None or int(t.K) == int(d["effective"]):
         return None
     tail = f"K = {int(d['effective'])} (self), K = {int(t.K)} (set)"

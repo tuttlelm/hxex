@@ -102,6 +102,15 @@ another species), not that it has two populations. It stays at one population (u
 accepted it in the review), and `left_out_summary.csv` counts these spectra. Genuine fully
 deuterated measurements read above 1.1 about once in 100 to 200 on the data measured so far.
 
+### Peptides and times not tested
+
+A peptide and time whose spectra all take no part is not tested: when they were all kept at one
+population (by the screens, the review, or `undeuterated_cap`) it reads one population, as you
+or the screens decided, but when the test held them out itself (a population above `max_fD`, or
+spectra the run's test did not test) its number of populations is not known. It then reads
+`set_test_K` 0 in `species_uptake.csv` (and `set_K` 0 in `spectra.csv`), `best_set_reason` says
+"not tested" and why, it counts in no tier, and its values come from the one-population fits.
+
 ## The residue tiers
 
 | Tier | What it means |
@@ -198,9 +207,11 @@ Two things need a new run (`hxex run hxex.toml --overwrite`) instead:
   the ones you want;
 - results fitted with `model = "poisson"` in `[run.fit.noise]`.
 
-Other `[run]` settings that differ from those of the results, such as the picking, are listed
-in the log and are not applied: `resume` never picks or reads the spectra again. A project
-file without `[run.population_test]` leaves a test already in the results in place.
+Any other change of the project file since the results were made stops `hxex resume`, which
+names each one: a `[run]` setting such as the picking, or an `[input]` setting such as the runs,
+the peptide table, the elution windows, or `[[input.exclude]]`. `resume` never reads or picks
+the spectra again, so these need `hxex run hxex.toml --overwrite`, which fits again only the
+series whose spectra changed. Set them back to resume instead. A project file without `[run.population_test]` leaves a test already in the results in place.
 `hxex info` shows when the test was added. The results' `run_settings_used.toml` then holds
 the project file's `[input]` and `[output]` settings, with the `[run]` settings the results
 were made with, the test included.

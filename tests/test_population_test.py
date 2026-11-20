@@ -635,11 +635,21 @@ def test_spectra_above_full_deuteration_leave_the_test(tested_run):
     res = Results.from_run(tested_run)
     forced = _forced(res, np.flatnonzero(res.fit.role == ""))
     assert (_set_k(species_uptake(forced, populations="population_test"), "", 60.0)[0] == 2).all()
-    # every two-population fit above a (deliberately low) limit: the sets fall back to one
+    # every two-population fit above a (deliberately low) limit: the sets are not tested, not
+    # one population (PLAN Next steps 40); their values come from the K = 1 fits
     low = SpeciesFilters(max_fD=0.01)
-    k, reason = _set_k(species_uptake(forced, populations="population_test", filters=low),
-                       "", 60.0)
-    assert (k == 1).all() and all(r == "no spectrum to test: one population" for r in reason)
+    up = species_uptake(forced, populations="population_test", filters=low)
+    k, reason = _set_k(up, "", 60.0)
+    rows = up.where(role="", K=1, rank=1) & (up.time == 60.0)
+    assert (k == 1).all() and (up.set_test_K[rows] == 0).all()
+    assert np.isnan(np.asarray(up.set_p_1[rows], float)).all()
+    assert all(r.startswith("population test (set): not tested: no spectrum to test (")
+               and "above full deuteration" in r for r in reason)
+    from hxex.analysis.set_test import set_tests, set_words
+
+    tests = set_tests(forced, filters=low, quiet=True)
+    held = [t for t in tests.values() if t.K == 0]
+    assert held and {set_words(t) for t in held} == {"not tested"}
     summary = left_out_summary(forced, low, population_test=True)
     row = [i for i, w in enumerate(summary["what"]) if w.startswith("held out of the test")]
     assert len(row) == 1 and summary["count"][row[0]] > 0

@@ -230,7 +230,9 @@ class SpeciesUptake:
     test, :mod:`hxex.analysis.set_test`, whose p-values are ``set_p_1``, one against two, and
     ``set_p_2``, two against three, NaN without the test; ``set_test_K`` is the test's own
     number, which ``best_set_K`` can only follow up to the largest K analysed; 0 without the
-    test, and for a set the test never saw (every spectrum left out by the filters);
+    test, for a set the test never saw (every spectrum left out by the filters), and for a set
+    whose every spectrum the test held out (not tested: :data:`hxex.analysis.set_test.
+    NOT_TESTED_K`; its values come from the K = 1 fits);
     ``undeuterated_two``, a flag on every row of a peptide whose undeuterated set, in some
     sample of the run, has two populations or more by the test: another species);
     ``more_populations_possible``, a flag: the test's steps above ``[run.population_test]
@@ -1661,9 +1663,9 @@ def test_set(cols: Mapping[str, np.ndarray], tests: Mapping[tuple, Any]
             out["set_test_K"][idx] = t.K
             out["undeuterated_two"][idx] = t.undeuterated_two
             below = [k for k in by_k if k <= t.K]
-            chosen = max(below) if below else min(by_k)
+            chosen = max(below) if below else 1 if 1 in by_k else min(by_k)
             reason = t.reason
-            if chosen != t.K:
+            if t.K and chosen != t.K:  # (set_test_K 0: not tested, the K = 1 values used)
                 reason += (f"; K = {t.K} not kept by the filters or not analysed: "
                            f"{words.get(chosen, str(chosen))} used")
         out["best_set_K"][idx] = chosen

@@ -250,9 +250,13 @@ again).
 Results made without a correction take one the same way: `hxex resume hxex.toml` works the
 controls out when the project now asks for them, either with a `[run.controls]` table or, without
 one, because the results' spectra hold both kinds of control. This is how results made before
-*hxex* chose the correction by itself get it. (A setting that makes a time point serve as a
-control, `undeut_at` or `fulldeut_at`, changes the fits: such results need `hxex run` again.)
-`[run] controls = false` never takes a correction away from existing results: run again.
+*hxex* chose the correction by itself get it.
+
+`hxex resume` keeps which spectra are controls. A change of `undeut_at`, `fulldeut_at`,
+`undeut_marked`, or `fulldeut_marked` decides that (a control is fitted at one population, and
+the population test groups the spectra by it), so `hxex resume` refuses it, naming the setting,
+and `hxex run hxex.toml --overwrite` applies it. So does `[run] controls = false`: `resume`
+never takes a correction away from existing results.
 
 ## Deamidated fully deuterated controls
 

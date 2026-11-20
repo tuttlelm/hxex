@@ -2070,8 +2070,8 @@ Planned, not built:
      35, the bootstrap's existing one). To decide: keep the name for that or retire it.
    - *Order.* First, alone and small: `resume` refuses any project change outside the list it
      applies, naming `hxex run` (closes the case above), and a set whose spectra were all held
-     out reads "not tested", not one population. Then the per-stage record and the status in
-     `hxex check`/`info`; then `run` as update (resume's incremental paths moved into it) and
+     out reads "not tested", not one population (built 2026-11-20, HISTORY 428). Then the
+     per-stage record and the status in `hxex check`/`info`; then `run` as update (resume's incremental paths moved into it) and
      `--fresh`; then the window's stage row. Tests: each incremental path against a fresh run,
      as the preset tests do (HISTORY 354).
 

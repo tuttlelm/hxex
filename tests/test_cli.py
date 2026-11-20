@@ -1348,6 +1348,58 @@ def test_resume_works_the_controls_out_again_when_only_run_controls_changed(tmp_
                                (before.mfd[stand_in] - before.m0[stand_in]) * 0.8 / 0.9)
 
 
+def test_resume_refuses_what_it_does_not_apply(tmp_path, capsys):
+    """hxex resume refuses a project change it does not apply, naming each change and hxex
+    run (PLAN Next steps 40): the control roles (a time point made the fully deuterated
+    control: resume would have worked the controls out again with the stored roles), and
+    [input] (a run's sample renamed, an exclusion rule added: resume never reads); the
+    bundle is left as it was."""
+    path = mzml_project(tmp_path, output="[run.controls]\nd2o_fraction = 0.9")
+    assert cli.main(["-q", "run", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        made = b.manifest["created"]
+    plain = path.read_text()
+    capsys.readouterr()
+
+    def refused(text, *expected):
+        path.write_text(text)
+        assert cli.main(["resume", str(path)]) == 1
+        err = capsys.readouterr().err
+        assert "hxex run" in err and "--overwrite" in err, err
+        for words in expected:
+            assert words in err, err
+        with open_bundle(tmp_path / "out") as b:
+            assert b.manifest["created"] == made and not (b.manifest.get("provenance") or {}).get(
+                "resumed")
+
+    refused(plain.replace("d2o_fraction = 0.9", "d2o_fraction = 0.8\nfulldeut_at = 60"),
+            "[run.controls] fulldeut_at: 1 min, was unset (which spectra are controls)")
+    refused(plain.replace("d2o_fraction = 0.9",
+                          "d2o_fraction = 0.9\nfulldeut_at = 60\nfulldeut_marked = false"),
+            "[run.controls] fulldeut_marked: false, was true")
+    refused(plain.replace('sample = "WT"', 'sample = "WT2"'), "[input] runs")
+    refused(plain.replace("[[input.runs]]", "[[input.exclude]]\ntime = 60\n\n[[input.runs]]"),
+            "[[input.exclude]]: 1 rule(s), was 0")
+    refused(plain.replace("[run.controls]\nd2o_fraction = 0.9", "[run]\ncontrols = false"),
+            "[run] controls: false")
+    # what it applies goes through: the correction itself, on another device
+    path.write_text(plain.replace("d2o_fraction = 0.9", "d2o_fraction = 0.8")
+                    .replace('device = "cpu", dtype', 'device = "auto", dtype'))
+    assert cli.main(["-q", "resume", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        assert b.controls().config.d2o_fraction == 0.8
+    # a project file for the analysis (no [input]) is compared only in the [run] tables it
+    # writes: the defaults of the others are not changes
+    other = tmp_path / "analysis.toml"
+    other.write_text('[output]\nbundle = "out"\n[analysis]\nreference = "WT"\n'
+                     "[run.bootstrap]\nn_boot = 4\nn_restarts = 1\nadam_steps = 30\n"
+                     "polish_steps = 0\n")
+    capsys.readouterr()
+    assert cli.main(["-q", "resume", str(other)]) == 0, capsys.readouterr().err
+    with open_bundle(tmp_path / "out") as b:
+        assert b.manifest["configs"]["bootstrap"]["n_boot"] == 4
+
+
 def test_resume_adds_the_population_test_from_the_project_file(tmp_path, capsys):
     """hxex resume PROJECT adds the project's [run.population_test] to a bundle without one (or
     makes it again with other settings), keeping its fits; the bundle's settings file and
@@ -1382,18 +1434,19 @@ def test_resume_adds_the_population_test_from_the_project_file(tmp_path, capsys)
     assert cli.main(["-q", "resume", str(path)]) == 0
     with open_bundle(tmp_path / "out") as b:
         assert b.population_test().config.simulations == 3
-    # other [run.fit] settings are refused; other [run] settings are logged, not applied
-    # fits made with other settings are refused (another k_max is not: it fits the K the
-    # bundle lacks, test_presets.py)
+    # any other [run] setting is refused, naming hxex run (PLAN Next steps 40; before, a change
+    # outside [run.fit] was logged and recorded as if applied); another k_max is not: it fits
+    # the K the bundle lacks (test_presets.py)
     path.write_text(plain.replace("adam_steps = 60", "adam_steps = 70") + test)
     assert cli.main(["resume", str(path)]) == 1
-    assert "fit.adam_steps" in capsys.readouterr().err
-    path.write_text(plain.replace("zero_filling = 3", "zero_filling = 4") + test)
-    assert cli.main(["resume", str(path)]) == 0
     err = capsys.readouterr().err
-    assert "picker.zero_filling" in err and "not applied" in err
+    assert "[run.fit] adam_steps: 70, was 60" in err and "hxex run" in err
+    path.write_text(plain.replace("zero_filling = 3", "zero_filling = 4") + test)
+    assert cli.main(["resume", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert "[run.picker] zero_filling: 4, was 3" in err and "--overwrite" in err
     with open_bundle(tmp_path / "out") as b:
-        assert b.population_test().config.simulations == 2
+        assert b.population_test().config.simulations == 3
         assert b.manifest["configs"]["run"]["picker"]["zero_filling"] == 3
     # a project without [run.population_test]: the bundle's test stays
     path.write_text(plain.replace("n_boot = 3", "n_boot = 4"))

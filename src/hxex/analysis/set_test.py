@@ -16,8 +16,11 @@ screens keep at one population, those the review set to ``review_K = 1``, and, f
 whose K + 1 fit it is, a spectrum with a population above full deuteration (corrected fD above
 ``[analysis.filters] max_fD``, 1.1: about the 99th to 99.5th percentile of genuine fully
 deuterated single populations; such a population cannot be a deuterated form of the peptide,
-HISTORY 178-179), the review's accepted spectra excepted. A set left with no spectrum to test
-has one population.
+HISTORY 178-179), the review's accepted spectra excepted. A set whose spectra were all kept at
+one population has one; a set left with no spectrum to test for any other reason (every
+spectrum not tested by the run's test, or with a population above ``max_fD``) is not tested:
+its number of populations is not known (``K`` 0, :data:`NOT_TESTED_K`), and its values come
+from the K = 1 fits.
 
 A flag by default (owner, 2026-10-26, HISTORY 175): ``undeuterated_two``, every set of a peptide
 (in every sample of the run) whose undeuterated set has two populations or more. An
@@ -53,10 +56,15 @@ from .screening import Screening, screening
 
 log = logging.getLogger(__name__)
 
+# the number of populations of a set whose spectra the test held out, every one: not known
+# (``set_test_K`` 0 in species_uptake.csv, ``set_K`` 0 in spectra.csv, "not tested")
+NOT_TESTED_K = 0
+
 
 @dataclass(frozen=True)
 class SetTest:
-    """The test of one set: ``K``, the p-value and the mean added population of each step
+    """The test of one set: ``K`` (:data:`NOT_TESTED_K`, 0, when the test held out every
+    spectrum of the set), the p-value and the mean added population of each step
     (``p``, ``added``; NaN where the step was not tested), ``n_spectra`` (the set's spectra),
     ``n_tested`` (those tested at the first step), ``undeuterated_two`` (a flag: the peptide's
     undeuterated set, in some sample of the run, has two populations or more), ``reason``
@@ -271,8 +279,10 @@ def _tests_and_runs(results, *, filters=None, exclude_flagged: bool = False,
                 result[key] = dataclasses.replace(result[key], undeuterated_two=True)
     if not quiet:
         n_two = sum(t.K >= 2 for t in result.values())
-        log.info("population test (set): %d of %d sets have two populations or more", n_two,
-                 len(result))
+        n_not = sum(t.K == NOT_TESTED_K for t in result.values())
+        log.info("population test (set): %d of %d sets have two populations or more%s", n_two,
+                 len(result), f"; {n_not} not tested (every spectrum held out of the test: "
+                 "set_test_K 0 in species_uptake.csv)" if n_not else "")
         n_more = sum(t.more_populations_possible for t in result.values())
         if n_more:
             log.info("population test (set): %d sets may hold more populations than the %d the "
@@ -362,6 +372,8 @@ def set_words(t: SetTest, significance: float | None = None) -> str:
     step that decided it (:func:`set_step`); a set at one whose first step passed the
     significance (``significance``) names the share that was too small; ``(not tested)``
     when nothing was tested."""
+    if t.K == NOT_TESTED_K:
+        return "not tested"
     p, added = set_step(t)
     head = f"{t.K} population{'s' if t.K != 1 else ''}"
     if not np.isfinite(p):
@@ -373,12 +385,27 @@ def set_words(t: SetTest, significance: float | None = None) -> str:
     return f"{head} ({text})"
 
 
+def _held_words(held: Mapping[str, int]) -> str:
+    """Why the spectra of a set were held out of its test, in words (:func:`_one_set`)."""
+    parts = []
+    if held["above"]:
+        n = held["above"]
+        parts.append(f"{n} spectr{'um' if n == 1 else 'a'} with a population above full "
+                     "deuteration ([analysis.filters] max_fD) in the two-population fit")
+    if held["untested"]:
+        n = held["untested"]
+        parts.append(f"{n} spectr{'um' if n == 1 else 'a'} the run's population test did not "
+                     "test")
+    return "no spectrum to test (" + "; ".join(parts) + ")"
+
+
 def _one_set(rows, runs, config: PopulationTestConfig, steps, capped=frozenset()) -> SetTest:
     n_steps = len(steps)
     t_sum, m_sum, v_sum = np.zeros(n_steps), np.zeros(n_steps), np.zeros(n_steps)
     added: list[list[float]] = [[] for _ in range(n_steps)]
     n_live = np.zeros(n_steps, dtype=np.int64)
     is_capped = False
+    held = {"above": 0, "untested": 0}  # the spectra held out of the first step, by cause
     for g, i in rows:
         run = runs[g]
         test = run.test
@@ -388,8 +415,10 @@ def _one_set(rows, runs, config: PopulationTestConfig, steps, capped=frozenset()
             is_capped = True
             continue
         for s in range(n_steps):
-            if test.null_kind[i, s] in NOT_TESTED or (run.unphysical[i, s]
-                                                       and not run.accepted[i]):
+            above = bool(run.unphysical[i, s]) and not run.accepted[i]
+            if test.null_kind[i, s] in NOT_TESTED or above:
+                if s == 0:
+                    held["above" if above else "untested"] += 1
                 break  # not tested at this step (or a population above max_fD): nor after
             t_sum[s] += test.statistic[i, s]
             m_sum[s] += test.null_mean[i, s]
@@ -405,9 +434,16 @@ def _one_set(rows, runs, config: PopulationTestConfig, steps, capped=frozenset()
                                n_decided)
     k, more = int(k[0]), bool(more[0])
     words = {1: "one", 2: "two", 3: "three"}
-    if not tested[0]:
+    if not tested[0] and (held["above"] or held["untested"]):
+        # the test held its spectra out: the set's number is not known (PLAN Next steps 40;
+        # it read "one population" before 2026-11-20)
+        k, more = NOT_TESTED_K, False
+        reason = "population test (set): not tested: " + _held_words(held)
+    elif not tested[0]:
         reason = ("kept at one population: the peptide's undeuterated set has two or more "
-                  "(undeuterated_cap)" if is_capped else "no spectrum to test: one population")
+                  "(undeuterated_cap)" if is_capped else
+                  "kept at one population: every spectrum is kept at one (review_K = 1, or the "
+                  "spectrum quality screens)")
     else:
         at = max(k - 2, 0)  # the last step that added a population, else the first
         reason = (f"population test (set): {words.get(k, str(k))} (p = {p[at]:.2g}, added "
