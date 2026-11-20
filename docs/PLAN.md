@@ -2018,6 +2018,62 @@ Planned, not built:
    again (about 5.5 min there). Option: read again only the files whose rows changed and
    take the others' spectra from the bundle (needs the plan per file). (a) is small; (b) is
    about a session.
+40. **Where a project stands, and one command that brings it up to date** (owner, 2026-11-20:
+   be intentional about run versus resume; design agreed in outline, nothing built).
+   - *Why.* `hxex resume` was built to add the bootstrap after the fits; each addition since
+     (population test, a higher `k_max`, a new K in `ks`, presets, controls recomputed when
+     `[run.controls]` changed, quality reassessed) made it a second, partial way of updating a
+     bundle, while `hxex run --overwrite` became nearly incremental itself (stored spectra,
+     HISTORY 397; fits, test, and bootstrap kept per unchanged series, HISTORY 326). `run`
+     applies every setting; `resume` applies only the changes it was taught and records the
+     rest without applying them. Case (the private targeted Orbitrap dataset, 2026-11-18): a
+     project changed `fulldeut_at` and commented out the fully deuterated run, then resumed;
+     resume refitted the controls with the stored roles (`pipeline.py`, the `new_controls`
+     branch calls `fit_controls` without `apply_control_roles`) and kept the removed run's
+     spectra (resume never reads), so one peptide stayed on a stand-in correction (retention
+     0.48 vs about 0.66 of its own), its high population read above `max_fD`, and the
+     population test (set) reported one population for sets it had not tested. The tooltip
+     said controls changes need only `resume`.
+   - *The stages.* read, pick (with the envelopes), noise (the per-bin curve from the
+     undeuterated controls' picked spectra), fit, population test (run chunk by chunk with
+     the fits), correction (the back-exchange controls and the quality flags, from the K = 1
+     fits), bootstrap; then analyse (with `report`'s tables and figures). A chain, but a
+     change redoes only the stages that depend on it: `fulldeut_at` redoes correction and
+     flags, not fits or bootstrap (the correction is applied when tables are written); the
+     noise model redoes fits and everything after; a new K in `ks` is a bootstrap of that K.
+     Each stage records its inputs in the bundle (settings, data identities, the stage's
+     code fingerprint); most of this exists already, spread over `hxex.reuse`,
+     `hxex.stored_read`, and resume's comparisons (`cli._controls_to_resume`,
+     `_k_max_to_resume`, `_test_to_resume`, `bootstrap.added_settings`): gather it into one
+     record and one comparison used by every command.
+   - *Status.* Each stage is done, out of date (naming the cause: "fulldeut_at changed: 27 h,
+     was FD"), not done (never run, or stopped partway: item 35), or off (not asked for: no
+     population test, `n_boot = 0`). `hxex check` and `hxex info` print the chain and what
+     `hxex run` would redo; the analyse row reuses the analysis folders' `made_from`
+     (HISTORY 122). The window's Run tab shows the chain as a row of stages, the reason as
+     each mark's tooltip.
+   - *Two modes.* `--overwrite` today names two intents. Update (keep using): `hxex run` on a
+     project whose bundle exists prints the plan and redoes only the out-of-date stages, with
+     no flag (it replaces only results whose inputs changed, which are stale already; user
+     files and the review table kept as now). Start again: `hxex run --fresh` redoes every
+     stage, replacing `--refit` and `--reread` (later, if needed, `--redo STAGE`).
+     `--overwrite` is retired, accepted for a while with a note that it now means update. In
+     the window: "Bring up to date" and "Start again".
+   - *Earlier versions.* An update never copies the bundle (a session of small edits would
+     fill a disk with near-identical copies, each remade from its recorded settings and the
+     stored spectra); the manifest's provenance gains one entry per update (date, stages
+     redone, settings changed from what to what), listed by `hxex info`. `[output]
+     keep_previous` applies to "Start again" only; `--keep-previous` on the command line stays
+     as a one-off before an update, for comparing. Analysis, table, and figure folders follow
+     the same rule (HISTORY 134).
+   - *`resume`.* Keeps one meaning: continue a stopped stage (the fit-stage checkpoint of item
+     35, the bootstrap's existing one). To decide: keep the name for that or retire it.
+   - *Order.* First, alone and small: `resume` refuses any project change outside the list it
+     applies, naming `hxex run` (closes the case above), and a set whose spectra were all held
+     out reads "not tested", not one population. Then the per-stage record and the status in
+     `hxex check`/`info`; then `run` as update (resume's incremental paths moved into it) and
+     `--fresh`; then the window's stage row. Tests: each incremental path against a fresh run,
+     as the preset tests do (HISTORY 354).
 
 ## Risks and open decisions
 
