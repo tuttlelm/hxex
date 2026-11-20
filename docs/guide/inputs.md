@@ -877,6 +877,26 @@ run: half its typical peak width, measured on its strongest peptides, so it suit
 long gradient and a fast or slow scan rate alike; `peak_smoothing` sets it in seconds instead.
 The run log reports each run's measured peak width and the smoothing used.
 
+Runs rarely elute exactly at the table's times: one file may run a few seconds early, another
+late, and the difference can change along the gradient. *hxex* measures this for each run. The
+peptides whose trace shows one clear peak near their `rt` tell how far that run is from the
+table at each point of the gradient; each peptide is then searched for around its `rt` moved by
+that amount. The moved window is used only when its trace holds at least half as much signal as
+the window found at the table's time, so a weak bump never replaces a real peak. The trace
+also follows each file's own m/z calibration, measured first, so a file a few tens of ppm off
+is still read on the peptide's peaks. A run with
+fewer than 10 clear peaks is searched at the table's times. The run log names how many clear
+peaks each run had and how many windows moved; `hxex info` sums this up in its "elution peaks"
+line.
+
+When the files hold ion mobility (drift time) data and `drift_gate = "auto"`, the trace is
+followed only within each ion's own drift range, which *hxex* first measures on the
+undeuterated controls around the peptide's `rt`. Another species at the same m/z that drifts at
+another time is then not in the trace at all, so it cannot be taken for the peptide's peak. On
+two Synapt datasets the worst spreads between replicates (the top tenth) fell to between a
+third and about half of what they were, and those between charge states of one peptide fell
+too (HISTORY 429).
+
 A peptide with its own `rt_start` and `rt_end` keeps them. To correct one file, give the
 peptide its own window there in the elution-window table (see [A peptide's own window in one
 file](#a-peptides-own-window-in-one-file); the window's elution tab writes it); the other files

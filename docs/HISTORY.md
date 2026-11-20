@@ -11251,9 +11251,9 @@ CSVs or mzML if wanted.
     back-exchange-correction.md, outputs.md, commands.md (generated); the window's Resume
     tooltip no longer says changed controls need only `resume`.
 
-429. **Choosing the elution peak: drift first, no identity scores** (2026-11-20; scratch only,
-    no hxex change; PLAN Next steps 33 step 4 "Choosing among the candidates" and the design
-    draft). Follows item 427: the per-file offset puts `find_peak`'s search in the right place,
+429. **Choosing the elution peak: drift first, no identity scores** (2026-11-20; measured in
+    scratch, then built; PLAN Next steps 33 step 4 "Choosing among the candidates" and its
+    design). Follows item 427: the per-file offset puts `find_peak`'s search in the right place,
     but its rule (the nearest local maximum >= 10 % of the tallest) takes a taller neighbour
     that is another species. Per file and peptide, the trace and per-scan features were taken
     over the table time +-120 s (on-grid intensity within each bin's half-width over every
@@ -11301,4 +11301,24 @@ CSVs or mzML if wanted.
       0.60 -> 1.80). Identity scoring dropped; the offset and guard are safe for every
       `find_peak` project. The digest's misses are table times beyond the search
       (`find_retention_time`, item 201).
+    - Built (same day, owner: no new settings; find_peak bundles change when rerun):
+      `find_peaks` searches each run twice (at the table's times, then at the run's own offset
+      from its clear peaks, `file_offset`, at least 10; the guard keeps the first window when
+      the second sums to less than half), on the trace in the ion's drift range (`_chromatogram`
+      with a gate) measured first over the undeuterated controls at `rt` +- half of
+      `peak_search` (`_run_scans(drift_search=True)` in `_drift_found`), and on the m/z moved
+      by the file's own offset (`_scans_offset`, shared with the drift profiles; added after
+      the first built check: the pooled files sit 20-30 ppm off, and without it the pooled
+      gain was smaller, labelled replicate sd q90 1.006 D against 0.856 with it). Read record
+      `find_peak` (per run: clear peaks, offsets at the quartiles, windows moved, kept by the
+      guard, clipped, m/z offset), run-log lines and a warning for runs with too few clear
+      peaks, `hxex info` "elution peaks". Built check, full runs with `find_peak` (hxex
+      branch plan33-identity), today -> built: benchmark labelled replicate sd q90 0.534 ->
+      0.184 D, undeuterated 0.161 -> 0.056, fully deuterated 0.252 -> 0.188, charge spread q90
+      0.588 -> 0.343, `undeut_high` 124 -> 53, `spectrum_off_mz` 331 -> 54, `drift_unclear` 346
+      -> 464 (three ions, one moved to the drift peak on its m/z); pooled labelled 1.414 -> 0.856,
+      undeuterated median 0.168 -> 0.033, charge spread median 0.730 -> 0.447, `undeut_high`
+      1,024 -> 678, `mz_shift` 39 -> 0, `off_mz` 399 -> 465 (four ions) and `spectrum_off_mz`
+      255 -> 319 (30 ions), labelled K > 1 59.2 -> 60.8 %. The drift ranges match the scratch
+      ones (221 of 226, 305 of 319 identical).
     Private record: hxex_private/analysis_examples/peak_identity (README, scripts, runs).

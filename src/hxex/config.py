@@ -1893,7 +1893,8 @@ _COMMENTS: dict[str, str] = {
                             "through the instrument's per-scan cut (K = 1 only; needs Thermo "
                             "raw, or mzML converted with -N); \"auto\": for the files whose "
                             "profile scans are reduced and record their noise",
-    "input.scans.peak_search": "s either side of a peptide's rt that its peak is looked for in",
+    "input.scans.peak_search": "s either side of a peptide's rt (moved by the run's own offset "
+                               "from the table's times) that its peak is looked for in",
     "input.scans.peak_smoothing": "s: the chromatogram's running mean (false: half the run's "
                                   "typical peak width, measured)",
     "input.scans.peak_width": "the window: the apex +- this many peak widths at half maximum",

@@ -1890,7 +1890,8 @@ Planned, not built:
       guard change nothing measurable (94.7 % of the reachable identified series x files on the
       identified peak either way; 17 gained, 6 lost).
 
-      *Design (draft, 2026-11-20; for the owner, nothing built).* For `find_peak` targets
+      *Design (2026-11-20; settings and result changes agreed by the owner; built the same
+      day, see "Built" below).* For `find_peak` targets
       (MS1 peptides of fixed-time runs without their own window); fragments
       (`find_fragment_peak`), rows with `rt_start`/`rt_end`, and ions with a row in the
       `rt_elution_windows` table keep today's behaviour.
@@ -1924,16 +1925,20 @@ Planned, not built:
       - **(d) The guard.** The second pass's window replaces the first's only when the trace
         summed over it is at least half the first window's sum (measured: 0.5 kept most of the
         gain and removed about half the losses; HISTORY 427).
-      - **Record and display.** The read record keeps per run the number of anchors and the
-        offset at the quartiles of the table times, and the drift ranges as today (now marked
-        "measured over the search range"); `hxex check` and `hxex info` print one line per run
-        with a nonzero offset or too few anchors; the log names runs whose offset was clipped.
-        The elution tab draws the search range around `rt` + offset.
-      - **Settings.** None new (recommended): the offset and guard on for every `find_peak`
-        project (harmless on the Orbitrap digest), the drift-first measurement on whenever
-        `drift_gate = "auto"` meets ion-mobility files. Alternative: a `[input.scans]
-        align_files = true` switch to compare with today; it would be the first switch for a
-        rule whose loss has not been seen on any dataset.
+      - **(e) The file's m/z offset in the trace** (added in the built check). With
+        `mz_calibration = "auto"` the trace follows the predicted m/z moved by the file's own
+        offset, measured first as for the drift profiles (the median picker offset of the
+        targets' scans at `rt` +- half of `peak_search`). The pooled files sit 20-30 ppm off;
+        without it the trace read their peaks off centre (pooled labelled replicate sd q90
+        1.08 against 1.28 D on the extracted traces).
+      - **Record and display.** The read record's `find_peak` entry keeps per run the clear
+        peaks, the offset at the quartiles of the table times, the windows moved, kept by the
+        guard and clipped, and the m/z offset; the run log names them per file and warns about
+        runs with too few clear peaks; `hxex info` sums them up ("elution peaks"). `hxex check`
+        reads no spectra, so it cannot show them.
+      - **Settings.** None new (owner agreed, 2026-11-20): the offset and guard on for every
+        `find_peak` project (harmless on the Orbitrap digest), the drift-first measurement on
+        whenever `drift_gate = "auto"` meets ion-mobility files.
       - **Results change** for every existing `find_peak` bundle when rerun (windows, drift
         ranges, then fits), so the reader fingerprint changes (stored spectra are not taken,
         HISTORY 397).
@@ -1947,6 +1952,10 @@ Planned, not built:
       - **Not in scope:** the elution editor's spreading to other files (it matches traces),
         `find_retention_time` (its found times are the `rt` this design searches around), per
         column offsets (step 5), data without ion mobility beyond the offset.
+      - *Built (2026-11-20, HISTORY 429):* `hxex.io.mzml` `find_peaks` (first pass, anchors,
+        `file_offset`, second pass, guard, gated `_chromatogram`, the m/z offset),
+        `_run_scans(drift_search=True)` for `_drift_found`, `_scans_offset` shared with it, the
+        read record's `find_peak`, `hxex info` "elution peaks"; tests in `tests/test_mzml.py`.
    5. **Elution groups as a diagnostic.** Injections that alternate between two columns show up
       in the relative elution order of the peptides: `hxex check` / `hxex info` could report the
       groups, and windows would be carried only within a group. First look for the pattern in a

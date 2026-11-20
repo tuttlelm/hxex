@@ -1835,3 +1835,120 @@ def test_one_ion_with_its_own_window_stays_in_its_channel(tmp_path):
     at = {int(k): i for i, k in enumerate(plain_plans[1][0])}
     assert len(own_plans[1][0]) < len(plain_plans[1][0])
     np.testing.assert_array_equal(own[1], plain[1][[at[int(k)] for k in own_plans[1][0]]])
+
+
+# --- find_peak: each file's own offset, the guard, the drift-gated trace (HISTORY 429) -------
+
+_ANCHOR_PEPTIDES = ("ACDEFGHIK", "LMNPQRSTVW", "GGSAALK", "VVDEPLLK", "YQSTWNR", "HHGFKK",
+                    "PPLEQVAR", "IINDMSK", "WWAEGTR", "SSVFKDL", "MTLNQEK", "RRGYAVF")
+
+
+def _envelope_of(peptide, charge, height):
+    """``peptide``'s profile envelope at ``charge``, its first bins (as _envelope_at)."""
+    plan = plan_bins(peptide, charge)
+    mz, y = [], []
+    for b, pmz in enumerate(plan.pred_mz[:4]):
+        h = height * np.exp(-0.5 * ((b - 1.0) / 1.0) ** 2)
+        x = pmz + np.arange(-0.012, 0.0121, 0.002)
+        mz.append(x)
+        y.append(h * np.exp(-0.5 * ((x - pmz) / 0.004) ** 2))
+    return np.concatenate(mz), np.concatenate(y)
+
+
+def _offset_run(n_anchors, neighbour, shift=-12.0, sigma=2.0, step=0.5, end=200.0, ppm=0.0):
+    """An LC run eluting ``shift`` s from the peptide table's times: ``n_anchors`` peptides alone
+    (table times 40, 50, ... s), and the test peptide (table time 100 s) at 100 + ``shift``,
+    with a species on its bins at 103 s, ``neighbour`` times as tall; every m/z ``ppm`` off.
+    Returns the scans and the targets (their table times in the rt column)."""
+    peaks = [(p, 40.0 + 10 * i + shift, 1e5) for i, p in enumerate(_ANCHOR_PEPTIDES[:n_anchors])]
+    peaks += [(PEPTIDE, 100.0 + shift, 1e5), (PEPTIDE, 103.0, neighbour * 1e5)]
+    scans = []
+    for t in np.arange(0.0, end + 1e-9, step):
+        parts = [_envelope_of(p, CHARGE, max(h * np.exp(-0.5 * ((t - at) / sigma) ** 2), 2.0))
+                 for p, at, h in peaks]
+        mz = np.concatenate([p[0] for p in parts])
+        y = np.concatenate([p[1] for p in parts])
+        order = np.argsort(mz)
+        scans.append({"mz": mz[order] * (1 + ppm * 1e-6), "intensity": y[order], "time": t,
+                      "unit": "s", "filter": "FTMS + p ESI Full ms"})
+    entries = [PeptideEntry("", "", p, f"{11 * i + 1:04d}-{11 * i + len(p):04d}", 11 * i + 1,
+                            11 * i + len(p), CHARGE, extra={"rt": str((40.0 + 10 * i) / 60)})
+               for i, p in enumerate(_ANCHOR_PEPTIDES[:n_anchors])]
+    entries.append(_with_rt(ENTRY, 100.0 / 60))
+    return scans, [MzmlTarget(e) for e in entries]
+
+
+def test_find_peak_searches_at_the_files_own_offset(tmp_path, caplog):
+    """A file eluting 12 s before the peptide table's times: its clear peaks (one peptide each)
+    give its offset, and the test peptide's search, moved by it, takes the peptide's own peak
+    (88 s) instead of the taller species 3 s from the table's time; the read record keeps what
+    the search did. The guard keeps the first window when the moved one sums to less than half
+    of it; with fewer than 10 clear peaks the table's times are searched (warned). A file 25 ppm
+    off is followed at its own m/z (measured before the peaks are found)."""
+    from hxex.io.mzml import file_offset
+
+    def read(n_anchors, neighbour, name, ppm=0.0):
+        scans, targets = _offset_run(n_anchors, neighbour, ppm=ppm)
+        run = MzmlRun(path=str(write_mzml(tmp_path / name, scans)), sample="S", time=60.0)
+        return read_mzml([run], targets, project="p", config=MzmlConfig(find_peak=True))
+
+    def window(s):
+        i = list(s.peptide).index(PEPTIDE)
+        return 60 * s.rt_start[i], 60 * s.rt_end[i]
+
+    moved = read(12, 1.5, "moved.mzML")
+    lo, hi = window(moved)
+    assert lo > 82 and hi < 94  # the peptide's own peak at 88 s, not the species at 103 s
+    rec = moved.source["find_peak"]["runs"][0]
+    assert rec["clear_peaks"] >= 10 and rec["moved"] >= 1 and rec["kept_by_guard"] == 0
+    np.testing.assert_allclose(rec["offset_s"], -12.0, atol=0.6)
+    assert abs(rec["mz_offset_ppm"]) < 2
+    off = read(12, 1.5, "off.mzML", ppm=25.0)
+    lo, hi = window(off)
+    assert lo > 82 and hi < 94
+    assert off.source["find_peak"]["runs"][0]["mz_offset_ppm"] == pytest.approx(25.0, abs=3)
+    kept = read(12, 3.0, "kept.mzML")  # the species 3x as tall: the moved window sums < half
+    lo, hi = window(kept)
+    assert lo > 97 and hi < 109
+    assert kept.source["find_peak"]["runs"][0]["kept_by_guard"] == 1
+    with caplog.at_level(logging.WARNING, logger="hxex.io.mzml"):
+        few = read(5, 1.5, "few.mzML")
+    lo, hi = window(few)
+    assert lo > 97 and hi < 109  # today's choice: the nearest peak to the table's time
+    assert few.source["find_peak"]["runs"][0]["offset_s"] is None
+    assert "fewer than 10 clear peaks" in caplog.text
+    # the offset curve: the anchors near a time, at least the 10 nearest, none below 10
+    anchors = np.column_stack([np.arange(20.0) * 10, np.r_[np.zeros(10), np.full(10, 6.0)]])
+    assert file_offset(anchors[:9], 50.0) == 0.0
+    assert file_offset(anchors, 20.0) == 0.0 and file_offset(anchors, 180.0) == 6.0
+    assert file_offset(anchors, 95.0) == pytest.approx(3.0)
+
+
+def test_find_peak_chooses_on_the_trace_in_the_ions_drift_range(tmp_path):
+    """Ion mobility bins: the peptide elutes at 30 s at drift 5.3 ms, another ion on its m/z
+    grid at 34 s at drift 5.75 ms, the table's time 33 s. The drift range is measured over the
+    undeuterated control's scans around 33 s before any peak is chosen (the peptide, the
+    brighter there), and the peak is chosen on the trace in that range: both files read the
+    peptide's peak at 30 s in its drift range. Before (HISTORY 429), the nearest peak of the
+    trace over every drift time was the other ion's (27.5-33.5 s)."""
+    peptide = {5.1: 0.02, 5.2: 0.4, 5.3: 1.0, 5.4: 0.5, 5.5: 0.05}
+    other = {5.7: 1.0, 5.8: 0.6}
+
+    def lc(peak_height):
+        scans = []
+        for t in np.arange(0.0, 60.0 + 1e-9, 0.5):
+            h_pep = max(peak_height * np.exp(-0.5 * ((t - 30.0) / 2.0) ** 2), 2.0)
+            h_oth = max(4e4 * np.exp(-0.5 * ((t - 34.0) / 2.0) ** 2), 2.0)
+            scans += _drifting([{"time": t, "unit": "s", "filter": "Full ms"}],
+                               [(1, h_pep, peptide), (1, h_oth, other)])
+        return scans
+
+    un = write_mzml(tmp_path / "un.mzML", lc(1e5), indexed=True)
+    lab = write_mzml(tmp_path / "lab.mzML", lc(1e5), indexed=True)
+    runs = [MzmlRun(un, "WT", role="undeut"), MzmlRun(lab, "WT", time=60.0)]
+    s = read_mzml(runs, [MzmlTarget(_with_rt(ENTRY, 33.0 / 60))], project="p",
+                  config=MzmlConfig(find_peak=True))
+    np.testing.assert_allclose(s.drift_start, 5.2)
+    np.testing.assert_allclose(s.drift_end, 5.4)
+    assert np.all(60 * s.rt_start > 25) and np.all(60 * s.rt_end < 33)
+    assert s.source["find_peak"]["runs"][0]["offset_s"] is None  # one peptide: no offset

@@ -1101,9 +1101,12 @@ class MzmlConfig:
     - ``precursor_tol`` (m/z): the tolerance matching a scan's precursor to a target's.
     - ``find_peak``: in a run with a fixed time (an LC-MS time point or control), find each
       peptide's elution peak near its ``rt`` (the peptide table's column) and sum the scans of
-      that peak only (:func:`find_peaks`; PLAN Next steps 10, HISTORY 164-165). A peptide with
-      its own ``rt_start``, ``rt_end`` keeps them; fragments keep their windows. Every peptide
-      needs one or the other.
+      that peak only (:func:`find_peaks`; PLAN Next steps 10, HISTORY 164-165). Each run is
+      searched at its own offset from the table's times, measured on its clear peaks (with a
+      guard), and in files with ion mobility bins the peak is chosen on the trace in the ion's
+      drift range, measured first around ``rt`` (HISTORY 427, 429). A peptide with its own
+      ``rt_start``, ``rt_end`` keeps them; fragments keep their windows. Every peptide needs
+      one or the other.
     - ``find_fragment_peak``: in a run with a fixed time, find each fragment channel's elution
       peak (a parent's fragments read from the same scans: one precursor, condition and MS
       level) on the trace of its whole ladder, near the parent's ``rt`` (else the middle of its
@@ -1127,7 +1130,9 @@ class MzmlConfig:
       named in the warning, its fragments fitted without allowing for the cut); ``True`` for
       every file, refusing one that records no noise; ``False`` never. A record written before
       the setting reads as ``False``.
-    - ``peak_search`` (s): how far either side of ``rt`` the peak is looked for.
+    - ``peak_search`` (s): how far either side of ``rt`` (moved by the run's own offset, at
+      most this far) the peak is looked for; a find_peak target's drift range is measured over
+      half of it.
     - ``peak_smoothing`` (s): the chromatogram's running mean; None: half the run's typical peak
       width at half maximum, measured on its 50 tallest chromatograms (at least 3 scans).
     - ``peak_width``: the window is the apex +- this many widths at half maximum (ended at the
@@ -1618,11 +1623,15 @@ def _read_runs(
                     out[n] = _run_spectra(f, runs[n], targets_of(runs[n]), windows,
                                           only=None if only is None else only[n],
                                           scan_cut=cut_by_run.get(n, config.scan_cut is True),
-                                          memo=f.memo, **common)
+                                          memo=f.memo, alignment=(
+                                              aligned.setdefault(n, {}) if only is None
+                                              and config.find_peak else None), **common)
                     if only is None:
                         done += 1
                         report(progress, done, len(runs))
         return out
+
+    aligned: dict[int, dict] = {}  # per run: what find_peak's search did (find_peaks)
 
     def number(numbers, made):
         """Number the series of the runs ``numbers`` in this order (the order a run-by-run
@@ -1748,6 +1757,15 @@ def _read_runs(
             log.warning("%d fragment spectra have an elution peak that reaches the first or "
                         "last scan the instrument recorded for their precursor (the "
                         "acquisition cut it): flagged elution_cut", len(elution_cut))
+    if config.find_peak:
+        # per run, in the order of "runs": where find_peak searched (None: no peak searched)
+        source["find_peak"] = {"runs": [aligned.get(n) or None for n in range(len(runs))]}
+        searched = [a for a in aligned.values() if a]
+        unaligned = sum(a["offset_s"] is None for a in searched)
+        if unaligned:
+            log.warning("find_peak: %d of %d runs have fewer than %d clear peaks and are searched "
+                        "at the peptide table's times only (no offset of their own)",
+                        unaligned, len(searched), MIN_ANCHORS)
     if calibration is not None:
         source["mz_calibration"] = [  # per run, in the order of "runs"
             {"offset_ppm": None if not np.isfinite(o) else round(o, 3), "n_spectra": n}
@@ -2058,7 +2076,9 @@ def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
                picker: PickerConfig = DEFAULT_PICKER_CONFIG,
                registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
                only: set[int] | None = None, drift: bool = False, quiet: bool = False,
-               cut: set[int] | None = None, memo: dict | None = None):
+               cut: set[int] | None = None, memo: dict | None = None,
+               gates: Mapping[tuple, DriftRange] | None = None, alignment: dict | None = None,
+               drift_search: bool = False):
     """The scans of every target of this run (:func:`target_applies`; with ``only``, of the
     targets at these positions) in the open file ``f``: the scan table, whether each target's
     peak is found (``find_peak``), the plans (:func:`_plans`, narrowed to the peaks found), the
@@ -2068,12 +2088,17 @@ def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
     fragment channels' plans are narrowed to their peaks too, and ``cut`` (a set) collects the
     targets whose peak the acquisition cut (:func:`find_fragment_peaks`). ``memo`` (a dict
     kept while the file's runs are read): what is computed from the file's scans alone (the
-    peptides' chromatograms), for its other runs."""
+    peptides' chromatograms), for its other runs. ``gates`` and ``alignment``: passed to
+    :func:`find_peaks`. ``drift_search``: the scans where find_peak's targets' drift ranges are
+    measured (:func:`_drift_found`): ``rt`` +- :data:`DRIFT_SEARCH` ``peak_search``, no peak
+    found first."""
     table = f.scans()
-    # the targets whose peak is found (find_peak): planned over their search range first
+    # the targets whose peak is found (find_peak): planned over their search range first,
+    # with room for the run's own offset (find_peaks)
     find = [bool(config.find_peak and run.fixed and _finds_peak(t)) for t in targets]
-    planned = [_search_target(t, config) if fnd else t for t, fnd in zip(targets, find,
-                                                                           strict=True)]
+    half = (DRIFT_SEARCH if drift_search else SEARCH_PLAN) * config.peak_search
+    planned = [_search_target(t, config, half) if fnd else t for t, fnd in zip(targets, find,
+                                                                                 strict=True)]
     frag = [bool(config.find_fragment_peak and run.fixed and _finds_fragment_peak(t))
             for t in targets]
     if any(frag):
@@ -2103,9 +2128,10 @@ def _run_scans(f, run: MzmlRun, targets, windows, *, config, tie: bool = True,
     by_index = (f.read_scans(sorted(needed), windows, drift=True) if drift
                 else f.read_scans(sorted(needed), windows))
     width = float("nan")
-    if any(find):
+    if any(find) and not drift_search:
         plans, width = find_peaks(f, table, run, targets, plans, find, by_index, config, picker,
-                                  registry, quiet=quiet, memo=memo)
+                                  registry, quiet=quiet, memo=memo, gates=gates,
+                                  alignment=alignment, windows=windows)
     if any(frag):
         plans, edges = find_fragment_peaks(f, table, run, targets, plans, frag, by_index, config,
                                            picker, registry, quiet=quiet)
@@ -2121,7 +2147,8 @@ def _run_spectra(f, run: MzmlRun, targets, windows, *, project, config,
                  joins: Mapping[tuple[str, int], int] | None = None,
                  gates: Mapping[tuple, DriftRange] | None = None,
                  elution_cut: set[str] | None = None, scan_cut: bool = False,
-                 memo: dict | None = None) -> tuple[list, float]:
+                 memo: dict | None = None, alignment: dict | None = None
+                 ) -> tuple[list, float]:
     """The spectra of every target of this run (:func:`target_applies`; with ``only``, those
     of the targets at these positions) in the open file ``f``, before their series are numbered
     (:func:`_number_series`): per target with spectra, ``(series key, unclear, spectra)``, the
@@ -2134,11 +2161,12 @@ def _run_spectra(f, run: MzmlRun, targets, windows, *, project, config,
     (``find_fragment_peak``) are added to ``elution_cut`` (spectrum ids). ``scan_cut``: record
     the fragment spectra's scans for the per-scan cut (decided per file, ``[input.scans]
     scan_cut``). ``memo``: the file's results kept for its other runs (:func:`_run_scans`).
+    ``alignment``: filled with what find_peak's search did in this run (:func:`find_peaks`).
     Also returns the run's typical peak width (s) when find_peak measured it, else NaN."""
     cut: set[int] = set()
     scanned = _run_scans(f, run, targets, windows, config=config, tie=tie, picker=picker,
                          registry=registry, only=only, drift=gates is not None, cut=cut,
-                         memo=memo)
+                         memo=memo, gates=gates, alignment=alignment)
     if scanned is None:
         return [], float("nan")
     table, find, plans, by_index, width = scanned
@@ -2275,6 +2303,9 @@ def _drift_found(f: _SharedFile, run: MzmlRun, targets, windows, gated: set[int]
     with scans with drift times and signal, its peptide ion and :func:`scan_profile`'s
     profile with the m/z positions (kept in ``f.memo`` for the file's other runs); and the
     file's m/z offset the profiles were measured with (ppm; NaN: not measured, the m/z as read).
+    A find_peak target's profile sums the scans at its ``rt`` +- :data:`DRIFT_SEARCH`
+    ``peak_search``, before any peak is chosen: the peak is then chosen on the trace in the
+    drift range found (:func:`find_peaks`; HISTORY 429).
 
     With ``mz_calibration = "auto"`` the offset is measured first, as :func:`file_offsets`
     measures it later on the gated spectra, but on each target's scans summed over every drift
@@ -2282,7 +2313,8 @@ def _drift_found(f: _SharedFile, run: MzmlRun, targets, windows, gated: set[int]
     :data:`MIN_CALIBRATION_SPECTRA` spectra with signal. Files 16 to 38 ppm off moved the
     profile's peaks enough to choose another species' drift peak (HISTORY 376)."""
     scanned = _run_scans(f, run, targets, windows, config=config, tie=tie, picker=picker,
-                         registry=registry, only=gated, drift=True, quiet=True, memo=f.memo)
+                         registry=registry, only=gated, drift=True, quiet=True, memo=f.memo,
+                         drift_search=True)
     if scanned is None:
         return [], float("nan")
     table, _, plans, by_index, _ = scanned
@@ -2297,28 +2329,9 @@ def _drift_found(f: _SharedFile, run: MzmlRun, targets, windows, gated: set[int]
         if not any(s.binned is not None for s in scans):
             continue
         items.append((t_i, positions, scans))
-    offset = float("nan")
-    if config.mz_calibration == "auto":
-        measured = []
-        for t_i, positions, scans in items:
-            e = targets[t_i].entry
-            lo, hi = windows[t_i]
-            known = ("drift offset", lo, hi, tuple(positions), e.peptide, e.charge, e.modification)
-            if known not in f.memo:
-                mz, y, _, _ = _summed(scans, lo, hi, None, config)
-                recorded = np.array([s.resolution for s in scans], dtype=float)
-                recorded = recorded[np.isfinite(recorded)]
-                picked = pick_spectrum(
-                    mz, y, e.peptide, e.charge, modification=e.modification, config=picker,
-                    registry=registry,
-                    resolving_power=float(np.median(recorded)) if len(recorded) else None,
-                    resolving_power_mz=r_mz)
-                f.memo[known] = (None if picked.no_signal or not np.isfinite(picked.mz_offset_ppm)
-                                 else float(picked.mz_offset_ppm))
-            if f.memo[known] is not None:
-                measured.append(f.memo[known])
-        if len(measured) >= MIN_CALIBRATION_SPECTRA:
-            offset = float(np.median(measured))
+    offset = (_scans_offset(f, items, targets, windows, config=config, picker=picker,
+                            registry=registry, memo=f.memo)
+              if config.mz_calibration == "auto" else float("nan"))
     out = []
     for t_i, positions, scans in items:
         e = targets[t_i].entry
@@ -2339,6 +2352,37 @@ def _drift_found(f: _SharedFile, run: MzmlRun, targets, windows, gated: set[int]
     return out, offset
 
 
+def _scans_offset(f, items, targets, windows, *, config, picker, registry,
+                  memo: dict | None) -> float:
+    """A file's m/z offset (ppm) before its spectra are read: the median of the picker's offsets
+    of ``items`` (target position, scan positions, scans), each target's scans summed over every
+    drift time, from at least :data:`MIN_CALIBRATION_SPECTRA` with signal; NaN with fewer.
+    ``memo``: the offsets already picked (by the scans and the target), kept for the file's
+    other runs and passes (:func:`_drift_found`, :func:`find_peaks`)."""
+    memo = {} if memo is None else memo
+    r_mz = float(getattr(f, "resolving_power_mz", np.nan))
+    measured = []
+    for t_i, positions, scans in items:
+        e = targets[t_i].entry
+        lo, hi = windows[t_i]
+        known = ("drift offset", lo, hi, tuple(positions), e.peptide, e.charge, e.modification)
+        if known not in memo:
+            mz, y, _, _ = _summed(scans, lo, hi, None, config)
+            recorded = np.array([s.resolution for s in scans], dtype=float)
+            recorded = recorded[np.isfinite(recorded)]
+            picked = pick_spectrum(
+                mz, y, e.peptide, e.charge, modification=e.modification, config=picker,
+                registry=registry,
+                resolving_power=float(np.median(recorded)) if len(recorded) else None,
+                resolving_power_mz=r_mz)
+            memo[known] = (None if picked.no_signal or not np.isfinite(picked.mz_offset_ppm)
+                           else float(picked.mz_offset_ppm))
+        if memo[known] is not None:
+            measured.append(memo[known])
+    return (float(np.median(measured)) if len(measured) >= MIN_CALIBRATION_SPECTRA
+            else float("nan"))
+
+
 def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[Path],
                     targets, windows, *, config, tie, picker, registry, cancel,
                     targets_of=None) -> tuple[dict[tuple, DriftRange], dict]:
@@ -2349,7 +2393,8 @@ def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[
     samples is read once for all of them (:class:`_SharedFile`), and the profiles are added in
     the order of the runs. ``targets_of(run)`` gives a run's targets as its spectra take them
     (with a window of the ``rt_elution_windows`` table where one is given), so a profile sums
-    the scans of the window the spectrum is read with; None: ``targets`` as they are. Also
+    the scans of the window the spectrum is read with (a find_peak target's: those around its
+    ``rt``, :func:`_drift_found`); None: ``targets`` as they are. Also
     returns what the read record keeps beside the ranges: the run's
     position scatter and the files' offsets (:func:`hxex.io.drift_gate.drift_record`)."""
     gated = {i for i, t in enumerate(targets) if _gated_kind(t)}
@@ -2525,24 +2570,43 @@ def _finds_peak(target: MzmlTarget) -> bool:
         target.entry) is None
 
 
-def _search_target(target: MzmlTarget, config: MzmlConfig) -> MzmlTarget:
-    """``target`` with its retention window set to its search range: ``rt`` +- ``peak_search``,
-    inside the project's ``rt_window`` when one is set."""
+# find_peak (PLAN Next steps 33 step 4, HISTORY 429): the scans are planned over rt +- this
+# many peak_search (room for the search to follow the file's own offset); the drift ranges of
+# its targets are measured over rt +- this share of peak_search, before any peak is chosen
+SEARCH_PLAN = 2.0
+DRIFT_SEARCH = 0.5
+ALIGN_HALF = 90.0  # s: the clear peaks within this of a time give the file's offset there
+MIN_ANCHORS = 10  # a run with fewer clear peaks keeps the table's times (offset 0)
+GUARD = 0.5  # the moved window is kept when its trace sums to at least this share of the first
+
+
+def _search_target(target: MzmlTarget, config: MzmlConfig, half: float | None = None
+                   ) -> MzmlTarget:
+    """``target`` with its retention window set to its search range: ``rt`` +- ``half`` (s;
+    None: ``peak_search``), inside the project's ``rt_window`` when one is set."""
     rt = entry_rt(target.entry)
     if not np.isfinite(rt):
         raise MzmlError(f"find_peak: {target_label(target)} has no rt (the peptide table's rt "
                         "column, minutes), and no rt_start, rt_end")
-    lo, hi = 60.0 * rt - config.peak_search, 60.0 * rt + config.peak_search
+    half = config.peak_search if half is None else half
+    lo, hi = 60.0 * rt - half, 60.0 * rt + half
     if target.rt_window is not None:
         lo, hi = max(lo, target.rt_window[0]), min(hi, target.rt_window[1])
     return replace(target, rt_window=(lo, max(lo, hi)))
 
 
-def _chromatogram(scans, pred: np.ndarray, half: np.ndarray) -> np.ndarray:
-    """Per scan, the sum over the predicted bins of the tallest point within ``half`` (m/z)."""
+def _chromatogram(scans, pred: np.ndarray, half: np.ndarray, gate=None) -> np.ndarray:
+    """Per scan, the sum over the predicted bins of the tallest point within ``half`` (m/z).
+    With ``gate`` (a drift range, ms), a scan with ion mobility bins counts only its points in
+    that range, summed over the drift bins as its spectrum is (:func:`_summed`)."""
     out = np.zeros(len(scans))
     for n, s in enumerate(scans):
         mz, y = s.mz, s.intensity
+        if gate is not None and s.binned is not None:
+            m, v, d = s.binned
+            d = drift_times(d)
+            inside = (d >= gate[0]) & (d <= gate[1])
+            mz, y = sum_mobility_bins(m[inside], v[inside])
         if not len(mz):
             continue
         a = np.searchsorted(mz, pred - half)
@@ -2565,6 +2629,15 @@ def _peak(times: np.ndarray, smooth: np.ndarray, given: float, width: float):
     """The window (s) of the peak nearest ``given`` (s) in the smoothed chromatogram: the
     local maxima at least 10 % of its tallest, the nearest one's width at half maximum, apex +-
     ``width`` such widths, ended at the valleys either side; None without signal."""
+    found = _peak_choice(times, smooth, given, width)
+    return None if found is None else found[:3]
+
+
+def _peak_choice(times: np.ndarray, smooth: np.ndarray, given: float, width: float):
+    """:func:`_peak`'s window (start, end, width at half maximum) with the apex's time and
+    whether the peak is clear: the only local maximum of at least 10 % of the tallest, its
+    half-maximum span inside the trace and its apex at least two scans from either end (a trace
+    rising towards an end has one maximum there: not a peak)."""
     if not len(smooth) or smooth.max() <= 0:
         return None
     top = smooth.max()
@@ -2581,25 +2654,74 @@ def _peak(times: np.ndarray, smooth: np.ndarray, given: float, width: float):
     right = apex
     while right < len(smooth) - 1 and smooth[right + 1] <= smooth[right]:
         right += 1
+    clear = (len(peaks) == 1 and lo > 0 and hi < len(smooth) - 1
+             and 2 <= apex <= len(smooth) - 3)
     return (max(times[apex] - width * fwhm, times[left]),
-            min(times[apex] + width * fwhm, times[right]), fwhm)
+            min(times[apex] + width * fwhm, times[right]), fwhm, float(times[apex]), clear)
+
+
+def file_offset(anchors: np.ndarray, at: float) -> float:
+    """The file's retention offset (s) at the table time ``at`` (s), from its clear peaks
+    ``anchors`` (rows of table time, apex minus table time): the median of the anchors within
+    :data:`ALIGN_HALF` of ``at``, or of the :data:`MIN_ANCHORS` nearest when fewer lie there;
+    0 with fewer than :data:`MIN_ANCHORS` anchors in all."""
+    if len(anchors) < MIN_ANCHORS:
+        return 0.0
+    d = np.abs(anchors[:, 0] - at)
+    near = d <= ALIGN_HALF
+    if near.sum() < MIN_ANCHORS:
+        near = d <= np.sort(d)[MIN_ANCHORS - 1]
+    return float(np.median(anchors[near, 1]))
 
 
 def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index,
                config: MzmlConfig, picker: PickerConfig, registry, quiet: bool = False,
-               memo: dict | None = None):
+               memo: dict | None = None, gates: Mapping[tuple, DriftRange] | None = None,
+               alignment: dict | None = None, windows=None):
     """The plans of the ``find`` targets narrowed to their elution peak (``find_peak``): per
     peptide (its charge states share one chromatogram, the sum of theirs: retention belongs to
-    the peptide), the scans of the window :func:`_peak` finds near its ``rt``, smoothed over
-    ``peak_smoothing`` (or half the run's typical half-maximum width). A peptide without signal
-    gets no spectrum in this run. Logs the run's peak width and smoothing (not ``quiet``).
-    Returns the plans and
-    the run's typical width at half maximum (s; NaN when there is nothing to measure).
+    the peptide), the scans of the window :func:`_peak` finds, smoothed over ``peak_smoothing``
+    (or half the run's typical half-maximum width). A peptide without signal gets no spectrum in
+    this run. Logs the run's peak width and smoothing (not ``quiet``). Returns the plans and the
+    run's typical width at half maximum (s; NaN when there is nothing to measure).
+
+    Where each peptide is looked for (PLAN Next steps 33 step 4, HISTORY 427 and 429): a first
+    pass searches ``rt`` +- ``peak_search``; the peptides whose peak there is clear
+    (:func:`_peak_choice`) give the run's offset from the table's times along the gradient
+    (:func:`file_offset`); a second pass searches ``rt`` plus that offset (at most
+    ``peak_search``) +- ``peak_search``, and its window is taken when the trace sums over it to
+    at least :data:`GUARD` of the first window's sum (else the first is kept). A run with fewer
+    than :data:`MIN_ANCHORS` clear peaks is searched at the table's times only. With ``gates``
+    (the drift ranges, :mod:`hxex.io.drift_gate`) each ion's chromatogram counts only its drift
+    range (:func:`_chromatogram`): another species at the same m/z that drifts at another time
+    is not in the trace. With ``mz_calibration = "auto"`` and ``windows`` (each target's m/z
+    window) the trace follows the predicted m/z moved by the file's own m/z offset, measured
+    first on the targets' scans at ``rt`` +- :data:`DRIFT_SEARCH` ``peak_search``
+    (:func:`_scans_offset`): files 20-30 ppm off read the peptide's peaks off centre otherwise
+    (HISTORY 429). ``alignment`` (a dict): filled with what the run's search did (clear peaks,
+    offsets at the quartiles of the table times, windows moved, kept by the guard, the m/z
+    offset).
     ``memo``: chromatograms already computed from the same scans of the file (by the scans,
-    the predicted m/z and the half-widths), shared by the file's runs."""
+    the predicted m/z, the half-widths and the drift range), shared by the file's runs."""
     plans = list(plans)
     chroms: dict[tuple, list] = {}  # peptide -> [(target position, order, chromatogram)]
     r_mz = float(getattr(f, "resolving_power_mz", np.nan))
+    mz_offset = float("nan")
+    if config.mz_calibration == "auto" and windows is not None:
+        near = config.peak_search * DRIFT_SEARCH
+        items = []
+        for t_i, plan in enumerate(plans):
+            if not find[t_i] or plan is None:
+                continue
+            order = plan[0]
+            rt = 60.0 * entry_rt(targets[t_i].entry)
+            times = table.time[order]
+            positions = [int(table.index[k]) for k in
+                         order[(times >= rt - near) & (times <= rt + near)]]
+            if positions:
+                items.append((t_i, positions, [by_index[k] for k in positions]))
+        mz_offset = _scans_offset(f, items, targets, windows, config=config, picker=picker,
+                                  registry=registry, memo=memo)
     for t_i, (target, plan) in enumerate(zip(targets, plans, strict=True)):
         if not find[t_i] or plan is None:
             continue
@@ -2607,6 +2729,8 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
         bins = plan_bins(e.peptide, e.charge, modification=e.modification, config=picker,
                          registry=registry)
         pred = np.asarray(bins.pred_mz, dtype=float)
+        if np.isfinite(mz_offset):
+            pred = pred * (1.0 + mz_offset * 1e-6)
         order = plan[0]
         scans = [by_index[int(table.index[k])] for k in order]
         recorded = np.array([s.resolution for s in scans], dtype=float)
@@ -2614,14 +2738,16 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
         half = picker.half_width(pred, e.charge,
                                  resolving_power=float(np.median(recorded)) if len(recorded)
                                  else None, resolving_power_mz=r_mz)
+        gate = None if gates is None else _drift_gate(target, gates)
+        gate = None if gate is None else (gate[0], gate[1])
         key = (e.peptide, e.modification, e.start_seq, e.end_seq)
         if memo is None:
-            chrom = _chromatogram(scans, pred, half)
+            chrom = _chromatogram(scans, pred, half, gate)
         else:
             known = ("chromatogram", np.asarray(order).tobytes(), pred.tobytes(),
-                     np.asarray(half, dtype=float).tobytes())
+                     np.asarray(half, dtype=float).tobytes(), gate)
             if known not in memo:
-                memo[known] = _chromatogram(scans, pred, half)
+                memo[known] = _chromatogram(scans, pred, half, gate)
             chrom = memo[known]
         chroms.setdefault(key, []).append((t_i, order, chrom))
     if not chroms:
@@ -2634,38 +2760,95 @@ def find_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index
         for same in by_order.values():
             groups.append(([m[0] for m in same], same[0][1], np.sum([m[2] for m in same], 0),
                            60.0 * entry_rt(targets[same[0][0]].entry)))
-    all_times = np.concatenate([table.time[g[1]] for g in groups])
+    search = config.peak_search
+
+    def reach(order, c, centre):
+        """The scans' times and trace within ``peak_search`` of ``centre`` (s)."""
+        times = table.time[order]
+        keep = (times >= centre - search - 1e-9) & (times <= centre + search + 1e-9)
+        return times[keep], c[keep]
+
+    reached = [reach(order, c, given) for _, order, c, given in groups]
+    all_times = np.concatenate([tt for tt, _ in reached])
     spacing = float(np.median(np.diff(np.unique(all_times)))) if len(all_times) > 1 else 1.0
     # the run's typical width at half maximum (its tallest chromatograms, raw)
     widths = []
-    for _, order, c, _given in sorted(groups, key=lambda g: -g[2].max())[:50]:
-        if c.max() > 0 and len(c) > 2:
+    for tt, c in sorted(reached, key=lambda g: -(g[1].max() if len(g[1]) else 0.0))[:50]:
+        if len(c) > 2 and c.max() > 0:
             lo, hi = _half_max_span(c, int(np.argmax(c)))
-            widths.append(float(table.time[order][hi] - table.time[order][lo]))
+            widths.append(float(tt[hi] - tt[lo]))
     run_width = float(np.median(widths)) if widths else 3.0 * spacing
     if config.peak_smoothing is not None:
         n_smooth = max(1, int(round(config.peak_smoothing / spacing)))
     else:  # half the run's typical width
         n_smooth = max(3, int(round(0.5 * run_width / spacing)))
-    missing = 0
-    for members, order, c, given in groups:
-        times = table.time[order]
+
+    def choose(tt, c, centre):
         smooth = np.convolve(c, np.ones(n_smooth) / n_smooth, mode="same") if len(c) >= 3 else c
-        found = _peak(times, smooth, given, config.peak_width)
+        return _peak_choice(tt, smooth, centre, config.peak_width)
+
+    def summed(order, c, window):
+        times = table.time[order]
+        return float(c[(times >= window[0] - 1e-9) & (times <= window[1] + 1e-9)].sum())
+
+    # first pass, at the table's times; its clear peaks give the run's offset
+    first = [choose(tt, c, given) for (tt, c), (_, _, _, given) in zip(reached, groups,
+                                                                        strict=True)]
+    anchors = np.array([(given, found[3] - given) for found, (_, _, _, given)
+                        in zip(first, groups, strict=True) if found is not None and found[4]],
+                       dtype=float).reshape(-1, 2)
+    moved = guarded = clipped = 0
+    chosen = list(first)
+    if len(anchors) >= MIN_ANCHORS:
+        anchors = anchors[np.argsort(anchors[:, 0], kind="stable")]
+        for g_i, (_, order, c, given) in enumerate(groups):
+            offset = file_offset(anchors, given)
+            if abs(offset) > search:
+                clipped += 1
+                offset = float(np.clip(offset, -search, search))
+            if offset == 0.0:
+                continue
+            again = choose(*reach(order, c, given + offset), given + offset)
+            was = first[g_i]
+            if again is None or (was is not None and abs(again[0] - was[0]) < 1e-9
+                                 and abs(again[1] - was[1]) < 1e-9):
+                continue
+            if was is not None and summed(order, c, again) < GUARD * summed(order, c, was):
+                guarded += 1
+                continue
+            chosen[g_i] = again
+            moved += 1
+    missing = 0
+    for (members, order, _c, _given), found in zip(groups, chosen, strict=True):
         if found is None:
             missing += 1
             for t_i in members:
                 plans[t_i] = None
             continue
+        times = table.time[order]
         start, end = found[0], found[1]
         inside = np.flatnonzero((times >= start - 1e-9) & (times <= end + 1e-9))
         for t_i in members:
             plans[t_i] = (order, [inside]) if len(inside) else None
+    aligned = len(anchors) >= MIN_ANCHORS
+    if alignment is not None:
+        given_times = np.array([g[3] for g in groups])
+        alignment.update({
+            "clear_peaks": int(len(anchors)),
+            "offset_s": ([round(file_offset(anchors, float(q)), 2)
+                          for q in np.percentile(given_times, [25, 50, 75])]
+                         if aligned else None),
+            "moved": moved, "kept_by_guard": guarded, "clipped": clipped,
+            "mz_offset_ppm": round(mz_offset, 2) if np.isfinite(mz_offset) else None})
     (log.debug if quiet else log.info)(
         "%s: peaks found for %d peptides%s; typical peak width %.1f s, smoothing over %d "
-        "scans (%.1f s)", Path(f.path).name, len(groups) - missing,
+        "scans (%.1f s); %s", Path(f.path).name, len(groups) - missing,
         f" ({missing} without signal: no spectrum)" if missing else "", run_width,
-        n_smooth, n_smooth * spacing)
+        n_smooth, n_smooth * spacing,
+        (f"searched at the file's own offset ({len(anchors)} clear peaks; median "
+         f"{np.median(anchors[:, 1]):+.1f} s): {moved} windows moved, {guarded} kept by the "
+         "guard" + (f", {clipped} offsets beyond peak_search clipped" if clipped else ""))
+        if aligned else f"searched at the table's times (only {len(anchors)} clear peaks)")
     return plans, run_width
 
 

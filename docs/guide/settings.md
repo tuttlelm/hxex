@@ -186,7 +186,7 @@ Scan formats: how scans become spectra (hxex.io.MzmlConfig).
 | `find_fragment_peak` | true/false | `false` | LC-MS runs with a fixed time: find each fragment channel's elution peak from its whole ladder near the parent's rt (the parent's window searched too) and sum that peak's scans; flags elution_cut |
 | `fragment_peak_width` | number | `1.0` | with find_fragment_peak: the window is the apex +- this many peak widths at half maximum (wider than peak_width: beside the peak, reduced profile scans add no noise) |
 | `scan_cut` | text or true/false | `"auto"` | fragments: record each scan's noise and share of the signal and fit through the instrument's per-scan cut (K = 1 only; needs Thermo raw, or mzML converted with -N); "auto": for the files whose profile scans are reduced and record their noise |
-| `peak_search` | number | `30.0` | s either side of a peptide's rt that its peak is looked for in |
+| `peak_search` | number | `30.0` | s either side of a peptide's rt (moved by the run's own offset from the table's times) that its peak is looked for in |
 | `peak_smoothing` | number | unset | s: the chromatogram's running mean (false: half the run's typical peak width, measured) |
 | `peak_width` | number | `0.5` | the window: the apex +- this many peak widths at half maximum |
 | `find_retention_time` | text | `"suggest"` | with find_peak: "suggest" (look in the undeuterated controls for where the exact m/z of a series off its m/z, or without an undeuterated envelope, elutes: retention_suggestions.csv), "automatic" (also read a series found clearly elsewhere at that time, flagged rt_found) or "off" |

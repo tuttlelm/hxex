@@ -2395,6 +2395,8 @@ def cmd_info(args) -> int:
               if _reduced_profile_info(source) else []),
             *([("m/z calibration", _mz_calibration_info(source["mz_calibration"]))]
               if source.get("mz_calibration") else []),
+            *([("elution peaks", _find_peak_info(source["find_peak"]))]
+              if _find_peak_info((source or {}).get("find_peak")) else []),
             ("quality flags", ("no" if not b.has("quality") else
                                "assessed by an earlier version of hxex, before checks added "
                                "since: hxex resume assesses them again" if b.quality().outdated
@@ -2484,6 +2486,25 @@ def _mz_calibration_info(records) -> str:
     left = len(records) - len(found)
     return text + (f"; {left} with too few peptide spectra kept as read" if left and found
                    else "")
+
+
+def _find_peak_info(record) -> str | None:
+    """``hxex info``'s line on where find_peak searched (the read record's ``find_peak``;
+    HISTORY 429): the runs searched at their own offset and the offsets' range, the runs with
+    too few clear peaks, the windows moved and kept by the guard."""
+    runs = [r for r in (record or {}).get("runs", ()) if r]
+    if not runs:
+        return None
+    own = [r for r in runs if r.get("offset_s") is not None]
+    offsets = [o for r in own for o in r["offset_s"]]
+    text = (f"{len(own)} of {len(runs)} runs searched at their own offset ({min(offsets):+.1f} "
+            f"to {max(offsets):+.1f} s), {sum(r['moved'] for r in runs)} windows moved, "
+            f"{sum(r['kept_by_guard'] for r in runs)} kept by the guard" if own
+            else f"no run with enough clear peaks for its own offset ({len(runs)} searched at "
+            "the peptide table's times)")
+    left = len(runs) - len(own)
+    return text + (f"; {left} with too few clear peaks searched at the table's times"
+                   if left and own else "")
 
 
 def _reduced_profile_info(source) -> str | None:
