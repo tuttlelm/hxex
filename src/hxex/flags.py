@@ -227,21 +227,24 @@ _add("saturated", "quality", "spectrum", SPECTRA_FLAGS,
      "Above {run.quality.saturated_ratio} times the prediction, in most of the series' control "
      "replicates; only the brighter half of the run's undeuterated controls is judged.",
      "Check the series' corrected uptake against the peptide's other charge states.",
-     "outputs.md#very-bright-spectra-saturated-tails_low-and-bright")
+     "outputs.md#very-bright-spectra-saturated-and-tails_low")
 _add("tails_low", "quality", "spectrum", SPECTRA_FLAGS,
      "An undeuterated control whose small isotope peaks read lower than natural abundance "
      "predicts.",
      FLAG_ONLY,
      "Below {run.quality.tails_low_ratio} times the prediction; seen in bright spectra, cause "
      "unknown.",
-     guide="outputs.md#very-bright-spectra-saturated-tails_low-and-bright")
+     guide="outputs.md#very-bright-spectra-saturated-and-tails_low")
 _add("bright", "quality", "spectrum", SPECTRA_FLAGS,
-     "A labelled spectrum or fully deuterated control at least as bright as a control of its "
-     "series flagged `saturated` or `tails_low`.",
-     FLAG_ONLY,
-     "Its own shape cannot be checked, so it is marked as likely distorted in the same way.",
-     "When two populations appear only in the brightest replicate, look at the dimmer ones.",
-     "outputs.md#very-bright-spectra-saturated-tails_low-and-bright")
+     "Retired: a labelled spectrum or fully deuterated control at least as bright as a "
+     "control of its series flagged `saturated` or `tails_low`.",
+     "None: no longer set. Results assessed before keep it until hxex resume assesses their "
+     "flags again.",
+     "Its spectra were no further from their replicates and chose two populations as often as "
+     "their dimmer siblings, so it marked nothing useful.",
+     "When two populations appear only in replicates brighter than the run's onset (`hxex "
+     "info`, the `noise` line), look at the dimmer ones.",
+     "outputs.md#very-bright-spectra-saturated-and-tails_low")
 _add("undeut_high", "quality", "spectrum", SPECTRA_FLAGS,
      "An undeuterated spectrum whose mean is above {run.controls.m0_max} deuterons: another "
      "species or a wrong pick.",

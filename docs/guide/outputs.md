@@ -246,7 +246,7 @@ no new run, only `hxex report` again. (Given the bundle instead, `hxex report re
     title gives the time, the replicate, the number of populations drawn, each population's
     deuterium (D, not corrected for back-exchange, lowest first), the review status when there
     is one, and the quality flags, for example `30 min, rep 2 (K=1, D 4.06, rejected;
-    low_intensity)` or `4 s, rep 1 (K=2, D 1.85 / 6.40; bright)`. The marker on top of each picked value says
+    low_intensity)` or `4 s, rep 1 (K=2, D 1.85 / 6.40; poor_fit)`. The marker on top of each picked value says
     what the bins hold: a circle for peak heights, an up-pointing triangle for peak areas. An
     area is turned into a height-equivalent number (see [A peak's height or its
     area](picking-window.md#a-peaks-height-or-its-area)), so a triangle can sit below the top
@@ -331,7 +331,7 @@ spectrum is left out of the analysis. On the command line, `hxex explain off_mz`
 In the window, hovering over a flag shows its meaning. Each tables folder also holds a
 `flags.csv` listing the flags found in those results (see below).
 
-### Very bright spectra: `saturated`, `tails_low`, and `bright`
+### Very bright spectra: `saturated` and `tails_low`
 
 An undeuterated control has a known shape: the natural isotope pattern of the peptide. *hxex*
 compares each undeuterated control with that pattern, with the height set by its tallest peak.
@@ -343,9 +343,6 @@ compares each undeuterated control with that pattern, with the height set by its
   read less than 0.7 times their prediction (the setting `tails_low_ratio`). This is seen in the
   brightest spectra of several datasets and instruments. Its cause is not known, so the flag
   names what is seen, not a mechanism.
-- **`bright`**: the labelled spectra and fully deuterated controls of the same series that are at
-  least as bright as a flagged control. Their own shape cannot be checked, because it is not
-  known in advance, so they are marked as likely to be distorted in the same way.
 
 A control is flagged only when most of its series' undeuterated replicates show the sign, and
 only the brighter half of a run's undeuterated controls is judged: the peak ratios of a weak
@@ -365,17 +362,18 @@ off.
   populations more likely: flagged controls chose more than one population less often than
   unflagged ones (2 % against 5 %). The mean of a labelled spectrum is expected to read slightly
   low, by an amount the controls cannot show, because a control's value cannot fall below zero.
-- A `bright` spectrum chooses more than one population more often than its dimmer replicates at
-  the same time point (12 to 23 percentage points more). The same happens in series with no
-  flagged control at all, and grows with how much brighter one replicate is than another (5 to 7
-  points at up to 1.5 times brighter, 15 to 38 points at three times or more). So most of it is
-  not the distortion these flags detect, but the noise level: these numbers were measured with
-  one noise level per series, set from its undeuterated control (the default before 31 October
-  2026), which makes the error bars of a spectrum much brighter than that control too small.
-  Its mean differs little from its replicates' (a median of 0.01 to 0.02 deuterons). The
-  per-bin noise, now the default ([The noise model](noise-model.md)), gives each bin a noise
-  that grows with its intensity, which addresses this cause; its effect on bright spectra alone
-  has not been measured.
+
+A labelled spectrum carries no such flag: its shape depends on how much deuterium it took up and
+in how many populations, so there is nothing to compare it with. What *hxex* can tell you is how
+bright is too bright for the run: `hxex info hxex.toml` ends its `noise` line with the tallest
+peak above which the run's undeuterated controls stop matching their pattern (`controls with tops
+of ... or more left out`). A labelled spectrum well above that is likely to be flattened the
+same way, and a flattened envelope is what two populations side by side look like.
+
+Results made before 20 November 2026 may carry the flag `bright`: it marked every labelled
+spectrum at least as bright as a flagged control of its series. Those spectra were no further from
+their replicates and chose two populations as often as their dimmer siblings, so it was retired;
+`hxex resume hxex.toml` assesses the flags again without it.
 
 What to do: none of these flags removes or changes anything. When a result rests on a
 `saturated` series, check its corrected uptake against the peptide's other charge states. When

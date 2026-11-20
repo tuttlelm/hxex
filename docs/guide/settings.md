@@ -360,7 +360,7 @@ Back-exchange correction from the undeuterated and fully deuterated controls, fi
 
 ## `[run.quality]`
 
-Quality flags on every spectrum (guide: outputs.md): poor_fit, low_intensity, noise_outlier, mz_shift, off_mz (thresholds in [run.picker]), poor_envelope, saturated, tails_low, bright. Nothing is dropped; your review ([review]) takes the decisions.
+Quality flags on every spectrum (guide: outputs.md): poor_fit, low_intensity, noise_outlier, mz_shift, off_mz (thresholds in [run.picker]), poor_envelope, saturated, tails_low. Nothing is dropped; your review ([review]) takes the decisions.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

@@ -1985,6 +1985,14 @@ Planned, not built:
       Options: replace it with a sign measured on the spectrum itself (its tallest peak flattened
       against its neighbours, as `saturated` does for controls), or remove it (flags.md, outputs.md,
       the tutorial's step on bright spectra). Measure the replacement before deciding.
+      *Measured; `bright` retired, nothing in its place (2026-11-20, HISTORY 432;
+      "bright retired"; owner):* a sign read on each spectrum (its tallest stick against its
+      K = 1 fit, over its neighbours) falls with saturation on the undeuterated controls, but on a
+      labelled spectrum it cannot tell a flattened top from two real populations side by side
+      (above the tutorial's onset it fell almost only on K = 2 fits), and it depends mildly on
+      the envelope (short peptides read lower and noisier), so it was not built. `bright`
+      separated nothing and is no longer set; the run's saturation onset (`hxex info`, the
+      `noise` line) is what the guide and the tutorial now point to.
    7. **Can the peptide's envelope explain the picked values?** (owner, 2026-11-14: "maybe 1,
       not 2, maybe 3".) No one check answers it: `screen_beyond_reach`, `screen_below_mono`,
       `narrow_component`, `above_amides` and `poor_fit` each cover a part, and `poor_fit` judges a

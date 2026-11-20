@@ -242,7 +242,7 @@ always, so the correction needs only the fits.
   (`m0_multimodal`), and compares its isotope pattern with the one the peptide's composition
   predicts. A `saturated` control reads 0.07 to 0.17 deuterons too high, so the corrected uptake
   of its series reads low by about as much
-  ([Very bright spectra](outputs.md#very-bright-spectra-saturated-tails_low-and-bright)).
+  ([Very bright spectra](outputs.md#very-bright-spectra-saturated-and-tails_low)).
 - **The fully deuterated control** sets the scale, through its *retention*, the share of the
   label it still holds when measured. *hxex* judges each one against the rest of the run, against
   the series' own time points, and against the same peptide in the other samples

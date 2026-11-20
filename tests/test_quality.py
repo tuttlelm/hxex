@@ -227,7 +227,7 @@ def _scale_control_peaks(meas, rows, band, factor):
     return meas
 
 
-def test_compressed_tails_in_the_controls_flag_them_and_the_brighter_spectra(run):
+def test_compressed_tails_in_the_controls_flag_them(run):
     meas, fit = run
     controls = np.flatnonzero(np.asarray(meas.role) == "undeut")
     assert len(controls) == 3
@@ -238,14 +238,7 @@ def test_compressed_tails_in_the_controls_flag_them_and_the_brighter_spectra(run
     judged = controls[tops[controls] >= np.median(tops[controls])]
     assert len(judged) == 2 and q.tails_low[judged].all() and q.tails_low.sum() == 2
     assert not q.saturated.any()
-    # bright: the series' other spectra at least as bright as a flagged control, and only those
-    others = np.flatnonzero(np.asarray(meas.role) != "undeut")  # labelled and fully deuterated
-    assert np.array_equal(q.bright[others], tops[others] >= tops[judged].min())
-    assert q.bright.any() and not q.bright[controls].any()
-    j = int(others[q.bright[others]][0])
-    scale = 0.5 * tops[judged].min() / tops[j]
-    dimmer = replace_observed(planted, j, np.asarray(planted.observed[j]) * scale)
-    assert not assess_quality(dimmer, fit).bright[j]
+    assert not q.bright.any()  # retired (HISTORY: bright retired): never set, even beside these
     # one replicate of three is not "most": nothing flagged
     one = _scale_control_peaks(meas, controls[:1], (0.01, 0.1), 0.5)
     assert not assess_quality(one, fit).tails_low.any()

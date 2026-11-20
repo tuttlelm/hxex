@@ -11394,3 +11394,36 @@ CSVs or mzML if wanted.
       read another species.
     Nothing built: groups are seen on one Synapt dataset of two. Private record:
     hxex_private/analysis_examples/column_groups (README, scripts, pool_b5).
+
+432. **`bright` retired; a flattened-top flag tried and not built** (2026-11-20; PLAN Next
+    steps 33 step 6; owner: retire `bright`, nothing in its place). `bright` marked a labelled
+    spectrum or fully deuterated control at least as bright as a control of its series flagged
+    `saturated` or `tails_low`; measured before (2026-11-14) and again now, its spectra were no
+    further from their replicates and chose two or more populations as often as their dimmer
+    siblings at the same time point (tutorial data 56 against 53 %, intact-peptide benchmark 29
+    against 33 %). A sign read on each spectrum was tried in scratch: its tallest picked stick
+    against its K = 1 fit, over its two neighbours against the fit (below 1 for a flattened top),
+    judged only at or above the run's distortion onset (`hxex.noise.distortion_onset`: tutorial
+    4e5, benchmark 2e5, Orbitrap digest none found).
+    - Undeuterated controls (true shape known): the ratio falls only in the brightest tenth
+      (median 0.88 tutorial, 0.915 benchmark); benchmark controls flagged `saturated` read below
+      0.9 in 77 % against 12 % of unflagged ones as bright. On the Orbitrap the share below 0.9
+      falls with brightness (dim spectra's noise), hence the onset.
+    - Below 0.9 and above the onset: tutorial 163 labelled spectra, choosing K > 1 in 96 %
+      against 65 % for their dimmer replicates; benchmark 298, 21 against 15 %. But that yardstick
+      is partly circular (owner): a flattened top is what two populations side by side look like,
+      and above the tutorial's onset the sign fell almost only on K = 2 fits (29.6 % of them
+      against 0.6 % of K = 1 fits); below the onset K = 2 spectra read below 0.9 in 1.5 / 8.7 / 9.4
+      % (tutorial / benchmark / Orbitrap) against 0.3 / 3.0 / 1.4 % at K = 1. On one labelled
+      spectrum it cannot tell saturation from a real second population.
+    - Envelope dependence (owner): below the onset, medians 0.95-1.03 by length and charge;
+      short peptides (<= 8 residues) lower and noisier (benchmark undeuterated controls 10 %
+      below 0.9, against 3-9 % for longer ones).
+    So nothing replaces `bright`. Built: `bright` is no longer set (its field and its dictionary
+    entry stay, marked retired, so results assessed before still read and explain it);
+    `QUALITY_VERSION` 6, so `hxex resume` assesses the flags again without it. Guide: outputs.md
+    "Very bright spectra" (heading and anchor now `saturated` and `tails_low`; a labelled spectrum
+    is pointed to the run's onset in `hxex info`), tutorial-fits.md step 2 and its notebook cell,
+    statistics.md's link; flags.md and settings.md regenerated. The tutorial image
+    `tutorial_bright.png` (its titles say `bright`) changes on the next `make_tutorial.py --run`.
+    Private record: hxex_private/analysis_examples/bright_sign (README, scripts).

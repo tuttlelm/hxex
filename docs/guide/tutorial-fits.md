@@ -47,11 +47,12 @@ populations and its flags:
 - The three undeuterated controls (UN) are flagged `saturated`: the peaks beside the tallest
   read higher than the peptide's natural isotope pattern allows, which is how a detector
   behaves when it receives more ions than it can count.
-- Every labelled spectrum but one is flagged `bright`: at least as bright as those controls,
-  so likely distorted in the same way. Their tops are 1.7 to 2.3 million, and their envelopes
-  look flattened: too low in the middle, too high at both sides. A flattened envelope is what
-  two populations side by side look like, and the fit duly describes them with two
-  (`K=2`), about half and half, at every time point.
+- Every labelled spectrum but one is as bright as those controls or brighter: tops of 1.7 to
+  2.3 million. Their envelopes look flattened: too low in the middle, too high at both sides.
+  A flattened envelope is what two populations side by side look like, and the fit duly
+  describes them with two (`K=2`), about half and half, at every time point. They carry no flag
+  for it: a labelled spectrum's shape is not known in advance, so *hxex* cannot tell a
+  flattened top from two real populations on the spectrum alone.
 - The one dim spectrum, 30 min replicate 2 (top 44,000, flagged `low_intensity`), has an
   ordinary envelope, and one population.
 
@@ -63,7 +64,9 @@ hxex info hxex.toml
 
 The `noise` line ends with `controls with tops of 400,000 or more left out`: above that,
 the undeuterated controls of this run no longer follow the noise of the others, so they are
-left out of the noise measurement. The bright spectra of 68-75 are four to five times above it.
+left out of the noise measurement. The bright spectra of 68-75 are four to five times above it:
+well into the range where this run's controls are flattened, so their second population is
+more likely the detector's than the peptide's.
 
 **What the analysis made of it.** Open `results_analysis_WT/species_uptake.csv`, the
 analysis' table of every peptide at every time, and find WT, `start` 68, `end` 75. At 1 min,

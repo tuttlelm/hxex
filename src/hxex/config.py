@@ -2226,7 +2226,7 @@ _SECTION_COMMENTS: dict[str, str] = {
                     "fraction of deuterium kept, not a retention time.",
     "run.quality": "Quality flags on every spectrum (guide: outputs.md): poor_fit, "
                    "low_intensity, noise_outlier, mz_shift, off_mz (thresholds in "
-                   "[run.picker]), poor_envelope, saturated, tails_low, bright. Nothing is "
+                   "[run.picker]), poor_envelope, saturated, tails_low. Nothing is "
                    "dropped; your review ([review]) takes the decisions.",
     "figures": "Figures, drawn by hxex report hxex.toml --figures from the results (hxex run "
                "draws none). Changing these needs no new run.",

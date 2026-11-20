@@ -127,9 +127,13 @@ signal never reach the fit and are handled before it.
   ``accepted`` review keeps it there); a series whose every undeuterated spectrum is above it is
   ``m0_high``, which ``[analysis.filters] stand_in_controls`` decides. Not assessed for series
   the controls leave uncorrected (fragment ions) nor without controls.
-- ``bright``: a labelled spectrum or fully deuterated control whose tallest stick is at least as
-  high as that of a control of its series flagged ``saturated`` or ``tails_low``: likely
-  distorted the same way. Their own shape cannot be checked, since it is not known in advance.
+- ``bright`` (retired, HISTORY item "bright retired"): a labelled spectrum or fully deuterated
+  control whose tallest stick was at least as high as that of a control of its series flagged
+  ``saturated`` or ``tails_low``. Its spectra were no further from their replicates and chose two
+  populations as often as their dimmer siblings, so it is no longer set; the field stays so that
+  results assessed before still read it, until ``hxex resume`` assesses their flags again. A
+  sign read on a labelled spectrum itself (its top against its one-population fit) was tried
+  and not built: a flattened top is also what two populations side by side look like.
 """
 # evidence for the screens: docs/HISTORY.md items 37, 57 and 87
 
@@ -165,7 +169,8 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz"
 # 3: low_intensity compares the spectra once each injection's brightness is divided out.
 # 4: spectrum_off_mz (a spectrum off its injection's m/z). 5: overlapping_ion compares ions
 # within one time (a kinetics run's other times of an ion read as an overlapping ion).
-QUALITY_VERSION = 5
+# 6: bright is no longer set (retired).
+QUALITY_VERSION = 6
 
 # low_intensity: an injection's brightness is measured from at least this many of its spectra
 # with replicates (else it is taken as 1), and named in a warning outside these limits.
@@ -456,16 +461,14 @@ def control_shape_ratios(meas: Measurements) -> tuple[np.ndarray, np.ndarray, np
 
 
 def _brightness_flags(meas: Measurements, data_id: np.ndarray, config: QualityConfig):
-    """``saturated``, ``tails_low`` (undeuterated controls, when most of the series' control
-    replicates show the sign) and ``bright`` (the series' labelled spectra and fully deuterated
-    controls at least as bright as a flagged control), see the module docstring."""
+    """``saturated`` and ``tails_low`` (undeuterated controls, when most of the series' control
+    replicates show the sign), see the module docstring; ``bright`` (retired) is never set."""
     m = len(meas)
     flags = {name: np.zeros(m, dtype=bool) for name in ("saturated", "tails_low", "bright")}
     if config.saturated_ratio is None and config.tails_low_ratio is None:
         return flags
     near, tail, top = control_shape_ratios(meas)
     role = np.asarray(meas.role, dtype=str) if meas.role is not None else np.full(m, "")
-    peak = np.array([float(np.max(o)) if len(o) else 0.0 for o in meas.observed])
     tests = (("saturated", near, lambda r: r > config.saturated_ratio, config.saturated_ratio),
              ("tails_low", tail, lambda r: r < config.tails_low_ratio, config.tails_low_ratio))
     # only the brighter half of the run's controls is judged: the signs belong to bright
@@ -476,7 +479,6 @@ def _brightness_flags(meas: Measurements, data_id: np.ndarray, config: QualityCo
     for s in np.unique(data_id):
         rows = np.flatnonzero(data_id == s)
         controls = rows[role[rows] == UNDEUT]
-        others = rows[role[rows] != UNDEUT]  # labelled spectra and fully deuterated controls
         for name, stat, test, limit in tests:
             if limit is None:
                 continue
@@ -486,7 +488,6 @@ def _brightness_flags(meas: Measurements, data_id: np.ndarray, config: QualityCo
             hit = judged[test(stat[judged])]
             if 2 * len(hit) > len(judged):  # most replicates
                 flags[name][hit] = True
-                flags["bright"][others[peak[others] >= top[hit].min()]] = True
     return flags
 
 
