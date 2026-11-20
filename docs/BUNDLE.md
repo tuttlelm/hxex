@@ -130,7 +130,15 @@ earlier version again), `noise_curve`
 (with `[run.fit.noise] estimate = "controls"`, the default since 2026-10-31, when enough
 controls measured it: the per-bin noise the fit used, `b1`,
 `b1_se`, `model_error` (a share), `onset` (null: none), `n_controls`, `n_series` and `by_sample`
-(`sample`, `b1`, `b1_se`, `n_series`); `hxex.noise.ControlsNoise`), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry; bundles written before 2026-10-20 also hold `run.plots`, the figure settings of the time, which are ignored when read: figures are drawn by `hxex report`): the settings as written by the
+(`sample`, `b1`, `b1_se`, `n_series`); `hxex.noise.ControlsNoise`), `stages` (one entry per stage of the run, `read`, `pick`,
+`noise`, `fit`, `population_test`, `correction`, `bootstrap`, each with `code` (the
+fingerprint of the code that made it, `hxex._engine`: the read's from the read plan, the
+noise's, fit's, population test's and bootstrap's the engine of `fitted_with`, the pick's and
+the correction's recorded here only; null where not known) and `state` (`done`, `pending`:
+stopped partway, or `off`: not made); worked out from the rest of the manifest
+(`hxex.stages.record`), except the pick's and correction's code, which a resume keeps unless
+it made them again; absent before 2026-11-20; `hxex check` and `hxex info` compare it with
+the project, `hxex.stages.standing`), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry; bundles written before 2026-10-20 also hold `run.plots`, the figure settings of the time, which are ignored when read: figures are drawn by `hxex report`): the settings as written by the
 `to_dict` of each config; the fit config includes the noise settings and the device;
 `spectra_source`: how the raw spectra were read, recorded whether or not they are stored, or
 null: for `read_mzml` the reader, project, runs (path, sample, rep, time, time offset, and

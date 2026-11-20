@@ -49,7 +49,7 @@ Change one setting of a project file (no text editor needed).
 
 ## hxex check
 
-Check a project file and show what would be read.
+Check a project file and show what would be read, and where its results stand, stage by stage.
 
 `hxex check hxex.toml [options]`
 
@@ -129,7 +129,7 @@ Also spelt `hxex analyze`.
 
 ## hxex info
 
-What the results hold.
+What the results hold, and where they stand, stage by stage.
 
 `hxex info hxex.toml|BUNDLE [options]`
 

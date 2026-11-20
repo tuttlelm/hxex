@@ -26,6 +26,12 @@ READER = ("io/read.py", "io/specexport.py", "io/hxexpress.py", "io/pooled.py", "
           "io/mzml.py", "io/thermo.py", "io/drift_gate.py", "io/elution_windows.py",
           "io/retention_search.py", "io/times.py", "io/_common.py", "spectra.py", "chem",
           "picking")
+# what decides the picking, given the read spectra and the settings (the bins, the peak
+# measure, the envelopes): a run keeps the picking stored in a bundle only when this is
+# unchanged (the version number alone stays the same between commits)
+PICKING = ("picking", "chem", "spectra.py")
+# what decides the back-exchange correction and the quality flags, given the fits
+CORRECTION = ("controls.py", "deamidation.py", "kint.py", "quality.py")
 
 
 def _fingerprint(names) -> str:
@@ -55,3 +61,15 @@ def engine_fingerprint() -> str:
 def reader_fingerprint() -> str:
     """The fingerprint of the readers' source files (:data:`READER`)."""
     return _fingerprint(READER)
+
+
+@lru_cache(maxsize=1)
+def picking_fingerprint() -> str:
+    """The fingerprint of the picking's source files (:data:`PICKING`)."""
+    return _fingerprint(PICKING)
+
+
+@lru_cache(maxsize=1)
+def correction_fingerprint() -> str:
+    """The fingerprint of the correction's source files (:data:`CORRECTION`)."""
+    return _fingerprint(CORRECTION)

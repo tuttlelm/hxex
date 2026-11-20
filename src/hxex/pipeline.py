@@ -258,6 +258,9 @@ class RunResult:
     # whether the back-exchange correction is on and why (hxex.controls.ControlsChoice
     # .to_dict(): chosen automatically from the spectra, or set; None: not recorded)
     controls_choice: dict | None = None
+    # the fingerprints of the code that made the picking and the correction ({"pick": ...,
+    # "correction": ...}; None: this hxex's), recorded in the manifest's stages block
+    stage_code: dict | None = None
 
     @property
     def dropped_ids(self) -> np.ndarray:
@@ -315,6 +318,7 @@ class RunResult:
             provenance=provenance, excluded=self.excluded, project_file=self.project_file,
             peak_measure=self.peak_measure, chunk_plan=self.chunk_plan,
             fitted_with=self.fitted_with, controls_choice=self.controls_choice,
+            stage_code=self.stage_code,
         )
 
 
@@ -1631,9 +1635,12 @@ def _stored_picking(raw: SpectrumSet, config: RunConfig):
     taken when the bundle's ``[run.picker]``, ``[run.envelope]`` (with its fallback time) and
     modification registry are the run's, its picked spectra are these (after
     ``[[input.exclude]]``, in this order) with these control roles (after ``undeut_at`` and
-    ``fulldeut_at``), and it was written by this version of hxex; otherwise the log says what
+    ``fulldeut_at``), and it was picked by this hxex's picking code (the bundle's ``stages``
+    record; a bundle written before it was recorded is picked again); otherwise the log says what
     differs and everything is picked again."""
+    from ._engine import picking_fingerprint
     from .io.bundle import BundleError, _versions, open_bundle
+    from .stages import recorded_code
 
     where = (raw.source or {}).get("stored_in")
     if not where or not Path(where).exists():
@@ -1652,6 +1659,11 @@ def _stored_picking(raw: SpectrumSet, config: RunConfig):
             written = (b.manifest.get("versions") or {}).get("hxex")
             if written != _versions()["hxex"]:
                 differ.append(f"the hxex version ({written} then)")
+            code = recorded_code(b.manifest, "pick")
+            if code is None:  # the version number stays the same between commits
+                differ.append("the picking code (not recorded by the hxex that picked them)")
+            elif code != picking_fingerprint():
+                differ.append("the picking code (another version of hxex)")
             binned = b.binned()
             if list(map(str, binned.spectrum_id)) != list(map(str, raw.spectrum_id)):
                 differ.append("the spectra picked")
@@ -2032,6 +2044,11 @@ def resume_bootstrap(
         from .reuse import resumed_fitted_with
 
         fitted_with = resumed_fitted_with(b.manifest)
+        from .stages import record as stage_record
+
+        # the code that made the bundle's picking and correction, kept unless made again here
+        made = stage_record(b.manifest)
+        stage_code = {k: made[k]["code"] for k in ("pick", "correction")}
     if testing:
         log.info("%s: %s the population test (%d simulations per spectrum and step); the "
                  "reading, the picking and the fits are kept", path,
@@ -2084,6 +2101,8 @@ def resume_bootstrap(
             choice_record = dict(controls_choice)
             log.info("%s: back-exchange correction: %s", path,
                      ControlsChoice.from_dict(controls_choice).describe())
+        from .stages import current_codes
+
         log.info("%s: %s the controls with the project's settings (the fits are kept)", path,
                  "working out" if stored_controls is None else "working out again")
         picked = binned.select(kept)
@@ -2102,6 +2121,7 @@ def resume_bootstrap(
                         "former d2o_fraction; add [run.population_test] to make the test again "
                         "with the new one", path)
         controls = controls_table
+        stage_code["correction"] = current_codes()["correction"]
         provenance = _resumed(provenance, "controls", project_file is not None)
         if project_file is not None:
             project_record = dict(project_file)
@@ -2146,7 +2166,7 @@ def resume_bootstrap(
         excluded=excluded, view_exclude=tuple(view_exclude), project_file=project_record,
         population_test=test, peak_measure=peak_measure,
         chunk_plan=chunk_plan or _plan(measurements, config, (0.0, 1.0)).record,
-        fitted_with=fitted_with, controls_choice=choice_record,
+        fitted_with=fitted_with, controls_choice=choice_record, stage_code=stage_code,
     )
     if _set_k_needed(result, by_k, review, analysis):
         provenance = _resumed(provenance, "bootstrap at set K", False)

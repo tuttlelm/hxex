@@ -11322,3 +11322,37 @@ CSVs or mzML if wanted.
       255 -> 319 (30 ions), labelled K > 1 59.2 -> 60.8 %. The drift ranges match the scratch
       ones (221 of 226, 305 of 319 identical).
     Private record: hxex_private/analysis_examples/peak_identity (README, scripts, runs).
+
+430. **Where the results stand, stage by stage, in `hxex check` and `hxex info`**
+    (2026-11-20; PLAN Next steps 40, second step; owner's answers of 2026-11-20: code changes
+    count, the check shows what `hxex run` would do now, the check compares the data files'
+    checksums as run does, the window's stage row waits). Before, what a stage of the run
+    depends on was recorded in five places and compared by each command its own way (the read
+    plan by run, the `[run]` settings by resume and by the fit reuse, the fitting code by the
+    reuse, the flags' version by info and resume, a stopped bootstrap by resume), and nothing
+    recorded the code behind the picking or the correction. Built: `hxex.stages`, one comparison
+    of a project with its bundle over the chain read, pick, noise, fit, population test,
+    correction and flags, bootstrap: each `done`, `out of date` (each cause named: a setting with
+    its value now and before, data files whose size or checksum changed, another version of
+    that stage's code; "after the fit" when a stage before it is), `not done` (no results yet,
+    or stopped partway) or `off` (not asked for). Which settings reach which stage is one table
+    (`_RUN_STAGE`; a test keeps every `RunConfig` field placed): the control roles reach the pick
+    and the noise (`undeut_*`: references, peak measure, noise curve) or the fit and the
+    correction (`fulldeut_*`), `d2o_fraction` the population test and the correction,
+    `[[input.exclude]]` the fit, `time_scale` the read. Its last line, `hxex run`, says what
+    `run --overwrite` does now by its own rules (stored spectra taken, stored picking kept,
+    fits of unchanged spectra kept, noise and correction always worked out again), so the
+    status and the run never disagree. Code fingerprints: `hxex._engine` gains `PICKING`
+    (`picking`, `chem`, `spectra.py`) and `CORRECTION` (`controls.py`, `deamidation.py`,
+    `kint.py`, `quality.py`); the manifest gains a `stages` block (each stage's `code` and
+    `state`), worked out from the rest of the manifest except the pick's and correction's code,
+    which a resume keeps unless it worked the controls out again. Found on the way: a run kept
+    the picking stored in the bundle it replaced when the hxex version number was the same, but
+    that number stays the same between commits, so picking made by older picking code was kept;
+    now the picking code must be the same (bundles written before this commit are picked again
+    once). `hxex info BUNDLE` shows what the bundle knows of itself (no project), `hxex info
+    hxex.toml` and `hxex check hxex.toml` the full comparison; a project file without `[input]`
+    is compared only in the `[run]` tables it writes. The analysis folders stay under `outputs`
+    (their `made_from` stamps). The helpers resume's refusal uses moved from `cli` to
+    `hxex.stages` (resume's comparisons become views of the one comparison in the next step).
+    Tests: tests/test_stages.py. Guide outputs.md "Where the results stand"; BUNDLE.md.

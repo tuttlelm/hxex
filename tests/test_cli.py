@@ -436,14 +436,16 @@ def test_check_shows_what_would_be_read(tmp_path, capsys):
     assert "out_tables: up to date (hxex run and hxex report write it)" in out
     assert "out_analysis: up to date (hxex analyse writes it)" in out
     # the way to write them again is said once for the block (audit 2026-11-01, Part 2)
-    assert out.count("--overwrite") == 1 and ("to write one again, give its command "
-                                              "--overwrite (replace) or --keep-previous") in out
+    assert out.split("\nstages")[0].count("--overwrite") == 1 and (
+        "to write one again, give its command --overwrite (replace) or --keep-previous") in out
     assert out.strip().endswith("ok")
     path = mzml_project(tmp_path, output="keep_previous = true")
     assert cli.main(["check", str(path)]) == 0
     out = capsys.readouterr().out
     assert "[output] keep_previous = true: each command moves its folder to NAME.N first" in out
-    assert "--overwrite" not in out
+    assert "--overwrite" not in out.split("\nstages")[0]
+    assert "hxex run       with [output] keep_previous = true (the results now kept as out.N): " \
+        in out
 
 
 def test_check_names_every_problem_after_the_summary(tmp_path, capsys):

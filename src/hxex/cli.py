@@ -36,6 +36,14 @@ from pathlib import Path
 
 import numpy as np
 
+from .stages import ROLE_KEYS as _ROLE_KEYS
+from .stages import at as _at
+from .stages import role_text as _role_text
+from .stages import run_tables_given as _run_tables_given
+from .stages import setting_name as _setting_name
+from .stages import under as _under
+from .stages import value_text as _value_text
+
 log = logging.getLogger("hxex.cli")
 
 EXIT_ERROR, EXIT_STOPPED = 1, 130
@@ -91,7 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="switch the setting off again (a # in front), so that it takes its "
                         "default; give no value")
 
-    p = sub.add_parser("check", help="check a project file and show what would be read")
+    p = sub.add_parser("check", help="check a project file and show what would be read, and where "
+                                     "its results stand, stage by stage")
     p.add_argument("project_file", metavar="hxex.toml",
                    help="the project file (hxex.toml, written by hxex init)")
     _spectra_option(p)
@@ -193,7 +202,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="figure file format")
     _threads_option(p)
 
-    p = sub.add_parser("info", help="what the results hold")
+    p = sub.add_parser("info", help="what the results hold, and where they stand, stage by "
+                                    "stage")
     p.add_argument("bundle", metavar="hxex.toml|BUNDLE",
                    help="the project file (hxex.toml): its [output] bundle, and what its "
                         "[review] table decides; or a results bundle (a folder, or .zip)")
@@ -718,6 +728,9 @@ def cmd_check(args) -> int:
             problems.append(problem)
     for n, line in enumerate(_output_lines(project)):
         _say(f"{'' if n else 'outputs':14s} {line}")
+    if project.output.bundle is not None:
+        for key, text in _stage_rows(project, project.output.bundle):
+            _say(f"{key:14s} {text}")
     if problems:  # after the status block, and the verdict last, whatever the terminal buffers
         sys.stdout.flush()
         for p in problems:
@@ -1830,39 +1843,8 @@ def _test_to_resume(project, bundle):
 # gives (the device and precision, as hxex.reuse leaves them out; the chunks of the fit)
 _RESUME_APPLIES = ("bootstrap", "population_test", "fit.k_max")
 _NOT_RESULTS = ("fit.backend", "memory_budget_bytes", "max_chunk")
-# the control settings that decide which spectra are controls, and so their fits (at K = 1)
-# and the sets of the population test: resume keeps the stored roles
-_ROLE_KEYS = ("undeut_at", "fulldeut_at", "undeut_marked", "fulldeut_marked")
-
-
-def _under(path: str, prefixes) -> bool:
-    return any(path == p or path.startswith(p + ".") for p in prefixes)
-
-
-def _at(record, path: str):
-    """The value at the dotted ``path`` of a nested record (None where absent)."""
-    for part in path.split("."):
-        if not isinstance(record, Mapping):
-            return None
-        record = record.get(part)
-    return record
-
-
-def _value_text(value) -> str:
-    from .config import toml_value
-
-    if value is None:
-        return "unset"
-    text = toml_value(value) if isinstance(value, (bool, int, float, str)) else json.dumps(
-        value, default=str)
-    return text if len(text) <= 40 else text[:37] + "..."
-
-
-def _setting_name(path: str) -> str:
-    """``[run.controls] fulldeut_at`` for ``controls.fulldeut_at``; ``[run] controls`` for a
-    whole table."""
-    head, _, key = path.rpartition(".")
-    return f"[run.{head}] {key}" if head else f"[run] {key}"
+# the control settings that decide which spectra are controls (hxex.stages.ROLE_KEYS), and so
+# their fits (at K = 1) and the sets of the population test: resume keeps the stored roles
 
 
 def _unapplied_changes(project, bundle) -> list[str]:
@@ -1913,34 +1895,6 @@ def _unapplied_changes(project, bundle) -> list[str]:
     if project.input is not None:
         out += _input_changes(project, bundle, manifest)
     return out
-
-
-def _role_text(key: str, value) -> str:
-    from .io import format_time
-
-    if key.endswith("_at"):
-        return "unset" if value is None else format_time(float(value))
-    return _value_text(value)
-
-
-def _run_tables_given(project) -> set[str] | None:
-    """The ``[run]`` keys a project file without ``[input]`` writes (its preset's among them),
-    which ``hxex resume`` compares with the bundle's; None for a project with ``[input]`` (every
-    setting compared: a run would apply each, defaults included)."""
-    if project.input is not None:
-        return None
-    import tomllib
-
-    try:
-        with open(project.path, "rb") as fh:
-            data = tomllib.load(fh)
-    except (OSError, TypeError, tomllib.TOMLDecodeError):
-        return set()
-    keys = set((data.get("run") or {}).keys()) if isinstance(data.get("run"), Mapping) else set()
-    if project.preset is not None:
-        keys |= {name.split(".")[1] for name in project.preset.given
-                 if name.startswith("run.") and name.count(".") >= 1}
-    return keys
 
 
 def _input_changes(project, bundle, manifest) -> list[str]:
@@ -2423,6 +2377,7 @@ def cmd_info(args) -> int:
                                  if k not in ("note", "matched"))
                 rows.append(("", f"  {text}: {matched}"
                              + (f" ({rule['note']})" if rule.get("note") else "")))
+        rows += _stage_rows(project, b.path)
         rows += _provenance_rows(m.get("provenance"))
         earlier = generations(b.path)
         if earlier:
@@ -2435,6 +2390,19 @@ def cmd_info(args) -> int:
             b.verify()
             _say(f"{'checksums':14s} ok")
     return 0
+
+
+def _stage_rows(project, bundle) -> list[tuple[str, str]]:
+    """The ``stages`` lines of ``hxex check`` and ``hxex info``: where the results stand, stage
+    by stage, against ``project`` (None: the bundle alone, judged on the code that made it),
+    and what ``hxex run`` would do now (:mod:`hxex.stages`; docs/PLAN.md Next steps 40)."""
+    from .stages import lines, standing
+
+    try:
+        return lines(standing(project, bundle))
+    except Exception as exc:  # noqa: BLE001 - information only: never stop check or info
+        log.debug("stages not worked out", exc_info=True)
+        return [("stages", f"not worked out ({exc})")]
 
 
 def _same_measurement_text(bundle) -> str | None:

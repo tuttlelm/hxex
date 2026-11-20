@@ -131,7 +131,7 @@ spectra to take.
 
 **Fits kept from the earlier results.** When `hxex run` replaces a bundle (`--overwrite` or
 `--keep-previous`), it picks every spectrum (the picking stored in the bundle is taken when
-the spectra and the picking settings are the same), but it does not fit again the
+the spectra, the picking settings, and *hxex*'s picking code are the same), but it does not fit again the
 peptides and fragments whose spectra are all exactly as before: each keeps its fits,
 population test, and bootstrap from the earlier results. Only what changed is fitted, so a run
 after a small change (a retention window edited in the window, one spectrum left out, a peptide
@@ -150,6 +150,37 @@ count as a changed setting). Their values then agree with a fresh fit to the las
 the arithmetic, and `hxex info results` names the software they were made with. Results made
 before 11 November 2026 do not record their fitting code, so they are kept only by the very
 same software. `hxex run --overwrite --refit` fits everything again.
+
+**Where the results stand.** `hxex check hxex.toml` ends with one line per stage of the run,
+from the reading of your files to the bootstrap, saying how the results in the bundle compare
+with the project as it is now:
+
+```
+stages         read: done
+               pick: done
+               noise: done
+               fit: out of date ([run.fit] k_max: 3, was 2)
+               population test: out of date (after the fit)
+               correction and flags: out of date ([run.controls] fulldeut_at: 20 h, was unset (which spectra are controls))
+               bootstrap: not done (stopped partway: hxex resume continues it)
+hxex run       with --overwrite or --keep-previous: takes the stored spectra, keeps the picking, measures the per-bin noise again, fits every spectrum again ([run.fit] changed), works out the correction and the quality flags again
+```
+
+Each stage is `done`, `out of date` (with what changed: a setting with its value now and
+before, a data file whose contents changed, or another version of *hxex*'s code for that
+stage; "after the fit" means a stage before it is out of date), `not done` (no results yet,
+or stopped partway), or `off` (not asked for, such as the population test without a
+`[run.population_test]` table). The stages are the read of your files, the pick (the peaks
+of each spectrum), the noise (measured from the undeuterated controls), the fit, the
+population test, the correction and flags (the back-exchange correction and the quality
+flags), and the bootstrap. The last line says what `hxex run` would do now when it replaces
+the results (`--overwrite`, `--keep-previous`, or the same switches under `[output]`), as
+described in the two paragraphs above. `hxex info hxex.toml` prints the same lines; `hxex info
+results`, given the bundle alone, says only what the bundle knows of itself (a stage stopped
+partway, or made by another version of *hxex*). The analysis folders are listed under
+`outputs`, as before. Results made before 20 November 2026 do not record the code of their
+picking and correction; the check says so, and judges those stages on their settings alone.
+None of this is a problem for the check: it still ends with `ok`.
 
 Rerunning with more or fewer spectra can change results even for spectra you did not touch: a
 few values (stand-in controls, outlier limits, the comparisons' critical difference) come from
