@@ -11367,3 +11367,30 @@ CSVs or mzML if wanted.
     (their `made_from` stamps). The helpers resume's refusal uses moved from `cli` to
     `hxex.stages` (resume's comparisons become views of the one comparison in the next step).
     Tests: tests/test_stages.py. Guide outputs.md "Where the results stand"; BUNDLE.md.
+
+431. **Elution groups: one dataset of two** (2026-11-20; scratch only, no hxex change; PLAN
+    Next steps 33 step 5; owner: record and move on). Do injections that alternate between two
+    LC columns form groups of files beyond the intact-peptide benchmark? Per ion and file, the
+    retention time of its spectrum in the built `find_peak` runs (item 429), minus the ion's
+    median over files, each file's smooth curve along the gradient taken out; two groups from
+    the first principal component of what remains, and per file the median shift of the
+    His-rich peptides (three or more His) against a curve through the plain ones (the
+    benchmark's column signature, HISTORY's rt study of 2026-11-14).
+    - Benchmark: the alternation comes back exactly (every second injection, flipping where the
+      sequence moves to the next sample): ions > 0.1 min apart 0.7 % within groups, 7.1 %
+      between; His-rich shift +5 to +17 s in every second injection, -4 to +1 s in the rest.
+    - Pooled raw project, its own ions: no groups; the first component separates only the four
+      fully deuterated files (the least reliable retention times) and then one injection that
+      elutes 6-16 s early mid-gradient, with 41 % of its ions > 0.1 min from its replicate.
+    - Pooled raw project, the benchmark protein's ions (owner: the pooled set holds runs of
+      the benchmark's wild-type protein): the benchmark's wild-type table (186 ions) with its times mapped onto the pooled LC
+      through the 38 ions of the pooled Synapt identification lists, read from the project's 10
+      single-protein and 10 mixed runs with `find_peak`: no groups (ions > 0.1 min apart 12 % within
+      the halves, 16 % between); His-rich shift within -4.4..+3.6 s in every file (robust sd
+      2.2 s), no alternation; the same deviant injection stands apart.
+    - On the benchmark the column effect still costs after item 429: labelled replicates of the
+      His-rich peptides that span both columns scatter far more than those on one (centroid sd
+      q90 5.94 against 0.21 D; other peptides 0.18 against 0.13 D); one column's windows often
+      read another species.
+    Nothing built: groups are seen on one Synapt dataset of two. Private record:
+    hxex_private/analysis_examples/column_groups (README, scripts, pool_b5).

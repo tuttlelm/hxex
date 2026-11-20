@@ -1961,6 +1961,21 @@ Planned, not built:
       groups, and windows would be carried only within a group. First look for the pattern in a
       second dataset (the pooled raw project, also a Synapt). The raw files name a dual-column
       inlet method but record no column per injection.
+      *Measured, not built (2026-11-20, HISTORY 431; "Elution groups: one dataset of
+      two"; owner: record and move on):* from the retention times of the built `find_peak`
+      runs (HISTORY 429), the benchmark's alternation comes back exactly (every second
+      injection; ions > 0.1 min apart 0.7 % within groups, 7.1 % between), but the pooled raw
+      project shows no groups, in its own ions and in those of the benchmark's protein (its
+      wild-type sequence, read from the project's own runs of that protein, alone and mixed): the shift of the His-rich
+      peptides, the benchmark's column signature (+5 to +17 s in every second injection), stays
+      within +-4.4 s in every pooled file. One pooled injection elutes apart from its
+      replicates (6-16 s early mid-gradient, much ion-to-ion scatter), which the per-file
+      offset covers in part. On the benchmark the column effect still costs after HISTORY 429:
+      replicates of the His-rich peptides that span both columns scatter far more than those on
+      one (centroid sd q90 5.9 against 0.2 D). Nothing is built: groups are seen on one dataset
+      of two. Possible later, if a second dataset with alternating columns appears: a diagnostic
+      in `hxex info` naming the two groups of files, then a search that carries an ion's own
+      shift only within its group.
    6. **Re-evaluate or remove `bright`** (owner, 2026-11-14). The flag marks a labelled spectrum
       at least as bright as a control of its series flagged `saturated` or `tails_low`. Measured
       (scratch): bright spectra are no further from their replicates than others and as pure; in
