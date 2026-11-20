@@ -1924,6 +1924,25 @@ def test_find_peak_searches_at_the_files_own_offset(tmp_path, caplog):
     assert file_offset(anchors, 95.0) == pytest.approx(3.0)
 
 
+def test_a_flat_top_is_one_clear_peak():
+    """A symmetric peak smoothed over an even number of scans has two equal points at its top;
+    they are one maximum, so the peak is clear. Before, the two counted as two maxima when they
+    came out exactly equal, which depends on the summation order of the platform's NumPy (CI
+    found 9 clear peaks where this machine found 10)."""
+    from hxex.io.mzml import _peak_choice
+
+    times = np.arange(0.0, 30.0, 0.5)
+    smooth = np.full(len(times), 2.0)
+    smooth[26:34] = [10.0, 40.0, 80.0, 100.0, 100.0, 80.0, 40.0, 10.0]
+    found = _peak_choice(times, smooth, 14.0, 1.0)
+    assert found[3] == 14.5 and found[4]
+    step = smooth.copy()
+    step[27:29] = 60.0  # a flat step on the rising side: no maximum of its own
+    assert _peak_choice(times, step, 14.0, 1.0)[4]
+    smooth[30] = 99.0  # two maxima of their own: not clear
+    assert not _peak_choice(times, np.r_[smooth[:31], 100.0, smooth[32:]], 14.0, 1.0)[4]
+
+
 def test_find_peak_chooses_on_the_trace_in_the_ions_drift_range(tmp_path):
     """Ion mobility bins: the peptide elutes at 30 s at drift 5.3 ms, another ion on its m/z
     grid at 34 s at drift 5.75 ms, the table's time 33 s. The drift range is measured over the

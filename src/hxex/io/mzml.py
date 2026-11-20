@@ -2635,16 +2635,25 @@ def _peak(times: np.ndarray, smooth: np.ndarray, given: float, width: float):
 
 def _peak_choice(times: np.ndarray, smooth: np.ndarray, given: float, width: float):
     """:func:`_peak`'s window (start, end, width at half maximum) with the apex's time and
-    whether the peak is clear: the only local maximum of at least 10 % of the tallest, its
+    whether the peak is clear: the only local maximum of at least 10 % of the tallest (a flat
+    top, equal values in neighbouring scans, counts once, its apex the point nearest
+    ``given``; a flat step on a rising or falling side is no maximum), its
     half-maximum span inside the trace and its apex at least two scans from either end (a trace
     rising towards an end has one maximum there: not a peak)."""
     if not len(smooth) or smooth.max() <= 0:
         return None
     top = smooth.max()
-    peaks = [j for j in range(len(smooth))
-             if smooth[j] >= 0.1 * top and (j == 0 or smooth[j] >= smooth[j - 1])
-             and (j == len(smooth) - 1 or smooth[j] >= smooth[j + 1])]
-    apex = min(peaks, key=lambda j: abs(times[j] - given))
+    # a run of equal values (a flat top) is one maximum when it is higher than the nearest
+    # unequal value either side; the apex is the point of a maximum nearest ``given``
+    starts = np.flatnonzero(np.r_[True, smooth[1:] != smooth[:-1]])
+    ends = np.r_[starts[1:], len(smooth)]
+    level = smooth[starts]
+    higher = np.ones(len(starts), dtype=bool)
+    higher[1:] &= level[1:] > level[:-1]
+    higher[:-1] &= level[:-1] > level[1:]
+    maxima = np.flatnonzero(higher & (level >= 0.1 * top))
+    apex = min((j for k in maxima for j in range(starts[k], ends[k])),
+               key=lambda j: abs(times[j] - given))
     lo, hi = _half_max_span(smooth, apex)
     spacing = float(np.median(np.diff(times))) if len(times) > 1 else 0.0
     fwhm = max(float(times[hi] - times[lo]), spacing)
@@ -2654,7 +2663,7 @@ def _peak_choice(times: np.ndarray, smooth: np.ndarray, given: float, width: flo
     right = apex
     while right < len(smooth) - 1 and smooth[right + 1] <= smooth[right]:
         right += 1
-    clear = (len(peaks) == 1 and lo > 0 and hi < len(smooth) - 1
+    clear = (len(maxima) == 1 and lo > 0 and hi < len(smooth) - 1
              and 2 <= apex <= len(smooth) - 3)
     return (max(times[apex] - width * fwhm, times[left]),
             min(times[apex] + width * fwhm, times[right]), fwhm, float(times[apex]), clear)

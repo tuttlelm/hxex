@@ -11321,6 +11321,17 @@ CSVs or mzML if wanted.
       1,024 -> 678, `mz_shift` 39 -> 0, `off_mz` 399 -> 465 (four ions) and `spectrum_off_mz`
       255 -> 319 (30 ions), labelled K > 1 59.2 -> 60.8 %. The drift ranges match the scratch
       ones (221 of 226, 305 of 319 identical).
+    Fix after CI (2026-11-20): a peak's smoothed top over an even number of scans is two equal
+    points, and `_peak_choice` counted each point at least as high as both neighbours as a
+    maximum, so an exact tie made two maxima and the peak was not clear. Whether the tie is
+    exact depends on the platform's summation order: the offset test found 9 clear peaks on CI
+    against 10 here. Equal neighbouring values now count as one maximum, and a maximum must be
+    higher than the nearest unequal value either side (rule from session hxex-54), so a flat
+    step on a peak's side is not a maximum either; the apex is still the plateau point nearest
+    the search centre, so windows move only where a flat step on a peak's side, nearer the
+    search centre than its top, was taken as the apex before; the test's run now has
+    11 clear peaks everywhere. Real traces with integer counts can tie too, so a run may gain
+    clear peaks. `find_fragment_peaks` keeps its own maxima rule (no clear test there).
     Private record: hxex_private/analysis_examples/peak_identity (README, scripts, runs).
 
 430. **Where the results stand, stage by stage, in `hxex check` and `hxex info`**
