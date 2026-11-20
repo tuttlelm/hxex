@@ -11250,3 +11250,55 @@ CSVs or mzML if wanted.
     population-test.md "Peptides and times not tested" and its resume paragraph,
     back-exchange-correction.md, outputs.md, commands.md (generated); the window's Resume
     tooltip no longer says changed controls need only `resume`.
+
+429. **Choosing the elution peak: drift first, no identity scores** (2026-11-20; scratch only,
+    no hxex change; PLAN Next steps 33 step 4 "Choosing among the candidates" and the design
+    draft). Follows item 427: the per-file offset puts `find_peak`'s search in the right place,
+    but its rule (the nearest local maximum >= 10 % of the tallest) takes a taller neighbour
+    that is another species. Per file and peptide, the trace and per-scan features were taken
+    over the table time +-120 s (on-grid intensity within each bin's half-width over every
+    drift time and inside the ion's drift range, the same at the midpoints between bins, and
+    each bin's m/z position after the file's offset and the deuterium shift); rules: today; the
+    aligned and guarded search (427); `find_peak`'s rule on the drift-gated trace (G); the
+    nearest candidate (local maxima >= 5 % of the tallest) passing identity tests (drift share,
+    isotope-spacing share, m/z position; thresholds at the 5th percentile of the clear
+    undeuterated peaks, position 4 robust sd), on the plain trace (I) and the gated one (IG).
+    Yardsticks independent of K and of HDExaminer: undeuterated |centroid|, replicate sd of
+    the centroid (fully deuterated; labelled per time), charge states read in one window.
+    Datasets: the intact-peptide benchmark and the pooled raw project (Synapt, ion mobility),
+    the Orbitrap digest of item 200.
+    - With HDExaminer's drift ranges, G beat everything on both Synapt datasets (benchmark
+      undeuterated |D| q90 1.36 -> 0.80, labelled replicate sd q90 0.57 -> 0.28, charge
+      differences q90 2.31 -> 1.82; pooled 7.95 -> 6.63, 1.77 -> 1.26, 6.90 -> 4.78; against
+      the aligned search). IG matched it or did worse (pooled fully deuterated); I helped
+      where it moved but moved few.
+    - Peptide identifications on the same LC exist only for some datasets (Synapt DDA lists:
+      148 of 226 benchmark ions, 71 of 318 pooled); the lab identifies peptides on the Thermo
+      instrument (owner), whose lists carry no drift time and come from another LC (mapped to
+      the HDX times within a robust sd of 12 s benchmark, 6 s pooled). So the drift range must
+      come from the HDX runs. hxex's drift-profile code summed over every undeuterated
+      control's scans at the table time +-15 or +-30 s, no window chosen, agrees with
+      HDExaminer's ranges (apex within 2 bins: benchmark 99.6 / 97.8 %, pooled 96.2 / 98.1 %;
+      the ranges measured today in `find_peak`'s windows agree less) and gives G the same
+      windows. Where they disagree the reference is not always right (pooled 314-324 3+, the
+      sibling form of item 376).
+    - Full runs (hxex 17bed7e, bootstrap off; windows through an elution-window table, the
+      design's drift ranges in the peptide table), today -> design: benchmark labelled
+      replicate sd q90 0.534 -> 0.174 D (725 groups smaller, 312 larger), undeuterated 0.161 ->
+      0.050, fully deuterated 0.252 -> 0.185, charge-state spread q90 0.588 -> 0.333, screened
+      labelled 3.2 -> 0.9 %, `undeut_high` 124 -> 37, `low_intensity` 912 -> 317, `off_mz` 123
+      -> 20; pooled labelled 1.41 -> 0.81 D, undeuterated 3.54 -> 2.00, charge spread median
+      0.73 -> 0.40, undeuterated K > 1 20.7 -> 16.2 %, `undeut_high` 1,022 -> 614,
+      `low_intensity` 1,991 -> 1,021, labelled K > 1 59.2 -> 60.1 % (item 427's aligned windows
+      had raised it). Pooled `off_mz` +33: two ions whose undeuterated controls read another
+      species today (no offset assessed) and partly the peptide now, so the m/z check judges
+      them; `poor_fit` +89, mostly fully deuterated spectra whose window moved, their replicate
+      sd still lower.
+    - Orbitrap digest (no ion mobility), against item 200's DDA identifications (464 series,
+      no CAM; 18,810 series x files within reach, 2,070 beyond +-30 s): on the identified peak
+      today 94.7 %, aligned and guarded 94.7 % (17 gained, 6 lost), I 83.9 % (210 gained, 2,237
+      lost; its 2.8 ppm position limit rejects deuterated envelopes, labelled replicate sd q90
+      0.60 -> 1.80). Identity scoring dropped; the offset and guard are safe for every
+      `find_peak` project. The digest's misses are table times beyond the search
+      (`find_retention_time`, item 201).
+    Private record: hxex_private/analysis_examples/peak_identity (README, scripts, runs).

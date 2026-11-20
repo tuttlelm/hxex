@@ -1872,6 +1872,81 @@ Planned, not built:
       taller neighbour (the +-30 s search moves with the offset, takes in a tall neighbour, and
       its height pushes the true peak below the 10 % threshold), and pooled data have many
       neighbours. Not measured: per-column offsets on the benchmark (step 5).
+      *Choosing among the candidates, measured (scratch, 2026-11-20, HISTORY 429):* on both ion-mobility
+      datasets the simplest change won: `find_peak`'s trace taken only within the ion's drift
+      range. Most wrong choices were other species at another drift time, which the gated trace
+      no longer contains. Scoring each candidate on identity (drift share, isotope spacing, m/z
+      position) added nothing on top of the gate, and on the Orbitrap digest (no ion mobility)
+      it lost the peptide in 2,237 series x files against 210 gained, against the DDA
+      identifications of HISTORY 200: its position limit, set on clean undeuterated peaks,
+      rejects the peptide's own deuterated envelopes. Identity scoring is dropped. The drift
+      range can be measured without a chosen window: each ion's profile over every undeuterated
+      control's scans at the table time +-15 s agrees with HDExaminer's ranges (apex within 2
+      drift bins for 97.8 % of the benchmark's ions and 98.1 % of the pooled project's), better
+      than the ranges measured today in `find_peak`'s own windows. Full runs (today -> design):
+      labelled replicate sd q90 0.534 -> 0.174 D (benchmark) and 1.41 -> 0.81 D (pooled),
+      charge-state spread q90 0.588 -> 0.333 and 7.64 -> 6.96 D, `undeut_high` 124 -> 37 and
+      1,022 -> 614, no rise in K > 1 of labelled spectra. On the Orbitrap digest the offset and
+      guard change nothing measurable (94.7 % of the reachable identified series x files on the
+      identified peak either way; 17 gained, 6 lost).
+
+      *Design (draft, 2026-11-20; for the owner, nothing built).* For `find_peak` targets
+      (MS1 peptides of fixed-time runs without their own window); fragments
+      (`find_fragment_peak`), rows with `rt_start`/`rt_end`, and ions with a row in the
+      `rt_elution_windows` table keep today's behaviour.
+      - **(a) Drift ranges first (files with ion mobility, `drift_gate = "auto"`).** Today
+        `_drift_profiles` measures each ion's profile in the window `find_peak` chooses in each
+        undeuterated control (`_drift_found` runs `_run_scans`, which runs `find_peaks` on the
+        trace over every drift time). Instead, for a `find_peak` target the profile sums the
+        control's scans at `rt` +- half of `peak_search` (15 s at the default) with no peak
+        found first (`_search_target` with that half-width, `find` off). The range choice is
+        `DriftProfiles.ranges` unchanged (tallest drift peak, the isotope-spacing choice, the
+        m/z-position choice of HISTORY 378), so `drift_unclear` is flagged as today. Measured:
+        +-15 and +-30 s alike on the benchmark, +-15 s a little better on the pooled project
+        (labelled replicate sd q90 1.18 against 1.33 D in the trace-level comparison). Tying it
+        to `peak_search` adds no setting.
+      - **(b) The gated trace.** `find_peaks` builds each peptide's chromatogram (the sum of its
+        charge states, as today) from the points inside each ion's drift range only: per scan,
+        per predicted bin, the tallest point within the half-width among the drift bins in range
+        (`Scan.binned`; the scans are already read with their drift times when gates exist).
+        Ions without a range (no undeuterated control with signal) use every drift time, as
+        their spectra do.
+      - **(c) The file's own offset.** Per run, in `find_peaks`: a first pass finds each
+        peptide's peak at `rt` as today and keeps the clear ones (one local maximum >= 10 % of
+        the tallest in the search, its half-maximum span inside it, away from its edges);
+        each clear peak gives an anchor (table time, apex minus table time); the offset at a
+        time is the median of the anchors within +-90 s of it, or of the nearest 10 when fewer
+        lie there. A run with fewer than 10 anchors in all keeps offset 0 (today's search),
+        logged. A second pass searches `rt` + offset +- `peak_search`; the scans are planned
+        over `rt` +- 2 x `peak_search` so the moved search stays inside them (offsets beyond
+        `peak_search` are clipped to it). On ion-mobility files both passes use the gated
+        trace.
+      - **(d) The guard.** The second pass's window replaces the first's only when the trace
+        summed over it is at least half the first window's sum (measured: 0.5 kept most of the
+        gain and removed about half the losses; HISTORY 427).
+      - **Record and display.** The read record keeps per run the number of anchors and the
+        offset at the quartiles of the table times, and the drift ranges as today (now marked
+        "measured over the search range"); `hxex check` and `hxex info` print one line per run
+        with a nonzero offset or too few anchors; the log names runs whose offset was clipped.
+        The elution tab draws the search range around `rt` + offset.
+      - **Settings.** None new (recommended): the offset and guard on for every `find_peak`
+        project (harmless on the Orbitrap digest), the drift-first measurement on whenever
+        `drift_gate = "auto"` meets ion-mobility files. Alternative: a `[input.scans]
+        align_files = true` switch to compare with today; it would be the first switch for a
+        rule whose loss has not been seen on any dataset.
+      - **Results change** for every existing `find_peak` bundle when rerun (windows, drift
+        ranges, then fits), so the reader fingerprint changes (stored spectra are not taken,
+        HISTORY 397).
+      - **Tests** (synthetic mzML with drift bins): two co-eluting species at one m/z, the
+        taller at another drift time -> the gated trace finds the peptide; a file eluting 12 s
+        early with a taller neighbour 15 s after the true peak -> the offset finds the true one;
+        the guard keeps today's window when the moved one is weak; fewer than 10 clear peaks ->
+        offset 0 and a log line; the drift range over the search range equals the one measured
+        in the true window on clean data; a fragment, a window-table row, and a run without
+        ion mobility keep today's windows (except the offset).
+      - **Not in scope:** the elution editor's spreading to other files (it matches traces),
+        `find_retention_time` (its found times are the `rt` this design searches around), per
+        column offsets (step 5), data without ion mobility beyond the offset.
    5. **Elution groups as a diagnostic.** Injections that alternate between two columns show up
       in the relative elution order of the peptides: `hxex check` / `hxex info` could report the
       groups, and windows would be carried only within a group. First look for the pattern in a
