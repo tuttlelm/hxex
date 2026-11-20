@@ -517,7 +517,7 @@ def _own(peptides, number: int) -> bool:
 
 def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE,
                   coverage=None, family: str = "monospace", blocks: str = BLOCKS,
-                  bar: str = BAR) -> str:
+                  bar: str = BAR, scale: float = 1.0) -> str:
     """The sequences as HTML for Qt's text view: lines of ``per_line`` residues in blocks of
     ten in the fixed-width font ``family``, a ruler above each line, each row named on the
     left, every residue a link (``res:<row>:<number>``) for the view to say what it is.
@@ -529,7 +529,10 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
     mapping of group -> its own (:func:`project_sequences`): each group's region bars then run
     under its rows on every line, named by the group on the left, its sites are marked in its
     rows only, and the key lists each group's regions under its name (colours restart in each
-    group)."""
+    group).
+
+    ``scale``: the text's size against the usual one (11 points for the sequences, 9 for the
+    keys), so that Ctrl+wheel over the view (:mod:`hxex.gui.text_zoom`) sizes it too."""
     if not rows:
         return ""
     first = min(r.first for r in rows)
@@ -549,8 +552,9 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
     label = min(max(max(len(n) for n in names), 6), 28)
     top = max((depth(coverage[s], n) for v in shown.values() for s in v
                for n in range(first, last + 1)), default=0)
-    out = [f'<div style="font-family: {html.escape(family)}, monospace; font-size: 11pt; '
-           'white-space: pre;">']
+    key_size = f"font-size: {9 * scale:.3g}pt"
+    out = [f'<div style="font-family: {html.escape(family)}, monospace; '
+           f'font-size: {11 * scale:.3g}pt; white-space: pre;">']
     if any(regions.values()) or any(sites.values()) or top:
         keys = []
         for g in order:
@@ -561,7 +565,7 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
                             + "    ".join(entries))
         # each group's regions on a line of its own, the other keys after them
         if grouped and keys:
-            out.append('<span style="font-family: sans-serif; font-size: 9pt;">'
+            out.append(f'<span style="font-family: sans-serif; {key_size};">'
                        + "\n".join(keys) + "</span>\n")
             keys = []
         if any(sites.values()):
@@ -574,7 +578,7 @@ def sequence_html(rows: list[SequenceRow], annotations, per_line: int = PER_LINE
             if any(len(p) > 3 and p[3] for v in coverage.values() for p in v):
                 keys.append(f'<span style="color:{OWN};">{blocks[-1]}</span> covered by a '
                             "peptide only this record may hold")
-        out.append(('<span style="font-family: sans-serif; font-size: 9pt;">'
+        out.append((f'<span style="font-family: sans-serif; {key_size};">'
                     + "    ".join(keys) + "</span>\n" if keys else "") + "\n")
     start = first - ((first - 1) % per_line)  # lines begin at 1, 51, 101, ...
     for line_start in range(start, last + 1, per_line):
@@ -739,6 +743,9 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         self.text = QTextBrowser()
         self.text.setOpenLinks(False)
         self.text.anchorClicked.connect(self._clicked)
+        # Ctrl+wheel sets the browser's font (hxex.gui.text_zoom); the HTML names its sizes, so
+        # it is drawn again at the new size
+        self.text.installEventFilter(self)
         self.about = QLabel(ABOUT)
         self.about.setWordWrap(True)
         refresh = QPushButton("Read again")
@@ -793,6 +800,21 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         self._message = message
         self._draw()
 
+    def _scale(self) -> float:
+        """The browser's font size against the window's usual one (1: not zoomed)."""
+        from PySide6.QtWidgets import QApplication
+
+        usual = QApplication.font().pointSizeF()
+        now = self.text.font().pointSizeF()
+        return now / usual if usual > 0 and now > 0 else 1.0
+
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt's name
+        from PySide6.QtCore import QEvent
+
+        if watched is self.text and event.type() == QEvent.Type.FontChange and self.rows:
+            self._draw()
+        return super().eventFilter(watched, event)
+
     def _clear(self, text: str) -> None:
         """No sequences to show: ``text`` instead, and nothing left of the project before (its
         counts under the text, its message)."""
@@ -816,7 +838,8 @@ class SequenceView(QWidget):  # type: ignore[misc,valid-type]
         self.text.setHtml(sequence_html(self.rows, self.annotations, per_line=self.per_line,
                                         coverage=self.coverage, family=fixed_family(),
                                         blocks=BLOCKS if even else BLOCKS_SAFE,
-                                        bar=BAR if even else BAR_SAFE))
+                                        bar=BAR if even else BAR_SAFE,
+                                        scale=self._scale()))
         self.text.verticalScrollBar().setValue(bar)
         if _grouped(self.annotations):  # a sample in two groups has a row in each
             n = len({s for r in self.rows for s in r.samples})

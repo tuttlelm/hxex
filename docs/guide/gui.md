@@ -16,10 +16,12 @@ The window is being built in steps. What it does today:
 - **Analysis**: shows the figures `hxex analyse` would write with the project's settings, and
   why each figure left out is left out (below).
 
-In every table of the window (the data tabs, the HDX Summary Table, the Results list, the Tables
-view, and the lists in the Project settings), hold Ctrl and turn the mouse wheel to make the
-text larger or smaller, as in the Run tab's messages. The size applies to every table, and the
-window remembers it; Ctrl+0 over a table goes back to the usual size.
+In every table, list, and text box of the window (the data tabs, the HDX Summary Table, the
+Results tree and list, the Analysis list, the Tables view, the lists in the Project settings,
+the File tab, the sequence view, the Run tab's messages, and the messages pane), hold Ctrl and
+turn the mouse wheel to make the text larger or smaller. The size applies to all of them, and
+the window remembers it; Ctrl+0 over one of them goes back to the usual size. Figures are
+enlarged with the mouse wheel alone, and labels and buttons keep their size.
 
 ## Installing it
 

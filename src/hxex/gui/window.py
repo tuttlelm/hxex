@@ -257,11 +257,12 @@ class MainWindow(QMainWindow):
         # how figures are drawn: matplotlib (its raster renderer, as for PNG; the default, owner)
         # or Qt's SVG renderer, which ignores clipping (HISTORY 237: the SVG's data is cut to
         # the panels instead, hxex.gui.svg_trim)
-        # Ctrl+mouse wheel over any table sets the tables' font size (owner, 2026-11-13)
-        from .table_zoom import TableZoom
+        # Ctrl+mouse wheel over any table, list or text box sets their font size (owner, 2026-11-13,
+        # 2026-11-20)
+        from .text_zoom import TextZoom
 
-        self.table_zoom = TableZoom(self, self.settings)
-        self.table_zoom.start()
+        self.text_zoom = TextZoom(self, self.settings)
+        self.text_zoom.start()
         self.render = str(self.settings.value("render", "matplotlib"))
         if self.render not in ("svg", "matplotlib"):
             self.render = "matplotlib"
@@ -1174,7 +1175,7 @@ class MainWindow(QMainWindow):
             if self._logger_level is not None:  # the level as it was before the window (A-7)
                 logging.getLogger("hxex").setLevel(self._logger_level)
                 self._logger_level = None
-            self.table_zoom.stop()
+            self.text_zoom.stop()
             # work still running is dropped (nothing arrives in the closed window; what has
             # not started never does) and what is running finishes first, with a limit;
             # automatic garbage collection comes back only once the window is gone
