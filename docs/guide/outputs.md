@@ -406,6 +406,20 @@ What to do: none of these flags removes or changes anything. When a result rests
 two populations are found only in the brightest replicate of a time point, flagged or not, look
 at the dimmer replicates before trusting the second population.
 
+### Other species on the peptide's peaks: `low_purity`
+
+Only with `pick = "profile_fit"` ([fitting the profile](picking-window.md#fitting-the-profile-instead-opt-in)).
+Each fitted spectrum has a `purity`: how much of the profile close to the peptide's peaks the
+peptide's own fitted peaks account for. Below 0.7 (the setting `min_purity` in `[run.quality]`;
+`false` switches the flag off), the spectrum is flagged `low_purity`: other species' peaks sit on
+or beside the peptide's, so its values may not be this peptide's alone.
+
+On four datasets, undeuterated controls that match their isotope pattern read 0.85 or more, and
+the flagged spectra that no other check marks disagreed with their replicates and other charge
+states far more than the rest. The flag removes nothing. Look at the spectrum's picking check
+tab in the window (the orange dashed peaks are the other species'), and compare its value with
+its replicates. With the usual pick there is no purity and the flag is never set.
+
 ## Spectrum quality screens
 
 When *hxex* picks a spectrum, it also looks at the raw spectrum around the peptide for signs of

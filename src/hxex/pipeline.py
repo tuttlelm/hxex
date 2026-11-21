@@ -634,7 +634,7 @@ def _fit_part(
     fragments=(), envelope_offset=(None, None), noise_curve=_MEASURE, screened=None,
     chosen=None, residues=None, deamidation=None, rt_found=None, drift_unclear=None,
     measurement=None,
-    elution_cut=None, precursor=None, reused=None, injection=None,
+    elution_cut=None, precursor=None, reused=None, injection=None, purity=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
            PopulationTest | None]:
     """Fit every chunk (and test it, with the population test: each measurement's K is then
@@ -739,7 +739,7 @@ def _fit_part(
                                  elution_cut_spectra=elution_cut,
                                  precursor_offset=offsets, ion_overlap=overlaps,
                                  controls=controls, injection=injection,
-                                 skip_series=fragments)
+                                 skip_series=fragments, purity=purity)
     return fits, fit, controls, quality, test
 
 
@@ -1607,7 +1607,9 @@ def run(
                                                         _bin_mz(binned, kept)),
                                              reused=reused,
                                              injection=injection_keys(
-                                                 binned, np.flatnonzero(kept), record))
+                                                 binned, np.flatnonzero(kept), record),
+                                             purity=(None if binned.purity is None
+                                                     else binned.purity[kept]))
     result = RunResult(
         config=config, binned=binned, kept=kept, dropped_reason=reason,
         measurements=measurements, fit=fit, bootstrap=None, bootstrap_by_k=None,
@@ -1907,7 +1909,8 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
                                  config.picker),
         controls=controls,
         skip_series=fragment_ids(binned.modification[kept], binned.data_id[kept],
-                                 fragment_series(source)))
+                                 fragment_series(source)),
+        purity=None if binned.purity is None else binned.purity[kept])
 
 
 def _bin_mz(binned: BinnedSet, kept: np.ndarray) -> list[np.ndarray]:

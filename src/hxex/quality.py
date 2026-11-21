@@ -127,6 +127,14 @@ signal never reach the fit and are handled before it.
   ``accepted`` review keeps it there); a series whose every undeuterated spectrum is above it is
   ``m0_high``, which ``[analysis.filters] stand_in_controls`` decides. Not assessed for series
   the controls leave uncorrected (fragment ions) nor without controls.
+- ``low_purity``: a spectrum picked with ``[run.picker] pick = "profile_fit"`` whose ``purity``
+  (the share of the profile near the peptide's peaks that the peptide's fitted peaks account
+  for, :func:`hxex.picking.profile.fit_quality`) is below ``min_purity``: other species'
+  peaks sit on or beside the peptide's. Measured on four datasets (PLAN 33 step 7, docs/HISTORY.md
+  item 434): undeuterated controls that match natural abundance sit at 0.84-0.94 or
+  above (2nd percentile), and spectra below 0.7 that no other check catches disagree with their
+  replicates and charge states far more than the rest, at one population and at more. Flag
+  only. Not assessed (False) for spectra picked with ``pick = "peak"``, which have no purity.
 - ``bright`` (retired, HISTORY item "bright retired"): a labelled spectrum or fully deuterated
   control whose tallest stick was at least as high as that of a control of its series flagged
   ``saturated`` or ``tails_low``. Its spectra were no further from their replicates and chose two
@@ -157,7 +165,7 @@ log = logging.getLogger(__name__)
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
               "poor_envelope", "saturated", "tails_low", "bright", "rt_found", "undeut_high",
               "drift_unclear", "elution_cut", "precursor_off", "overlapping_ion",
-              "below_noise", "spectrum_off_mz")
+              "below_noise", "spectrum_off_mz", "low_purity")
 
 
 # The version of the checks behind the flags: add one whenever a flag or statistic is added or
@@ -169,8 +177,8 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz"
 # 3: low_intensity compares the spectra once each injection's brightness is divided out.
 # 4: spectrum_off_mz (a spectrum off its injection's m/z). 5: overlapping_ion compares ions
 # within one time (a kinetics run's other times of an ion read as an overlapping ion).
-# 6: bright is no longer set (retired).
-QUALITY_VERSION = 6
+# 6: bright is no longer set (retired). 7: low_purity (a profile-fit spectrum's purity).
+QUALITY_VERSION = 7
 
 # low_intensity: an injection's brightness is measured from at least this many of its spectra
 # with replicates (else it is taken as 1), and named in a warning outside these limits.
@@ -209,6 +217,8 @@ class QualityConfig:
     - ``spectrum_off_mz_sd``: ``spectrum_off_mz`` when a spectrum's m/z offset is further than
       this many times the run's scatter (for its brightness) from its injection's median;
       None: off.
+    - ``min_purity``: ``low_purity`` when a spectrum picked with ``pick = "profile_fit"`` has a
+      purity below this; None: off.
     """
     # defaults set on the private pooled dataset: docs/HISTORY.md item 28
 
@@ -223,6 +233,7 @@ class QualityConfig:
     max_ion_overlap: float | None = 0.2
     min_signal_to_noise: float | None = 4.0
     spectrum_off_mz_sd: float | None = 6.0
+    min_purity: float | None = 0.7
 
     def __post_init__(self):
         if not self.poor_fit_factor > 1:
@@ -247,6 +258,8 @@ class QualityConfig:
             raise ValueError("min_signal_to_noise must be > 0 (or None to skip the screen)")
         if self.spectrum_off_mz_sd is not None and not self.spectrum_off_mz_sd > 0:
             raise ValueError("spectrum_off_mz_sd must be > 0 (or None to skip the screen)")
+        if self.min_purity is not None and not 0 < self.min_purity < 1:
+            raise ValueError("min_purity must be between 0 and 1 (or None to skip the screen)")
 
     def to_dict(self) -> dict[str, Any]:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -313,6 +326,7 @@ class QualityFlags:
     spectrum_offset: np.ndarray | None = None
     spectrum_offset_limit: np.ndarray | None = None
     spectrum_off_mz: np.ndarray | None = None
+    low_purity: np.ndarray | None = None
     version: int = QUALITY_VERSION  # of the checks that assessed them (QUALITY_VERSION)
 
     @property
@@ -329,7 +343,8 @@ class QualityFlags:
                 object.__setattr__(self, name, np.full(len(self.spectrum_id), np.nan))
         for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright",
                      "rt_found", "undeut_high", "drift_unclear", "elution_cut",
-                     "precursor_off", "overlapping_ion", "below_noise", "spectrum_off_mz"):
+                     "precursor_off", "overlapping_ion", "below_noise", "spectrum_off_mz",
+                     "low_purity"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
         for name in ("ion_overlap_with", "injection"):
@@ -507,6 +522,7 @@ def assess_quality(
     ion_overlap: tuple[np.ndarray, np.ndarray] | None = None,
     injection: np.ndarray | None = None,
     skip_series=(),
+    purity: np.ndarray | None = None,
 ) -> QualityFlags:
     """Quality statistics and flags of a fit (see the module docstring). ``mz_offset_ppm`` is
     the picker's offset of every measurement (:attr:`~hxex.picking.BinnedSet.mz_offset_ppm`);
@@ -524,6 +540,8 @@ def assess_quality(
     ``injection``: every measurement's injection (:func:`injection_keys`; None: every
     injection taken as equally bright, and ``spectrum_off_mz`` not assessed).
     ``skip_series``: series (``data_id``) left out of ``spectrum_off_mz`` (fragment ions).
+    ``purity``: every measurement's profile-fit purity
+    (:attr:`~hxex.picking.BinnedSet.purity`; None or NaN: ``low_purity`` not assessed).
     ``controls``
     (:class:`hxex.controls.ControlTable`) gives ``undeut_high`` its limit (None: not
     assessed)."""
@@ -615,6 +633,11 @@ def assess_quality(
                                                    brightness_top, assessed)
         spec_limit = config.spectrum_off_mz_sd * scatter
     spectrum_off = np.abs(np.nan_to_num(spec_offset)) > np.nan_to_num(spec_limit, nan=np.inf)
+    if purity is not None and len(purity) != m:
+        raise ValueError("purity must have one value per measurement")
+    low_purity = (np.zeros(m, dtype=bool) if config.min_purity is None or purity is None
+                  else np.nan_to_num(np.asarray(purity, dtype=float), nan=1.0)
+                  < config.min_purity)
     return QualityFlags(
         config=config, spectrum_id=fit.spectrum_id, deviance=deviance,
         deviance_rel=deviance_rel, intensity=total, intensity_rel=intensity_rel,
@@ -637,7 +660,8 @@ def assess_quality(
         ion_overlap=overlap, ion_overlap_with=np.where(overlapping, overlap_with, ""),
         overlapping_ion=overlapping, signal_to_noise=snr, below_noise=below,
         injection=inj, injection_scale=scale, spectrum_offset=spec_offset,
-        spectrum_offset_limit=spec_limit, spectrum_off_mz=spectrum_off, **brightness,
+        spectrum_offset_limit=spec_limit, spectrum_off_mz=spectrum_off, low_purity=low_purity,
+        **brightness,
     )
 
 

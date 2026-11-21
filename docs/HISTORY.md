@@ -11496,3 +11496,53 @@ CSVs or mzML if wanted.
     date, update, `--fresh`, the retired options); files changed by hand:
     tests/test_outputs.py, tests/test_session_f_cli.py (run, report, analyse, check),
     tests/test_gui_run.py (the question for each command, the Run question's line).
+
+434. **A purity flag: `low_purity` below 0.7 (PLAN 33 step 7; owner, 2026-11-20).** Three
+    measures of "the values hxex read are not this peptide's" were computed for every spectrum of
+    four datasets (the intact-peptide benchmark read from its raw files, the tutorial data, the
+    Orbitrap digest, the private pooled raw project), each picked with `peak` and with
+    `profile_fit`: P, the profile fit's purity; G, a second isotope grid from the raw profile's
+    apexes (bins whose apexes share an offset unlike the peptide's own beyond the run's apex
+    scatter for their height, scored by the centroid change per amide when they are removed);
+    F, the reduced chi-square against the per-bin noise at K = 1 and at the chosen K. K was never a
+    yardstick (fewer K = 2 is no quality reading except on undeuterated controls, owner); the
+    yardsticks were the undeuterated controls against natural abundance, charge states of one
+    injection, replicates, and the Orbitrap's DDA-identified peak, each split by K class and
+    brightness fifth.
+    - Clean undeuterated controls (matching natural abundance, no fault flag, every screen below
+      its loose level; 262-2,327 per bundle, none fitted with two or more populations): P's 2nd
+      percentile 0.84-0.94, envelope-flat (joint R2 0.01-0.17 on brightness, amides, charge,
+      tallest peak); below 0.8 0-1 %. Over all controls P follows the shift from natural
+      abundance (Spearman -0.25 to -0.72), and the pooled project's strong P-brightness link
+      (0.88) is real interference in its dim controls (93 % of its dimmest fifth sit heavy of
+      natural abundance), not a floor of the measure. G on clean controls stays below 0.02 D per
+      amide. F's clean spread moves with charge (standardised +0.33 to +0.47 on two datasets) and
+      brightness (benchmark: F1 > 3 in 0 % of the dimmest fifth, 12-21 % of the brightest; the
+      Orbitrap the other way), so no single F level is possible.
+    - Undeuterated controls off natural abundance are heavy, never light: other species picked in
+      the far bins of the undeuterated reach, 8-9 bins past the natural tallest peak (Orbitrap 60 %
+      of heavy controls, pooled 44-72 %, benchmark 21-25 %; `screen_beyond_reach` reads only
+      beyond the reach). Not the Orbitrap's reduced profile, which reads weak heavy peaks low (M+3
+      / M+4 0.62 / 0.27 of natural in dim controls, as item 299).
+    - Separation, among spectra no existing screen or flag catches: P < 0.8 benchmark 265
+      spectra, replicate deviation per amide median 0.015 vs 0.004 (q90 0.31 vs 0.013), 89 vs 15 %
+      of undeuterated controls off natural; Orbitrap 500, 0.020 vs 0.006, DDA wrong peak 8 vs 3 %
+      (P < 0.6: 63 vs 3 %); pooled 2,848, 0.10 vs 0.003; tutorial 50, no difference (nothing to
+      find there). P < 0.7 sharper (benchmark 92 uncaught, 0.15 vs 0.004). It holds at K = 1 and
+      K >= 2 and within brightness fifths. The existing screens already catch 73-83 % of the
+      lowest 2 % of P on the benchmark, Orbitrap and pooled data. G >= 0.02 separates nothing on
+      labelled spectra at K = 1 (benchmark 0.005 vs 0.005; DDA 5 vs 4 %); F ranked within its
+      charge and brightness class separates only its tails (benchmark q90 0.05 vs 0.015, medians
+      0.005 vs 0.004).
+    BUILT (owner: default 0.7, a user setting; flag only): `[run.quality] min_purity` (0.7; false
+    off), flag `low_purity` for every spectrum with a purity below it (any role, any K; never with
+    `pick = "peak"`, which has no purity), `assess_quality(purity=)` from
+    `BinnedSet.purity`, QUALITY_VERSION 7 (a run that replaces older results assesses the flags
+    again: an older tutorial bundle rerun in 7 s with its fits kept gained the same 48 flags as a
+    fresh run, equal to the study's count below 0.7), `hxex check` "purity" line, the flag in
+    the dictionary (flags.md, `hxex explain low_purity`), the overview's label, guide
+    picking-window.md and outputs.md "Other species on the peptide's peaks". G and F not adopted.
+    Tests: tests/test_quality.py (the flag, NaN purity not assessed, off, stored and older tables),
+    tests/test_profile_fit.py (a run judges every spectrum's purity). Private record:
+    hxex_private/analysis_examples/envelope_verdict (README steps 1-4, scripts, out/).
+

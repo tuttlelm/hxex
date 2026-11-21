@@ -128,13 +128,23 @@ spectrum:
   each) the peptide's fitted peaks account for, from 0 to 1. Other species resolved between
   the peptide's peaks do not lower it; something sitting beside a peak, under its flank, does.
   On the datasets measured, most spectra read 0.9 or more (median 0.94 to 0.97, on Q-TOF and
-  Orbitrap data alike), and spectra below about 0.8 were far more often far from their
-  replicates. Something sitting right on a peak (within about a third of a peak width) reads as
-  part of it and does not lower purity: no picking can tell those apart.
+  Orbitrap data alike). Something sitting right on a peak (within about a third of a peak
+  width) reads as part of it and does not lower purity: no picking can tell those apart.
 - `stray_share`: how much of the profile around the envelope the other species' peaks account
   for. A crowded spectrum can have a large share and still a high purity.
 
-Both are only reported, not used to judge anything. To see how the fit read a spectrum, open
+A spectrum whose purity is below 0.7 is flagged `low_purity` (a mark only; nothing is left out).
+On four datasets (two Q-TOF LC-MS datasets, the tutorial data, and an Orbitrap digest),
+undeuterated controls that match their isotope pattern read 0.85 or more, and the spectra below
+0.7 that no other check marks disagreed with their replicates and other charge states far
+more than the rest, whether their fit held one population or more. The level is a setting:
+
+```toml
+[run.quality]
+min_purity = 0.7    # false: no low_purity flag
+```
+
+`stray_share` is only reported, not used to judge anything. To see how the fit read a spectrum, open
 its **picking check** tab in the window ([the window](gui.md)), or draw it from Python:
 
 ```python

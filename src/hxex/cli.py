@@ -692,6 +692,10 @@ def cmd_check(args) -> int:
         _say(f"{'bin values':14s} fitted to the profile (pick = \"profile_fit\"; measure and "
              "area_fwhm not used): peptide ions in profile mode; fragment ions and centroided "
              "spectra keep the pick")
+        quality = project.run.quality
+        level = None if quality is None else quality.min_purity
+        _say(f"{'purity':14s} " + (f"low_purity below {level:g} ([run.quality] min_purity)"
+                                    if level is not None else "low_purity off"))
     if inp is not None:
         device, problem = _device_text(project)
         _say(f"{'fits on':14s} {device}")

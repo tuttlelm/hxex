@@ -2154,6 +2154,9 @@ _COMMENTS: dict[str, str] = {
                                       "where its injection puts the peptides than this many "
                                       "times the run's scatter for spectra of its brightness "
                                       "(peptide ions only; false: off)",
+    "run.quality.min_purity": "low_purity: a spectrum picked with pick = \"profile_fit\" whose "
+                              "purity (the share of the profile near its peaks that the "
+                              "peptide accounts for) is below this (false: off)",
     "run.quality.min_signal_to_noise": "below_noise: a fragment spectrum fitted through the "
                                        "per-scan cut whose tallest peak, in its largest scan, is "
                                        "below this times that scan's recorded noise: too dim for "
@@ -2233,7 +2236,8 @@ _SECTION_COMMENTS: dict[str, str] = {
                     "fraction of deuterium kept, not a retention time.",
     "run.quality": "Quality flags on every spectrum (guide: outputs.md): poor_fit, "
                    "low_intensity, noise_outlier, mz_shift, off_mz (thresholds in "
-                   "[run.picker]), poor_envelope, saturated, tails_low. Nothing is "
+                   "[run.picker]), poor_envelope, saturated, tails_low, low_purity, and "
+                   "others. Nothing is "
                    "dropped; your review ([review]) takes the decisions.",
     "figures": "Figures, drawn by hxex report hxex.toml --figures from the results (hxex run "
                "draws none). Changing these needs no new run.",

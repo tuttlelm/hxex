@@ -2033,6 +2033,22 @@ Planned, not built:
       ppm, so the tolerance must come from the data), scored by what those bins add to the value
       (as the centroid score above), not by their share of intensity. It needs no prediction of
       the envelope, so it applies to labelled spectra too.
+      **Decided and built (2026-11-20, HISTORY 434): one flag, `low_purity`, from
+      the profile fit's purity, default level 0.7 (`[run.quality] min_purity`); G and F not
+      adopted.** Purity (P), the second grid (G) and an absolute lack of fit (F, at K = 1 and at
+      the chosen K, against the per-bin noise) were measured on every spectrum of four datasets
+      (two Synapt LC-MS projects, the tutorial data, the Orbitrap digest), each picked with `peak`
+      and `profile_fit`, and judged on yardsticks that do not read their shape: undeuterated
+      controls against natural abundance, charge states of one injection, replicates, and the
+      Orbitrap's DDA-identified peak, split by K class and brightness. On clean undeuterated
+      controls P's floor is 0.84-0.94 (2nd percentile) and envelope-flat; below 0.7, the spectra
+      no existing check marks disagree with their replicates far more (benchmark median 0.15 vs
+      0.004 D per amide), at K = 1 and K >= 2; the existing screens already catch 73-83 % of the
+      lowest 2 %. G on labelled spectra separates nothing at K = 1; F's clean spread moves with
+      charge and brightness and, ranked within its class, separates only its tails. P exists only
+      with `pick = "profile_fit"`, so the default `peak` pick gains nothing from this item. The
+      Orbitrap controls' heavy shift came from other species picked in the far bins of the
+      undeuterated reach, not from the reduced profile (which reads weak heavy peaks low).
    Evidence (scratch, benchmark): a column-aware table (HDExaminer's per-file windows for its
    series; another charge's per-file window for 169 of the 445 series it lacks; the rest the
    single time +-0.15 min) beat the single times everywhere: replicate sd q90 0.258 -> 0.221 D

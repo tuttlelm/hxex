@@ -271,6 +271,29 @@ def test_flags_written_before_the_brightness_flags_read_as_false(run):
     assert np.array_equal(back.flagged, q.flagged)
 
 
+def test_a_profile_fit_spectrum_of_low_purity_is_flagged_and_only_it(run):
+    from hxex.io.bundle import _quality_table, _read_quality
+
+    meas, fit = run
+    purity = np.full(len(fit), 0.95)
+    purity[3], purity[5] = 0.69, np.nan  # NaN: picked with the usual pick, not assessed
+    q = assess_quality(meas, fit, purity=purity)
+    assert np.flatnonzero(q.low_purity).tolist() == [3] and q.flagged[3]
+    assert not assess_quality(meas, fit).low_purity.any()  # no purities: not assessed
+    off = assess_quality(meas, fit, QualityConfig(min_purity=None), purity=purity)
+    assert not off.low_purity.any()
+    strict = assess_quality(meas, fit, QualityConfig(min_purity=0.96), purity=purity)
+    assert strict.low_purity.sum() == len(fit) - 1
+    with pytest.raises(ValueError, match="min_purity"):
+        QualityConfig(min_purity=1.0)
+    with pytest.raises(ValueError, match="one value per measurement"):
+        assess_quality(meas, fit, purity=purity[:-1])
+    back = _read_quality(_quality_table(q), q.config.to_dict(), q.spectrum_id)
+    assert np.array_equal(back.low_purity, q.low_purity)
+    older = _quality_table(q).drop_columns(["low_purity"])  # written before the flag
+    assert not _read_quality(older, q.config.to_dict(), q.spectrum_id).low_purity.any()
+
+
 def test_the_injection_and_its_scale_are_stored_and_older_tables_read_without_them(run):
     from hxex.io.bundle import _quality_table, _read_quality
 

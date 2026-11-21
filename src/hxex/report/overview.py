@@ -75,6 +75,7 @@ QUALITY_LABELS = {
     "overlapping_ion": "overlapping ion",
     "below_noise": "below the noise",
     "spectrum_off_mz": "spectrum off m/z",
+    "low_purity": "low purity",
     "undeut_high": "UN too heavy",
     "any": "any flag",
 }

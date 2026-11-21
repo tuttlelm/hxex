@@ -235,6 +235,10 @@ def test_a_run_records_the_fit_and_the_bundle_keeps_it(tmp_path):
     table = spectra_table(load_results(tmp_path / "b"))
     assert np.isfinite(table["fit_offset_ppm"]).all()
     assert np.isfinite(table["purity"]).all() and "stray_share" in table
+    # the run judges each spectrum's purity (clean synthetic spectra: none below the level)
+    assert np.array_equal(result.quality.low_purity,
+                          result.binned.purity[result.kept] < result.config.quality.min_purity)
+    assert not result.quality.low_purity.any()
 
 
 def test_moments_skip_elements_without_isotopes_here():

@@ -381,7 +381,7 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         **{name: (b(name) if name in table.column_names else None)
            for name in ("saturated", "tails_low", "bright", "rt_found", "drift_unclear",
                         "elution_cut", "precursor_off", "overlapping_ion", "below_noise",
-                        "spectrum_off_mz")},
+                        "spectrum_off_mz", "low_purity")},
         # written before the per-spectrum m/z check: not assessed
         **{name: (f(name) if name in table.column_names else None)
            for name in ("spectrum_offset", "spectrum_offset_limit")},
