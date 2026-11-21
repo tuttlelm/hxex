@@ -162,7 +162,7 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz"
 
 # The version of the checks behind the flags: add one whenever a flag or statistic is added or
 # what one tests changes, so that a bundle whose flags an earlier version assessed says so and
-# `hxex resume` assesses them again (owner, 2026-11-08: a bundle fitted before overlapping_ion
+# `hxex run` assesses them again (owner, 2026-11-08: a bundle fitted before overlapping_ion
 # existed kept it empty through later resumes). 0: flags read from a bundle that does not record
 # it. 1: every flag up to overlapping_ion and below_noise (HISTORY 309, 314). 2: overlapping_ion
 # scales the other ion by its bins away from the fragment's strong bins (was: all its bins).

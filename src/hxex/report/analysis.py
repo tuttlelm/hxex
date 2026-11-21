@@ -624,7 +624,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None, sha
                 if not k2_tested:
                     log.info("K=2 differences between samples (population share, positions) not "
                              "tested: no bootstrap of every spectrum at K=2 ([run.bootstrap] "
-                             "ks = [2], then hxex resume hxex.toml adds it); "
+                             "ks = [2], then hxex run hxex.toml adds it); "
                              "residue_significance_K2 shows where the number of populations "
                              "differs")
                 tables["compare_choices"] = choices_cmp.columns()

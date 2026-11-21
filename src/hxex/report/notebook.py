@@ -27,7 +27,7 @@ def load_results(path: str | Path = "hxex.toml", *, unfitted: str = "raise") -> 
     hxex.toml`` uses them, and its ``[figures]`` settings, which :func:`show_series` draws
     with) or of a bundle folder or zip (its own review layer only). Load them again after
     changing the project file. A review choosing a K the run's screen skipped for a spectrum
-    is refused (``hxex resume`` fits it), or with ``unfitted="keep"`` kept and the spectrum
+    is refused (``hxex run`` fits it), or with ``unfitted="keep"`` kept and the spectrum
     shown at the fit's K (:attr:`Results.unfitted_choices`), as the window loads results."""
     from ..io import open_bundle
     from ..review_table import apply_view
@@ -43,7 +43,7 @@ def load_results(path: str | Path = "hxex.toml", *, unfitted: str = "raise") -> 
         figures = project.figures or PlotConfig()
     with open_bundle(bundle) as b:
         if b.pending:
-            log.warning("%s is waiting for its %s ('hxex resume' adds it)", bundle,
+            log.warning("%s is waiting for its %s ('hxex run' adds it)", bundle,
                         ", ".join(b.pending))
         results = dataclasses.replace(apply_view(Results.from_bundle(b), review,
                                                  unfitted=unfitted), figures=figures)
@@ -56,7 +56,7 @@ def load_results(path: str | Path = "hxex.toml", *, unfitted: str = "raise") -> 
 def _reopening(bundle: Path, created: str = ""):
     """A raw-spectra loader that opens the bundle for each request (the results outlive the
     bundle they were loaded from). ``created``: the stamp of the bundle these results came
-    from; a bundle replaced since (a run in a terminal, ``--overwrite``) is refused, not read
+    from; a bundle replaced since (a run in a terminal) is refused, not read
     under the old fits (audit of 2026-11-15, C-16)."""
     from ..io import open_bundle
     from ..io.bundle import bundle_manifest

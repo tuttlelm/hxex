@@ -83,7 +83,7 @@ earlier versions of *hxex* have `k_max = 3` under `[run.fit]` and `series = "fla
 
 - `hxex check` prints a `preset` line: what the preset sets, and every setting the file sets
   otherwise, with both values.
-- `hxex run`, `hxex resume` and `hxex analyse` write a warning naming those settings.
+- `hxex run` and `hxex analyse` write a warning naming those settings.
 - `hxex set` says what a setting you switch off falls back to: `run.fit.k_max: 4 -> not set
   (preset "bimodal": 3)`.
 - In the [*hxex* window](gui.md), a setting the preset fills in shows the preset's value, and its
@@ -116,15 +116,16 @@ changes what a preset means. `hxex info` shows the preset on its `preset` line.
 
 ## Changing the preset of a finished run
 
-Set the preset you want and resume:
+Set the preset you want and run again:
 
 ```bash
 hxex set hxex.toml preset bimodal
-hxex resume hxex.toml
+hxex run hxex.toml
 ```
 
-`hxex resume` keeps everything the results already hold and adds only what the new preset
-needs, so the results are the same as those of a new run with that preset:
+`hxex run` brings the results up to date: it keeps everything the results already hold and
+adds only what the new preset needs, so the results are the same as those of a new run with
+that preset (`hxex check hxex.toml` shows beforehand what it will do):
 
 - **From `quick` to `bimodal` or `multimodal`:** the fits with three populations are added
   (those with one and two are kept), the population test is made with simulations, and the
@@ -140,15 +141,12 @@ needs, so the results are the same as those of a new run with that preset:
   peptide come with `hxex report hxex.toml --figures`.
 - **Raising `k_max`** (in `[run.fit]`): only the fits with more populations are added, and
   only the new step of the test is simulated.
+- **Down to `quick`:** the fits with more than two populations are dropped and the population
+  test is made again with its quick reference.
 
-Going down to `quick` from a complete preset is refused: the results already hold more than
-`quick` gives. Keep them, or make a new run with `hxex run hxex.toml --overwrite`. A change of
-other fitting settings (`[run.fit]` other than `k_max`) also needs a new run.
+A change of other fitting settings (`[run.fit]` other than `k_max`) fits every spectrum again;
+`hxex run` says so before it starts. To keep the earlier results as they are, give
+`--keep-previous`: they are moved to `results.1` first, and the update is made from them.
 
-`hxex run hxex.toml --overwrite` with the new preset gives the same results too: it does not
-read your data files again (it takes the spectra stored in the results, as long as nothing that
-decides the read has changed) and keeps the fits it can, but it works out everything else
-again, so `hxex resume` is the quicker route.
-
-After resuming, run `hxex report hxex.toml --figures --overwrite` and `hxex analyse
-hxex.toml --overwrite` to bring the figures and the analysis up to date.
+Afterwards, run `hxex report hxex.toml --figures` and `hxex analyse hxex.toml` to bring the
+figures and the analysis up to date.

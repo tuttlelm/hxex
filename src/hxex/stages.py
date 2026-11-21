@@ -25,6 +25,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
 log = logging.getLogger(__name__)
 
 STAGES = ("read", "pick", "noise", "fit", "population_test", "correction", "bootstrap")
@@ -221,8 +223,12 @@ class Standing:
     stages: list[Stage]
     notes: list[str] = field(default_factory=list)
     run: str = ""
-    # how the run replaces the results: the option it needs, or the [output] switch that does it
-    replacing: str = ""
+
+    @property
+    def up_to_date(self) -> bool:
+        """Whether there is results and nothing for ``hxex run`` to do: every stage done or
+        off."""
+        return bool(self.stages) and all(s.state in (DONE, OFF) for s in self.stages)
 
     def __getitem__(self, name: str) -> Stage:
         return next(s for s in self.stages if s.name == name)
@@ -280,6 +286,8 @@ def standing(project, bundle: str | Path | None) -> Standing:
         if project.input is not None:
             _input_causes(project, Path(bundle), manifest, causes, notes, facts)
         _review_causes(project, Path(bundle), causes)
+        if rec["bootstrap"]["state"] == "done" and wanted["bootstrap"]:
+            _bootstrap_causes(project, Path(bundle), causes)
     stages = []
     for s in STAGES:
         state = rec[s]["state"]
@@ -295,7 +303,7 @@ def standing(project, bundle: str | Path | None) -> Standing:
         elif not wanted[s]:
             stages.append(Stage(s, OUT_OF_DATE, ["not asked for any more"]))
         elif state == "pending":
-            stages.append(Stage(s, NOT_DONE, ["stopped partway: hxex resume continues it"]
+            stages.append(Stage(s, NOT_DONE, ["stopped partway: hxex run continues it"]
                                 + own))
         else:
             stages.append(Stage(s, OUT_OF_DATE if own else DONE, list(own)))
@@ -314,11 +322,6 @@ def standing(project, bundle: str | Path | None) -> Standing:
     out = Standing(stages, notes)
     if project is not None:
         out.run = run_plan(project, manifest, out, facts)
-        output = project.output
-        out.replacing = ("with [output] keep_previous = true (the results now kept as "
-                         f"{Path(bundle).name}.N)" if output.keep_previous
-                         else "with [output] overwrite = true" if output.overwrite
-                         else "with --overwrite or --keep-previous")
     return out
 
 
@@ -350,18 +353,14 @@ def _code_causes(manifest, rec, causes, notes, facts) -> None:
         first = "noise" if rec["noise"]["state"] != "off" else "fit"
         causes[first].append(why.replace("them", "it") if why else "another version of "
                              "hxex's fitting code")
-    unknown = []
     for stage, what in (("pick", "picking"), ("correction", "correction")):
         code = rec[stage]["code"]
         if rec[stage]["state"] == "off":
             continue
-        if code is None:
-            unknown.append(what)
+        if code is None:  # results made before the code was recorded: done again once
+            causes[stage].append(f"made before hxex recorded its {what} code")
         elif code != now[stage]:
             causes[stage].append(f"another version of hxex's {what} code made it")
-    if unknown:
-        notes.append(f"the {' and '.join(unknown)} code is not recorded (results made before "
-                     "hxex recorded it): those stages are judged on their settings alone")
 
 
 def _setting_causes(project, held: dict, given, causes, facts) -> None:
@@ -377,6 +376,10 @@ def _setting_causes(project, held: dict, given, causes, facts) -> None:
             continue
         stage = _stage_of(path)
         changed.append(stage)
+        if stage in ("fit", "noise") and path != "fit.k_max":
+            facts["refit"] = True  # fits made with other settings: every spectrum fitted again
+        if path.startswith("bootstrap.") and path not in ("bootstrap.ks", "bootstrap.set_k"):
+            facts["rebootstrap"] = True
         causes[stage].append(f"{setting_name(path)}: {value_text(at(wanted, path))}, was "
                              f"{value_text(at(held, path))}")
     facts["settings_changed"] = changed
@@ -385,7 +388,7 @@ def _setting_causes(project, held: dict, given, causes, facts) -> None:
 def _control_causes(project, bundle: Path, held: dict, given, causes, facts) -> None:
     """Causes from ``[run.controls]``: the roles reach the stages that use them
     (:data:`_CONTROL_STAGES`), the rest the correction. ``controls`` left out (automatic) is
-    decided from the bundle's picked spectra, as ``hxex resume`` decides it."""
+    decided from the bundle's picked spectra, as ``hxex run`` decides it."""
     from .controls import AUTO, ControlConfig
 
     if given is not None and "controls" not in given:
@@ -475,10 +478,13 @@ def _input_causes(project, bundle: Path, manifest, causes, notes, facts) -> None
 
 
 def _review_causes(project, bundle: Path, causes) -> None:
-    """A cause of the fit: spectra whose K the project's review table chooses that the results
-    did not fit (the screen skipped it)."""
+    """Causes of the review: of the per-bin noise, undeuterated controls the review rejects
+    now that the noise counted, or no longer rejects (owner, 2026-11-20: rejected controls are
+    left out of it); of the fit, spectra whose K the project's review table chooses that the
+    results did not fit (the screen skipped it)."""
     from .review_table import table_choices
 
+    _rejected_controls_cause(project, bundle, causes)
     try:
         chosen = table_choices(project.review)
     except Exception as exc:  # noqa: BLE001 - hxex check reports the table's problems itself
@@ -497,17 +503,87 @@ def _review_causes(project, bundle: Path, causes) -> None:
     n = int((_unfitted_choices(fit, chosen) > 0).sum())
     if n:
         causes["fit"].append(f"{n} spectr{'a' if n > 1 else 'um'} the review table gives a K "
-                             "the results did not fit (hxex resume fits them)")
+                             "the results did not fit")
 
+
+
+def _rejected_controls_cause(project, bundle: Path, causes) -> None:
+    """A cause of the per-bin noise: the undeuterated controls the review rejects (the bundle's
+    stored review, the project's review table, ``[[review.exclude]]``) differ from the ones the
+    noise left out (its ``left_out``; none in results made before 2026-11-20)."""
+    from .io.bundle import open_bundle
+    from .review_table import rejected_spectra
+    from .spectra import UNDEUT
+
+    try:
+        with open_bundle(bundle) as b:
+            curve = b.fit().noise_curve
+            if curve is None or not b.has("binned"):
+                return
+            binned = b.binned()
+            stored = b.review() if b.has("review") else None
+            source = b.spectra_source()
+            rejected = rejected_spectra(project.review, binned, stored=stored, source=source)
+    except Exception as exc:  # noqa: BLE001 - hxex check reports the table's problems itself
+        log.debug("review rejections not worked out: %s", exc)
+        return
+    role = getattr(binned, "role", None)
+    if role is None:
+        return
+    ids = np.asarray(binned.spectrum_id, dtype=str)
+    now = set(ids[rejected & (np.asarray(role, dtype=str) == UNDEUT)])
+    then = set(curve.left_out)
+    added, back = len(now - then), len(then - now)
+    if added or back:
+        def controls(n: int) -> str:
+            return f"{n} undeuterated control{'s' if n > 1 else ''}"
+
+        parts = [f"{controls(added)} rejected in the review since it was measured"] if added \
+            else []
+        if back:
+            parts.append(f"{back if added else controls(back)} no longer rejected")
+        causes["noise"].append(" and ".join(parts))
+
+
+def _bootstrap_causes(project, bundle: Path, causes) -> None:
+    """Causes of the bootstrap: spectra whose K a review chooses without a bootstrap at it, and
+    spectra of the population test's sets without one at their set's K (``[run.bootstrap]
+    set_k``, with the project's ``[analysis]`` filters): the run adds both."""
+    from .io.bundle import BundleError, open_bundle
+    from .pipeline import _bundle_set_k_missing, _missing_choices, _review_choices
+    from .review_table import merge_choices, table_choices
+
+    try:
+        chosen = table_choices(project.review)
+    except Exception:  # noqa: BLE001 - hxex check reports the table's problems itself
+        chosen = {}
+    try:
+        with open_bundle(bundle) as b:
+            fit = b.fit()
+            held = {k: b.bootstrap(k) for k in b.bootstrap_ks()}
+            mine = merge_choices(_review_choices(b.review() if b.has("review") else None),
+                                 chosen)
+            wanted = _missing_choices(fit, held, mine) if mine else {}
+            n = sum(len(r) for r in wanted.values())
+            if n:
+                causes["bootstrap"].append(f"{n} spectr{'a' if n > 1 else 'um'} shown at a K "
+                                           "chosen in the review without a bootstrap there")
+            if project.run.bootstrap is not None and _bundle_set_k_missing(
+                    b, project.run.bootstrap, held, project.analysis):
+                causes["bootstrap"].append("spectra of the population test's sets without a "
+                                           "bootstrap at their set's K ([run.bootstrap] set_k)")
+    except (BundleError, OSError, KeyError, ValueError) as exc:
+        log.debug("bootstrap causes not worked out: %s", exc)
 
 def run_plan(project, manifest: Mapping, standing_: Standing, facts: Mapping) -> str:
-    """What ``hxex run`` (replacing the results: ``--overwrite``) does now, stage by stage, as
-    it decides: the stored spectra are taken when the read is unchanged (HISTORY 397), the
-    stored picking when the spectra are taken and the picking, its settings, and the control
-    roles are unchanged, the fits, population test and bootstrap of the spectra whose input is
-    unchanged when the fitting code and their settings are (:mod:`hxex.reuse`; the per-bin
-    noise must not move either), and the noise and the correction are always worked out
-    again."""
+    """What ``hxex run`` does now to bring the results up to date, stage by stage, as it
+    decides: the stored spectra are taken when the read is unchanged (HISTORY 397), the stored
+    picking when the spectra are taken and the picking, its settings, and the control roles are
+    unchanged, the fits of the spectra whose input is unchanged when the fitting code and the
+    ``[run.fit]`` settings but ``k_max`` are (:mod:`hxex.reuse`; the per-bin noise must not
+    move either), with the K missing fitted, the population test made again when its settings
+    or the fits changed, and the bootstrap made again or completed; the noise and the
+    correction are always worked out again."""
     if project.input is None:
         return ""
     parts = []
@@ -530,28 +606,44 @@ def run_plan(project, manifest: Mapping, standing_: Standing, facts: Mapping) ->
         parts.append("picks again")
     if standing_["noise"].state != OFF:
         parts.append("measures the per-bin noise again")
-    fitting = ("fit", "population_test", "bootstrap")
-    changed = set(facts.get("settings_changed") or ()) & {"fit", "noise", *fitting}
+    changed = set(facts.get("settings_changed") or ())
     engine_cause = bool(facts.get("engine_differs"))
-    pending = any(st.state == NOT_DONE and "stopped partway" in " ".join(st.causes)
-                  for st in standing_.stages)
-    d2o = bool(facts.get("d2o_changed")) and standing_["population_test"].state != OFF
-    if changed or engine_cause or pending or d2o:
-        tables = {"noise": "[run.fit]", "fit": "[run.fit]",
-                  "population_test": "[run.population_test]", "bootstrap": "[run.bootstrap]"}
-        named = sorted({tables[c] for c in changed})
-        why = ("other fitting code" if engine_cause else "a stage stopped partway" if pending
-               else " and ".join(named) + " changed" if changed
-               else "[run.controls] d2o_fraction changed: the population test uses it")
+    stopped = {st.name for st in standing_.stages
+               if st.state == NOT_DONE and "stopped partway" in " ".join(st.causes)}
+    testing = standing_["population_test"].state != OFF
+    if facts.get("refit") or engine_cause:
+        why = ("other fitting code" if engine_cause else "[run.fit] changed")
         parts.append(f"fits every spectrum again ({why})")
     else:
-        kept = ["fits"] + [LABELS[s] for s in ("population_test", "bootstrap")
-                           if standing_[s].state != OFF]
-        parts.append("keeps the " + (", ".join(kept[:-1]) + " and " + kept[-1]
-                                     if len(kept) > 1 else kept[0])
-                     + " of the spectra whose input is unchanged"
-                     + (" (if the per-bin noise does not move)"
-                        if standing_["noise"].state != OFF else ""))
+        own = [c for c in standing_["fit"].causes
+               if not c.startswith(("[run.", "after the"))]  # exclusions, a review K
+        refit = (standing_["read"].state != DONE or standing_["pick"].state != DONE
+                 or bool(own))
+        parts.append("fits the spectra whose input changed, keeps the others' fits" if refit
+                     else "keeps the fits")
+        if standing_["noise"].state != OFF and standing_["noise"].state != DONE:
+            from .reuse import CURVE_SHARE
+
+            parts[-1] += (f" (if the per-bin noise's b1 moves by less than "
+                          f"{100 * CURVE_SHARE:g} %)")
+        if "fit" in changed:
+            parts.append(f"fits the K missing (k_max {project.run.fit.k_max})")
+        if testing and (standing_["population_test"].state != DONE or "fit" in changed):
+            parts.append("makes the population test again")
+        elif testing:
+            parts.append("keeps the population test")
+        if standing_["bootstrap"].state != OFF:
+            if "bootstrap" in stopped:
+                parts.append("makes the bootstrap (it stopped partway)")
+            elif facts.get("rebootstrap") or standing_["bootstrap"].causes == [
+                    "the results have none"]:
+                parts.append("makes the bootstrap again")
+            elif standing_["bootstrap"].causes == ["after the fit"]:
+                parts.append("bootstraps the spectra whose fits or K changed, keeps the rest")
+            elif standing_["bootstrap"].state != DONE:
+                parts.append("adds what the bootstrap lacks and keeps the rest")
+            else:
+                parts.append("keeps the bootstrap")
     if standing_["correction"].state != OFF:
         parts.append("works out the correction and the quality flags again")
     return ", ".join(parts)
@@ -563,6 +655,6 @@ def lines(st: Standing, *, run: bool = True) -> list[tuple[str, str]]:
     rows = [("" if i else "stages", s.text()) for i, s in enumerate(st.stages)]
     rows += [("", f"({note})") for note in st.notes]
     if run and st.run:
-        rows.append(("hxex run", (f"{st.replacing}: " if st.replacing
-                                  and st.run != "does every stage" else "") + st.run))
+        rows.append(("hxex run", "nothing to do: the results are up to date"
+                     if st.up_to_date else st.run))
     return rows

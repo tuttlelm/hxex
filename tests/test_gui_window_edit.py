@@ -109,8 +109,8 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypat
     assert panel._task is None and panel.status.full() == "" and panel.busy.isHidden()
     assert editor.preview.k is not None  # fitted (it was drawn picked first)
     # what the preview is: above the figure in the window's font, not inside the figure
-    assert editor.notes.text() == ("Preview only: results will change upon rerun with "
-                                   "overwrite enabled.")  # one line, the same in every draw
+    assert editor.notes.text() == ("Preview only: the results change when they are brought "
+                                   "up to date (Run).")  # one line, the same in every draw
     assert "from the run's fit" not in editor.notes.toolTip()  # how it was fitted: not said
     layout = panel.layout()  # the line above the figure's title (owner, 2026-11-12)
     assert layout.indexOf(editor.notes) + 1 == layout.indexOf(panel.title)
@@ -124,8 +124,8 @@ def test_a_window_is_edited_previewed_saved_and_undone(qtbot, project, monkeypat
     # saved for the whole peptide by default (its ions elute together), or for the ion only
     assert editor.scope.currentData() == "peptide"
     editor.save.click()
-    assert "un2.mzML" in table.read_text() and "hxex run --overwrite" in messages[-1]
-    assert "with overwrite enabled" in messages[-1]
+    assert "un2.mzML" in table.read_text() and "(hxex run)" in messages[-1]
+    assert "bring the results up to date" in messages[-1]
     assert "(every charge state)" in messages[-1] and "for sample S" in messages[-1]
     assert editor.scope.currentText() == "2. every charge state of this peptide, in this file"
     row = table.read_text().splitlines()[1].split(",")

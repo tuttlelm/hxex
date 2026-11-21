@@ -71,7 +71,7 @@ RECENT = 8  # sessions remembered in the File menu
 WORKSPACE_TIPS = {
     "project": "the project file: its settings, its tables (peptides, review, elution "
                "windows), and the sequence",
-    "run": "run hxex's commands (check, run, resume, report, analyse) and read their messages",
+    "run": "run hxex's commands (check, run, report, analyse) and read their messages",
     "results": "every peptide, series, time point, and spectrum, with their figures and table "
                "rows",
     "analysis": "what hxex analyse makes from [analysis]: coverage, deuterium per peptide and "
@@ -331,7 +331,7 @@ class MainWindow(QMainWindow):
         self.running.hide()
         self.statusBar().addPermanentWidget(self.running)
         self.replacing = QLabel("the results shown are updated when the run finishes")
-        self.replacing.setToolTip(tip("a run or resume of the project whose results are shown "
+        self.replacing.setToolTip(tip("a run of the project whose results are shown "
                                       "is in progress; the window shows the new results when it "
                                       "ends"))
         self.replacing.hide()
@@ -359,7 +359,7 @@ class MainWindow(QMainWindow):
         self._run_notice()
 
     def _run_notice(self) -> None:
-        """While a run or resume of the project shown runs, the Results panel and the status
+        """While a run of the project shown runs, the Results panel and the status
         bar say that the results shown are updated when the run ends (audit of 2026-11-15, A open
         question 1: no blocking; the window reloads them then, with the bundle's stamp
         checked before any figure reads it)."""
@@ -942,9 +942,10 @@ class MainWindow(QMainWindow):
         return list(names)
 
     def run_resume(self) -> None:
-        """hxex resume in the Run workspace (a bootstrap for spectra shown at a K without one)."""
+        """hxex run in the Run workspace, bringing the results up to date (a bootstrap for
+        spectra shown at a K without one, a K the review chose that was not fitted)."""
         self.tabs.setCurrentIndex(WORKSPACES.index("run"))
-        self.run_page.run_command("resume")
+        self.run_page.run_command("run")
 
     def show_setting(self, table: str) -> None:
         """The Project workspace's page of the table ``table`` (``"run.fit.backend"``)."""
@@ -1055,7 +1056,7 @@ class MainWindow(QMainWindow):
         self.open_results(self.project)
 
     def _results_changed(self) -> None:
-        """A run, resume or report from the Run workspace finished: show the new results (the
+        """A run or report from the Run workspace finished: show the new results (the
         project's, with its review applied)."""
         if self.project is not None:
             self._pending_selection = self.results_page.selection()

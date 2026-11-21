@@ -224,7 +224,7 @@ def plot_each_file(traces: RetentionTraces, aligned, *, edit: tuple[float, float
     return fig
 
 
-PREVIEW_TEXT = "Preview only: results will change upon rerun with overwrite enabled."
+PREVIEW_TEXT = "Preview only: the results change when they are brought up to date (Run)."
 
 
 def preview_text(preview) -> str:

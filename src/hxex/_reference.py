@@ -184,11 +184,10 @@ _DESCRIPTIONS: dict[str, str] = {
     "output.bundle": "name of the folder (or .zip archive, a name ending in .zip) that `hxex run` "
                      "creates for the results (the bundle); a name alone is made in the folder "
                      "that holds the project file (results: beside hxex.toml), or give a full "
-                     "location; it must not exist yet unless overwrite or keep_previous is set",
-    "output.overwrite": "replace an existing bundle (its review is carried over) and its tables "
-                        "(its figures and analyses stay until redrawn)",
-    "output.keep_previous": "move the existing bundle, tables and figures to the next "
-                            "generation (results.1, ...) first",
+                     "location; a later `hxex run` brings the results there up to date "
+                     "(only what changed is done again; its review is kept)",
+    "output.keep_previous": "with `hxex run --fresh` (starting again), move the existing bundle, "
+                            "tables and figures to the next generation (results.1, ...) first",
     "output.keep_spectra": "store the raw spectra in the bundle (needed to rerun from it)",
     "output.tables": "CSV tables: true beside the bundle (<bundle>_tables), a directory, or "
                      "false",
@@ -808,6 +807,8 @@ def _arguments(parser) -> list[str]:
     for action in parser._actions:  # argparse keeps no public list of its arguments
         if isinstance(action, (argparse._HelpAction, argparse._SubParsersAction)):
             continue
+        if action.help == argparse.SUPPRESS:  # a retired option, accepted with a note
+            continue
         if isinstance(action, argparse._VersionAction):
             text = "print the version and exit"
         else:
@@ -878,9 +879,12 @@ def commands_markdown() -> str:
     ]
     for p in dict.fromkeys(sub.choices.values()):
         first, *aliases = names[id(p)]
-        positional = " ".join(_positional(a) for a in p._actions if not a.option_strings)
+        positional = " ".join(_positional(a) for a in p._actions
+                              if not a.option_strings and a.help != argparse.SUPPRESS)
         text = helps.get(first, "")
         lines += ["", f"## hxex {first}", "", text[:1].upper() + text[1:] + ".", ""]
+        if text.startswith("retired"):  # refused, naming what replaces it
+            continue
         lines += [f"`hxex {' '.join(filter(None, (first, positional, '[options]')))}`", ""]
         if aliases:
             lines += [f"Also spelt `hxex {', '.join(aliases)}`.", ""]

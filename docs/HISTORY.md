@@ -11427,3 +11427,72 @@ CSVs or mzML if wanted.
     statistics.md's link; flags.md and settings.md regenerated. The tutorial image
     `tutorial_bright.png` (its titles say `bright`) changes on the next `make_tutorial.py --run`.
     Private record: hxex_private/analysis_examples/bright_sign (README, scripts).
+
+433. **`hxex run` brings the results up to date; `hxex resume` retired** (2026-11-20; PLAN
+    Next steps 40, third step; owner's answers of 2026-11-20: nothing out of date = nothing done,
+    resume retired as long as run says what it will do, `[output] overwrite` refused, report and
+    analyse changed now, the window asks Bring up to date / Start again, the noise curve's move
+    measured before deciding to refit). Before, `run --overwrite` kept the fits of unchanged
+    spectra only when `[run.fit]`, `[run.population_test]` and `[run.bootstrap]` were all
+    unchanged (one more bootstrap resample refitted everything), and `resume` held the paths
+    that keep the fits (a higher or lower `k_max`, the population test added or changed, a
+    bootstrap redone or a fixed K added, a stopped bootstrap) and refused everything else. Now
+    `hxex run` on a project with results prints where they stand (the step-2 lines) and does
+    only what is out of date: the kept fits (`hxex.reuse.reused_fits`, which now says what they
+    still need) are brought to the project's settings (`pipeline._updated_part`: the K missing
+    fitted, the test made again keeping the null of the steps it had, or taken away, the
+    bootstrap made again or completed, the spectra whose K changed bootstrapped at their new K,
+    the bootstrap's arrays as wide as the new `k_max`, `BootstrapResult.with_width`), merged
+    with the spectra fitted anew; every spectrum is fitted again only when other `[run.fit]`
+    settings or the fitting code changed, or the per-bin noise moved (below). Nothing out of
+    date: "the results are up to date, nothing to do" and nothing written (the tables only when
+    missing or of other results). `--fresh` starts again (replaces `--refit` and `--reread`,
+    which say so); `--overwrite` says it is no longer needed; `[output] overwrite` is refused
+    (delete the line); `[output] keep_previous` applies to `--fresh` only, `--keep-previous`
+    stays a one-off. `report` and `analyse` write their folders again without being asked, and
+    warn when the results are not up to date with the project. A file hxex wrote and someone
+    changed since (its checksum in the folder's listing differs) is never written over (owner,
+    2026-11-20; before, only `report` on tables of the same results refused, and the other cases
+    replaced it with a log warning once `--overwrite` was given): `run`, `report` and `analyse`
+    stop before any work, naming the files (`hxex.io.outputs.edited_refusal`, in
+    `prepare_output` also with `overwrite=True`, and `check_output`); `hxex check` names them in
+    its outputs lines (`cli.output_lines`, `EDITED_NOTE`), the window's Run question lists those
+    lines, and a refusal from Run, Report or Analyse brings the window's "Edited output" question
+    (keep the folder as NAME.N and run the command again with its own options and
+    `--keep-previous`). Undeuterated controls the review rejects (the bundle's stored review,
+    the project's review table, `[[review.exclude]]`) are left out of the per-bin noise and of
+    its onset (owner, 2026-11-20; before, only the picker screens chose them, so a rejected
+    control, often another species, still counted): `review_table.rejected_spectra`,
+    `pipeline.bundle_noise(rejected=)`, `run(review_table=)`; the curve records them
+    (`ControlsNoise.left_out`, kept with a kept curve), `hxex info` counts them, and
+    `hxex.stages` reads the noise out of date when the rejected controls differ from the ones
+    left out (results made before record none). `hxex resume` is refused,
+    naming `hxex run`; the library's `resume_bootstrap` stays. The provenance keeps one entry
+    per update (`history`; `redone`, `fresh`), listed by `hxex info`. `hxex.stages`: the code
+    of a stage not recorded (results made before HISTORY 430) now reads out of date (run picks
+    again), and the bootstrap reads out of date for spectra at a review K or of a population-test
+    set without a bootstrap there. The window: Resume gone; Run shows the stage lines and asks
+    Bring up to date / Start again / Cancel (up to date: Start again or Cancel).
+    The per-bin noise (owner, F): the fits use one number of the curve, the bundle's b1. Refits
+    at b1 x 0.8 ... 1.2 on the tutorial and the benchmark (scratch, two baseline refits equal):
+    the fits move about in proportion to the move, with no level below which none does; at 2 %
+    K changed for 0.03-0.12 % of spectra (near-ties), the K = 1 mean by 0.004-0.005 D at q99;
+    b1's standard error is 63 % of b1 on the tutorial, 6.8 % on the benchmark, so the rule is
+    relative: the earlier curve, and the fits, are kept when b1 moved by less than
+    `reuse.CURVE_SHARE` (1 %; owner: "1% is fine"), whatever controls made it (before: 1 % of its standard error,
+    with the same controls). Private record:
+    hxex_private/analysis_examples/noise_model/b1_tolerance (README). Consequences beyond the
+    plan, each agreed by the owner (2026-11-20): an update gives what a fresh run with the
+    project's settings gives, so a fixed-K bootstrap no longer listed in `ks` goes (resume kept
+    the union, HISTORY 350); a project file without `[input]` (one for `hxex analyse`) can no
+    longer add a bootstrap or the test (resume took one; one bundle, one project file: `hxex
+    run` needs the file the results are made from); a control role changed by `fulldeut_at`
+    refits that spectrum, because the role is part of its random key (`measurement_identity`),
+    although the fit does not depend on it (kept: taking the role out would refit every bundle
+    once). A review K beyond `k_max` is refused before the up-to-date check. Tests:
+    tests/test_reuse.py (each update against a fresh run with the new settings: n_boot, a fixed
+    K added, the test's settings, added, taken away, k_max, d2o_fraction, other fit settings, a
+    stopped bootstrap, a changed spectrum with a changed bootstrap; the command line: up to
+    date, update, `--fresh`, the retired options); files changed by hand:
+    tests/test_outputs.py, tests/test_session_f_cli.py (run, report, analyse, check),
+    tests/test_gui_run.py (the question for each command, the Run question's line).

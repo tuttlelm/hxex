@@ -967,3 +967,63 @@ def test_a_resume_adds_the_controls_to_a_bundle_made_without_them(tmp_path, capl
     manifest = bundle_manifest(path)
     assert manifest["controls_choice"]["setting"] == "auto"
     assert manifest["configs"]["run"]["controls"] is not None
+
+
+def test_rejected_undeuterated_controls_are_left_out_of_the_per_bin_noise(tmp_path, caplog):
+    """An undeuterated control the review rejects (the review table, [[review.exclude]], or
+    the bundle's own review) is left out of the per-bin noise and named in its left_out
+    (owner, 2026-11-20); hxex.stages tells a rejection made after the noise was measured."""
+    from types import SimpleNamespace
+
+    from hxex.exclusions import Exclusion
+    from hxex.io import open_bundle
+    from hxex.review_table import ReviewSettings, rejected_spectra
+    from hxex.stages import _rejected_controls_cause
+
+    raw = raw_spectra(n_series=6)
+    cfg = config(bootstrap=None)
+    cfg = dataclasses.replace(cfg, fit=dataclasses.replace(cfg.fit, noise=NoiseConfig(
+        "gaussian", percent=3.0, estimate="controls")))
+    plain = run(raw, cfg)
+    assert plain.fit.noise_curve is not None and plain.fit.noise_curve.left_out == ()
+    ids = np.asarray(plain.fit.spectrum_id, dtype=str)
+    role = np.asarray(plain.binned.role, dtype=str)
+    target = str(ids[role == "undeut"][0])
+    table = tmp_path / "review.csv"
+    table.write_text(f"spectrum_id,review_status\n{target},rejected\n")
+    out = tmp_path / "b"
+    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
+        res = run(raw, cfg, out=out, review_table=table)
+    curve = res.fit.noise_curve
+    assert curve.left_out == (target,)
+    assert "1 undeuterated control the review rejects left out" in caplog.text
+    assert curve.n_controls == plain.fit.noise_curve.n_controls - 1
+    assert curve.b1 != plain.fit.noise_curve.b1
+    with open_bundle(out) as b:  # recorded in the manifest
+        assert b.fit().noise_curve.left_out == (target,)
+    # the same rejection by a [[review.exclude]] rule
+    rule = Exclusion(spectrum_id=target)
+    assert rejected_spectra(ReviewSettings(exclude=(rule,)), res.binned).sum() == 1
+    # hxex check: the same rejections, nothing to do; one more, the noise is out of date
+    project = SimpleNamespace(review=ReviewSettings(table=str(table)))
+    causes = {"noise": []}
+    _rejected_controls_cause(project, out, causes)
+    assert causes["noise"] == []
+    second = str(ids[role == "undeut"][1])
+    table.write_text(f"spectrum_id,review_status\n{target},rejected\n{second},rejected\n")
+    _rejected_controls_cause(project, out, causes)
+    assert causes["noise"] == ["1 undeuterated control rejected in the review since it was "
+                               "measured"]
+    causes = {"noise": []}
+    _rejected_controls_cause(SimpleNamespace(review=None), out, causes)
+    assert causes["noise"] == ["1 undeuterated control no longer rejected"]
+    # an update with one more rejection: the noise measured again, the curve (b1 moved little)
+    # and the fits kept, the new rejections recorded
+    with caplog.at_level(logging.INFO, logger="hxex"):
+        again = run(raw, cfg, out=out, review_table=table, overwrite=True)
+    assert again.fit.noise_curve.left_out == tuple(sorted((target, second)))
+    with open_bundle(out) as b:
+        assert b.fit().noise_curve.left_out == tuple(sorted((target, second)))
+    causes = {"noise": []}
+    _rejected_controls_cause(project, out, causes)
+    assert causes["noise"] == []

@@ -110,15 +110,107 @@ def test_a_changed_spectrum_refits_its_series_only(first, tmp_path, caplog):
     _same(partial.quality, fresh.quality, close=True)
 
 
-def test_other_settings_refit_everything(first, tmp_path, caplog):
-    raw, _, _ = first
+def _with(base, **changes):
+    """``base`` with settings of its fit, population test or bootstrap changed
+    (``fit__k_max=3``: the table, two underscores, the key)."""
+    for key, value in changes.items():
+        table, name = key.split("__")
+        part = getattr(base, table)
+        base = dataclasses.replace(base, **{table: (dataclasses.replace(part, **{name: value})
+                                                    if part is not None else value)})
+    return base
+
+
+def _base_without_test():
+    return dataclasses.replace(_config(), population_test=None)
+
+
+UPDATES = {  # name: (settings before, settings after, what is redone, every fit kept)
+    "n_boot": (_config, lambda: _with(_config(), bootstrap__n_boot=4), "bootstrap", True),
+    "a fixed K added": (
+        lambda: _with(_config(), bootstrap__ks=(1,)), _config, "bootstrap at K = 2", True),
+    "the test's settings": (
+        _config, lambda: _with(_config(), population_test__simulations=6), "population test",
+        True),
+    "the test added": (_base_without_test, _config, "population test", True),
+    "the test taken away": (_config, _base_without_test, "population test taken away", True),
+    "k_max": (lambda: _with(_base_without_test(), bootstrap__ks=(1,)),
+              lambda: _with(_base_without_test(), fit__k_max=3, bootstrap__ks=(1,)),
+              "fits to K = 3", True),
+    "d2o_fraction": (_config, lambda: _with(_config(), controls__d2o_fraction=0.8),
+                     "population test", True),
+    "other fit settings": (_config, lambda: _with(_config(), fit__n_restarts=3), None, False),
+}
+
+
+@pytest.mark.parametrize("name", list(UPDATES))
+def test_an_update_gives_what_a_fresh_run_gives(first, tmp_path, caplog, name):
+    """Each setting a run updates the results for (docs/PLAN.md Next steps 40): the fits kept
+    where they can be, what the change touches made again, and the whole what a fresh run with
+    the new settings gives."""
+    raw = first[0]
+    before, after, redone, kept = UPDATES[name]
+    target = tmp_path / "results"
+    run(raw, before(), out=target)
+    with caplog.at_level(logging.INFO):
+        updated = run(raw, after(), out=target, overwrite=True)
+    fresh = run(raw, after())
+    n = len(raw)
+    if kept:
+        assert f"{n} of {n} spectra keep their fit" in caplog.text
+    else:
+        assert "fitting every spectrum" in caplog.text and "[run.fit] changed" in caplog.text
+    from hxex.io import open_bundle
+
+    with open_bundle(target) as b:
+        assert b.manifest["provenance"]["redone"] == ([redone] if redone else [])
+    _same_fit(updated.fit, fresh.fit, close=True)
+    if fresh.population_test is None:
+        assert updated.population_test is None
+    else:
+        _same(updated.population_test, fresh.population_test, close=True, atol=1e-3)
+    _same(updated.bootstrap, fresh.bootstrap, close=True)
+    assert sorted(updated.bootstrap_by_k or {}) == sorted(fresh.bootstrap_by_k or {})
+    for k, boot in (fresh.bootstrap_by_k or {}).items():
+        _same(updated.bootstrap_by_k[k], boot, close=True)
+    _same(updated.controls, fresh.controls, close=True)
+
+
+def test_a_stopped_bootstrap_is_finished(first, tmp_path, caplog):
+    """A bundle whose bootstrap stopped partway: the next run keeps the fits and the test and
+    makes the bootstrap."""
+    import json
+
+    raw = first[0]
+    target = tmp_path / "results"
+    done = run(raw, _config(), out=target)
+    manifest = target / "manifest.json"
+    data = json.loads(manifest.read_text())
+    data["pending"] = ["bootstrap"]
+    manifest.write_text(json.dumps(data))
+    with caplog.at_level(logging.INFO):
+        again = run(raw, _config(), out=target, overwrite=True)
+    n = len(raw)
+    assert f"{n} of {n} spectra keep their fit" in caplog.text
+    _same_fit(again.fit, done.fit)
+    _same(again.bootstrap, done.bootstrap, close=True)
+
+
+def test_a_changed_spectrum_and_changed_settings_together(first, tmp_path, caplog):
+    """A changed spectrum (its series fitted again with the new settings) and a changed
+    bootstrap (the kept series bootstrapped again): what a fresh run gives."""
+    raw = first[0]
     target = tmp_path / "results"
     run(raw, _config(), out=target)
-    other = _config()
-    other = dataclasses.replace(other, bootstrap=dataclasses.replace(other.bootstrap, n_boot=4))
-    with caplog.at_level(logging.INFO, logger="hxex.reuse"):
-        run(raw, other, out=target, overwrite=True)
-    assert "fitting every spectrum" in caplog.text and "[run.bootstrap] changed" in caplog.text
+    changed = _changed(raw, index=3)
+    other = _with(_config(), bootstrap__n_boot=4)
+    with caplog.at_level(logging.INFO):
+        updated = run(changed, other, out=target, overwrite=True)
+    fresh = run(changed, other)
+    assert "spectra keep their fit" in caplog.text
+    _same_fit(updated.fit, fresh.fit, close=True)
+    _same(updated.population_test, fresh.population_test, close=True, atol=1e-3)
+    _same(updated.bootstrap, fresh.bootstrap, close=True)
 
 
 def test_reuse_can_be_turned_off(first, tmp_path, caplog):
@@ -141,170 +233,34 @@ def test_a_changed_undeuterated_control_refits_its_series(first, tmp_path, caplo
     assert f"{len(raw) - per_series} of {len(raw)} spectra keep their fit" in caplog.text
 
 
-def test_the_command_line_reuses_and_refit_does_not(tmp_path, capsys):
+def test_the_command_line_updates_and_fresh_starts_again(tmp_path, capsys):
     from hxex.cli import main
     from test_cli import mzml_project
 
     path = mzml_project(tmp_path)
     assert main(["run", str(path)]) == 0
     capsys.readouterr()
-    assert main(["run", str(path), "--overwrite"]) == 0
-    assert "6 of 6 spectra keep their fit" in capsys.readouterr().err
+    # nothing changed: nothing to do, nothing written
+    created = (tmp_path / "out" / "manifest.json").read_text()
+    assert main(["run", str(path)]) == 0
+    assert "the results are up to date, nothing to do" in capsys.readouterr().out
+    assert (tmp_path / "out" / "manifest.json").read_text() == created
+    # a change: an update, keeping the fits
+    path.write_text(path.read_text().replace("n_boot = 3", "n_boot = 4"))
+    assert main(["run", str(path)]) == 0
+    err = capsys.readouterr().err
+    assert "6 of 6 spectra keep their fit" in err and "bootstrap: out of date" in err
     assert main(["info", str(path)]) == 0
-    assert "6 of 6 spectra kept the replaced bundle's fits" in capsys.readouterr().out
-    assert main(["run", str(path), "--overwrite", "--refit"]) == 0
+    out = capsys.readouterr().out
+    assert "6 of 6 spectra kept the replaced bundle's fits" in out
+    assert "redone         bootstrap" in out
+    # --fresh: everything anew; --overwrite and --refit said to be retired
+    assert main(["run", str(path), "--fresh"]) == 0
     assert "keep their fit" not in capsys.readouterr().err
     assert main(["info", str(path)]) == 0
-    assert "0 of 6 spectra kept" in capsys.readouterr().out
-
-
-def test_the_software_that_made_the_fits_is_kept_by_a_resume(first, tmp_path, caplog):
-    import json
-
-    from hxex.io.bundle import _versions
-    from hxex.pipeline import resume_bootstrap
-
-    raw = first[0]
-    target = tmp_path / "results"
-    run(raw, _config(), out=target)
-    resume_bootstrap(target, add=True, bootstrap=_config().bootstrap)
-    manifest = json.loads((target / "manifest.json").read_text())
-    assert manifest["fitted_with"] == json.loads(json.dumps(_versions()))
-    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
-        run(raw, _config(), out=target, overwrite=True)
-    assert f"{len(raw)} of {len(raw)} spectra keep their fit" in caplog.text
-    # a bundle resumed before the record: not known, so nothing is reused
-    manifest = json.loads((target / "manifest.json").read_text())
-    del manifest["fitted_with"]
-    manifest["provenance"] = {"resumed": [{"added": "bootstrap"}]}
-    (target / "manifest.json").write_text(json.dumps(manifest))
-    caplog.clear()
-    with caplog.at_level(logging.INFO, logger="hxex.reuse"):
-        run(raw, _config(), out=target, overwrite=True)
-    assert "it is not known which version of hxex made them" in caplog.text
-
-
-def test_a_noise_curve_that_hardly_moved_is_kept(tmp_path, caplog):
-    import json
-
-    from hxex.noise import NoiseConfig
-
-    raw = raw_spectra(n_series=6)
-    base = _config()
-    cfg = dataclasses.replace(base, fit=dataclasses.replace(
-        base.fit, noise=NoiseConfig("gaussian", percent=3.0, estimate="controls")))
-    target = tmp_path / "results"
-    run(raw, cfg, out=target)
-    before = json.loads((target / "manifest.json").read_text())["noise_curve"]
-    index = int(np.flatnonzero((raw.role == "undeut") & (raw.data_id == 2))[0])
-    with caplog.at_level(logging.INFO):
-        again = run(_changed(raw, index, factor=1.000001), cfg, out=target, overwrite=True)
-    assert "the earlier curve is kept" in caplog.text
-    per_series = len(raw) // 6
-    assert f"{len(raw) - per_series} of {len(raw)} spectra keep their fit" in caplog.text
-    assert again.fit.noise_curve.b1 == before["b1"]
-    # a control gone (no signal left): the curve rests on other controls, nothing is kept
-    caplog.clear()
-    with caplog.at_level(logging.INFO):
-        run(_changed(raw, index, factor=0.0, whole=True), cfg, out=target, overwrite=True)
-    assert "the earlier curve is kept" not in caplog.text
-    assert "per-bin noise measured from the undeuterated controls changed" in caplog.text
-
-
-def test_a_k_chosen_in_the_review_keeps_the_fits_and_is_bootstrapped(tmp_path, caplog):
-    """A K the review chooses that the run fitted: every fit is kept, and the bootstrap at the
-    chosen K is made for that spectrum (``[run.bootstrap] ks`` does not hold it), as a full run
-    with the same review makes it."""
-    raw = raw_spectra(n_series=3)
-    target = tmp_path / "results"
-    first = run(raw, config(), out=target)
-    sid = next(str(s) for s, k in zip(first.fit.spectrum_id, first.fit.selected_K, strict=True)
-               if k == 1)
-    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
-        again = run(raw, config(), out=target, overwrite=True, chosen_k={sid: 2})
-    n = len(raw)
-    assert f"{n} of {n} spectra keep their fit" in caplog.text
-    assert "bootstrapping 1 spectra at the K chosen for them in the review" in caplog.text
-    fresh = run(raw, config(), chosen_k={sid: 2})
-    i = list(map(str, again.fit.spectrum_id)).index(sid)
-    assert again.bootstrap_by_k[2].covers(i)
-    _same_fit(again.fit, first.fit)
-    _same(again.bootstrap_by_k[2], fresh.bootstrap_by_k[2], close=True)
-
-
-def test_a_k_chosen_in_the_review_that_the_screen_skipped_refits_its_series(tmp_path, caplog):
-    """A K the review chooses that the screen skipped for that spectrum: its series is fitted
-    again (with the K chosen fitted whatever the screen says), every other series is kept, and
-    the whole is a full run's with the same review."""
-    base = config()
-    cfg = dataclasses.replace(base, fit=dataclasses.replace(base.fit, screen=True))
-    raw = raw_spectra(n_series=3)
-    target = tmp_path / "results"
-    first = run(raw, cfg, out=target)
-    skipped = np.flatnonzero(~first.fit.fitted(2))
-    assert len(skipped)
-    sid = str(first.fit.spectrum_id[skipped[0]])
-    with caplog.at_level(logging.INFO, logger="hxex.pipeline"):
-        again = run(raw, cfg, out=target, overwrite=True, chosen_k={sid: 2})
-    fresh = run(raw, cfg, chosen_k={sid: 2})
-    series = np.asarray(again.fit.data_id)
-    i = list(map(str, again.fit.spectrum_id)).index(sid)
-    own = series == series[i]
-    n = len(raw)
-    assert f"{n - own.sum()} of {n} spectra keep their fit" in caplog.text
-    assert again.fit.fitted(2)[i] and again.bootstrap_by_k[2].covers(i)
-    _same_fit(again.fit, first.fit, np.flatnonzero(~own))
-    _same_fit(again.fit, fresh.fit, close=True)
-    _same(again.bootstrap, fresh.bootstrap, close=True)
-
-
-def test_fits_are_kept_across_package_builds_with_the_same_fitting_code(first, tmp_path,
-                                                                        caplog, capsys):
-    """Fits made on a graphics card are kept on a laptop without one, and across a commit that
-    changed nothing of the fitting code: the engine's fingerprint decides, not the package
-    versions or the commit; what differed is logged and recorded (owner, 2026-11-11). Another
-    fingerprint, or a bundle made before the fingerprint was recorded by other software, is
-    fitted again, with the differences named."""
-    import json
-
-    from hxex.reuse import differences, same_engine
-
-    now = {"hxex_commit": "1d33325", "torch": "2.14.1+cpu", "numpy": "2.4.6", "engine": "abc"}
-    gpu = dict(now, hxex_commit="9c660e4", torch="2.14.1+cu126")
-    assert same_engine(gpu, now) == (True, None)
-    assert differences(gpu, now) == ["hxex_commit 9c660e4 -> 1d33325",
-                                     "torch 2.14.1+cu126 -> 2.14.1+cpu"]
-    ok, why = same_engine(dict(gpu, engine="xyz"), now)
-    assert not ok and "fitting code differs" in why and "torch 2.14.1+cu126" in why
-    old = {k: v for k, v in gpu.items() if k != "engine"}  # made before the fingerprint
-    ok, why = same_engine(old, now)
-    assert not ok and "before hxex recorded its fitting code" in why
-    assert same_engine({k: v for k, v in now.items() if k != "engine"}, now)[0]
-
-    raw = first[0]
-    target = tmp_path / "results"
-    run(raw, _config(), out=target)
-    manifest = json.loads((target / "manifest.json").read_text())
-    assert manifest["fitted_with"]["engine"]
-    manifest["fitted_with"]["torch"] = "0.0+gpu-build"  # made on another computer
-    (target / "manifest.json").write_text(json.dumps(manifest))
-    with caplog.at_level(logging.INFO):
-        run(raw, _config(), out=target, overwrite=True)
-    assert f"{len(raw)} of {len(raw)} spectra keep their fit" in caplog.text
-    assert "made with other software (torch 0.0+gpu-build ->" in caplog.text
-    prov = json.loads((target / "manifest.json").read_text())["provenance"]
-    assert prov["fits_reused_made_with"][0].startswith("torch 0.0+gpu-build")
-    manifest = json.loads((target / "manifest.json").read_text())
-    manifest["fitted_with"]["engine"] = "another"
-    (target / "manifest.json").write_text(json.dumps(manifest))
-    caplog.clear()
-    with caplog.at_level(logging.INFO):
-        run(raw, _config(), out=target, overwrite=True)
-    assert "hxex's fitting code differs" in caplog.text and "keep their fit" not in caplog.text
-
-
-def test_the_fitting_code_fingerprint_follows_the_engine_files_only():
-    from hxex._engine import ENGINE, engine_fingerprint
-
-    assert len(engine_fingerprint()) == 16 and "fit" in ENGINE and "noise.py" in ENGINE
-    assert "gui" not in ENGINE and "report" not in ENGINE
+    out = capsys.readouterr().out
+    assert "0 of 6 spectra kept" in out and "started again" in out and "earlier" in out
+    assert main(["run", str(path), "--overwrite"]) == 0
+    assert "--overwrite is no longer needed" in capsys.readouterr().err
+    assert main(["run", str(path), "--refit"]) == 0
+    assert "--refit is replaced by --fresh" in capsys.readouterr().err

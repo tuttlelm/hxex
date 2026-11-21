@@ -21,6 +21,15 @@ hxex.write_tables(results, "results_tables")
 hxex.write_figures(results, "results_figures", hxex.PlotConfig(series="all"))
 ```
 
+`hxex.run` refuses an `out` that already holds results unless told what to do with them:
+`overwrite=True` brings them up to date, as `hxex run` does (the fits, population test, and
+bootstrap of unchanged spectra are kept; `reuse=False` fits everything again, as `hxex run
+--fresh` does), and `keep_previous=True` first moves them to `results.1`. (The command also takes
+the spectra stored in the bundle when the read would give them again; from Python you read them
+yourself, or pass the stored ones.) `hxex.pipeline.resume_bootstrap` still adds or completes a
+bootstrap, or the population test, on a bundle without refitting, for scripts that called it
+before; the `hxex resume` command is retired.
+
 Plot functions return Matplotlib figures and never show them. Long operations take `progress`
 and `cancel` hooks (`hxex.hooks`). Settings are explicit config objects (`hxex.pipeline.RunConfig`
 and its parts); nothing is set globally.
@@ -131,8 +140,9 @@ with hxex.open_bundle("results") as bundle:        # a bundle folder (a .zip is 
     bundle.set_review(review)
 ```
 
-The spectrum ids are in the `spectrum_id` column of `spectra.csv`. A later `hxex run
---overwrite` carries the review over; entries the new run cannot hold are kept but marked stale.
+The spectrum ids are in the `spectrum_id` column of `spectra.csv`. A later `hxex run` (an
+update, or `--fresh`) carries the review over; entries the new run cannot hold are kept but
+marked stale.
 
 ## Pooled peptides and their proteins
 

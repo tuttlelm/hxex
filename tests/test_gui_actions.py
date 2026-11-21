@@ -527,8 +527,9 @@ def test_the_k_list_decides_and_says_when_the_spectra_differ(qtbot, window_on): 
     assert panel.k.currentData() is None and k_of(sid) == ""
 
 
-def test_add_the_bootstrap_runs_resume_in_the_run_workspace(qtbot, window_on, monkeypatch):  # noqa: F811
-    """A K chosen without a bootstrap at it offers Resume; the button runs hxex resume."""
+def test_add_the_bootstrap_runs_run_in_the_run_workspace(qtbot, window_on, monkeypatch):  # noqa: F811
+    """A K chosen without a bootstrap at it offers Run; the button runs hxex run (Bring up to
+    date)."""
     import hxex.review_table as review_table
     from hxex.gui.session import WORKSPACES
 
@@ -541,13 +542,14 @@ def test_add_the_bootstrap_runs_resume_in_the_run_workspace(qtbot, window_on, mo
     started = []
     monkeypatch.setattr(window.run_page.runner, "start",
                         lambda args, cwd: started.append((args, cwd)))
+    window.run_page.ask_run = lambda rows, up_to_date: "update"
     panel = page.review
     assert panel.resume.isHidden()
     qtbot.keyClick(panel.k, Qt.Key.Key_Down)  # K = 1 chosen: no bootstrap at it
-    assert panel.resume.isVisibleTo(panel) and "Resume" in panel.message.text()
+    assert panel.resume.isVisibleTo(panel) and "with Run" in panel.message.text()
     panel.resume.click()
     assert window.tabs.currentIndex() == WORKSPACES.index("run")
-    assert started == [(["resume", project.name], project.parent)]
+    assert started == [(["run", project.name], project.parent)]
 
 
 # --- the elution editor and the sequence view -------------------------------------------------

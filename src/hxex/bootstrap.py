@@ -179,6 +179,38 @@ class BootstrapResult:
     def __len__(self) -> int:
         return len(self.selected_K)
 
+    def with_width(self, width: int) -> BootstrapResult:
+        """The same bootstrap with its per-population arrays ``width`` populations wide: padded
+        with NaN, or cut (the populations beyond ``width`` of a measurement whose K is above it
+        go; a run gives such a measurement another bootstrap). For fits brought to another
+        ``k_max`` (an update of the results, docs/PLAN.md Next steps 40)."""
+        have = self.A_se.shape[1]
+        if width == have:
+            return self
+
+        def sized(x):
+            if x is None:
+                return None
+            if width < have:
+                return x[:, :width]
+            pad = np.full((x.shape[0], width - have, *x.shape[2:]), np.nan, dtype=x.dtype)
+            return np.concatenate([x, pad], axis=1)
+
+        def sized_draws(x):
+            if width < have:
+                return x[:, :, :width]
+            pad = np.full((*x.shape[:2], width - have), np.nan, dtype=x.dtype)
+            return np.concatenate([x, pad], axis=2)
+
+        draws = self.draws
+        if draws is not None:
+            draws = dataclasses.replace(draws, A=sized_draws(draws.A), n=sized_draws(draws.n),
+                                        p=sized_draws(draws.p))
+        return dataclasses.replace(self, draws=draws, **{
+            name: sized(getattr(self, name)) for name in (
+                "A_se", "n_se", "p_se", "mean_se", "population_se", "A_ci", "n_ci", "p_ci",
+                "mean_ci", "population_ci")})
+
     @classmethod
     def merge(
         cls, parts: Sequence[BootstrapResult], rows: Sequence[Sequence[int]]

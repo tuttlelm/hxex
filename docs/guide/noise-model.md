@@ -19,8 +19,8 @@ offers, how to switch back to the older one, and what the default's one setting 
     a tall peak altogether then pays for it in proportion to the peak, so it explains the
     intensity first. (Until 5 November 2026 it was a share of the measured intensity, so a
     missed peak cost about the same however tall it was, and a fit could prefer a small
-    envelope spread over more bins to a tall one. Results made before keep that rule when
-    they are resumed.)
+    envelope spread over more bins to a tall one. Results made before keep that rule until
+    they are fitted again, which `hxex run` does, since other fitting code made them.)
 - **One noise level per spectrum (the older default).** Every bin of a spectrum gets the same
   noise, 3 % of the tallest peak of its series' undeuterated control (`[run.fit.noise]
   percent`). This is what *hxex* used until 31 October 2026, and what pyHXExpress uses. It is
@@ -65,6 +65,13 @@ run's controls stop matching their natural isotope envelope (detector compressio
 distortion; *hxex* finds this brightness from the controls themselves and reports it). At least
 five series need such controls; with fewer, *hxex* says so and uses one noise level per spectrum
 instead.
+
+An undeuterated control you reject in the review (`review_status = rejected` in your review
+table, or a `[[review.exclude]]` rule) is left out of the noise too, and of that brightness:
+a rejected control is often another species, whose misfit would read as noise. `hxex info`
+counts the controls left out this way. Rejecting a control after the run makes the noise out of
+date (`hxex check` says so), and the next `hxex run` measures it again. One control changes
+`b1` very little, so the fits are usually kept (see [Running again](outputs.md#running-again)).
 
 **Controls shared by samples.** When several samples read the same undeuterated control file (a
 pooled project often does, and so may a copy or a link), *hxex* recognises the copies by their
@@ -123,5 +130,6 @@ estimate = false
 
 This is also needed with `model = "poisson"`, which has no per-bin form. Results made before 31
 October 2026 were fitted with one level per spectrum; `hxex info` says which noise a run used.
-Run them again (with `--overwrite` or `--keep-previous`: every fit changes) to use the per-bin
-noise, and compare only runs made with the same noise model.
+Run them again (`hxex run`, which fits every spectrum again here; add `--keep-previous` to
+keep the earlier results beside them) to use the per-bin noise, and compare only runs made with
+the same noise model.

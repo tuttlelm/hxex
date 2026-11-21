@@ -30,7 +30,7 @@ peptides) can come out a tiny amount different, by about 0.03 in its loss with t
 precision. That is far below anything you would see in its values, but where two numbers of
 populations are within that of each other, the choice can go the other way. A rerun of the same
 project on the same computer gives the same batches (*hxex* records them in the bundle, and
-`hxex resume` fits in them again), so it gives the same results. For results that should agree
+`hxex run` fits in them again when it adds to the results), so it gives the same results. For results that should agree
 to the last digit across computers, set `dtype = "float64"` in `[run.fit.backend]`: the
 differences are then about thirty times smaller, but the fits take longer (on most graphics
 cards, many times longer, since they compute in float64 far more slowly).

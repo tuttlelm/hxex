@@ -64,8 +64,8 @@ analysis, takes the set's. Where they differ, *hxex* writes both:
 
 The sets are the ones `hxex analyse` tests, so they follow the analysis settings: the spectra
 the review rejected, the spectra `[analysis.filters]` leave out, and the times
-`[analysis] exclude_times` leaves out belong to no set, and their `set_K` is empty. `hxex run`,
-`hxex resume`, and `hxex report hxex.toml` take the project file's `[analysis]` settings for
+`[analysis] exclude_times` leaves out belong to no set, and their `set_K` is empty. `hxex run`
+and `hxex report hxex.toml` take the project file's `[analysis]` settings for
 it, as does the window when the results are opened through their project file; a results
 folder opened or reported on its own uses the default analysis settings. In the window the
 set's numbers are worked out together with the "left out" column, so after a review decision
@@ -185,36 +185,31 @@ A single spectrum has less evidence than all the spectra of its peptide together
 population test (self) leaves spectra at one population more often than the population test
 (set) leaves their peptides.
 
-**Adding the test to finished results.** Results made without the test do not need a new run:
-add the `[run.population_test]` table to the project file and type `hxex resume hxex.toml`.
-*hxex* keeps the spectra, the picking, and the fits, runs the test, and gives each spectrum the
-number of populations of the population test (self). The spectra whose number changed get their
-error bars at the new number (taken from the bootstrap at fixed numbers, `ks = [1, 2]`, when the
-results have one). The results are then the same as those of a new run with the test. The test
-uses the results' own noise model, so results fitted with an earlier *hxex* stay consistent with
-themselves. Run `hxex resume hxex.toml` again after changing the test's settings, and the test
-is made again with them.
+**Adding the test to finished results.** Results made without the test do not need to be
+made again from the beginning: add the `[run.population_test]` table to the project file and
+type `hxex run hxex.toml`, which brings the results up to date. *hxex* keeps the spectra, the
+picking, and the fits, runs the test, and gives each spectrum the number of populations of the
+population test (self). The spectra whose number changed get their error bars at the new number
+(taken from the bootstrap at fixed numbers, `ks = [1, 2]`, when the results have one). The
+results are then the same as those of a new run with the test. Run `hxex run hxex.toml` again
+after changing the test's settings (or the D₂O fraction, which the test uses), and the test is
+made again with them. Taking the `[run.population_test]` table out of the project file takes
+the test out of the results at the next `hxex run`.
 
-A different `k_max` needs no new run either: `resume` fits the numbers of populations the
+A different `k_max` needs no fresh start either: `hxex run` fits the numbers of populations the
 results lack (results fitted with `k_max = 1` get their two- and three-population fits) and
 leaves out those above, and keeps every other fit as it is. Simulations the earlier test made
 with the same settings are kept too, so only the new steps are simulated.
 
-Two things need a new run (`hxex run hxex.toml --overwrite`) instead:
-
-- results fitted with `[run.fit]` settings other than the project file's, apart from
-  `k_max` (for example other `adam_steps`): the test is made from the fits, so they must be
-  the ones you want;
-- results fitted with `model = "poisson"` in `[run.fit.noise]`.
-
-Any other change of the project file since the results were made stops `hxex resume`, which
-names each one: a `[run]` setting such as the picking, or an `[input]` setting such as the runs,
-the peptide table, the elution windows, or `[[input.exclude]]`. `resume` never reads or picks
-the spectra again, so these need `hxex run hxex.toml --overwrite`, which fits again only the
-series whose spectra changed. Set them back to resume instead. A project file without `[run.population_test]` leaves a test already in the results in place.
+When the results were fitted with `[run.fit]` settings other than the project file's, apart from
+`k_max` (for example other `adam_steps`), or with `model = "poisson"` in `[run.fit.noise]`,
+`hxex run` fits every spectrum again before it makes the test: the test is made from the fits,
+so they must be the ones you want. Other changes of the project file since the results were made
+(the picking, the runs, the peptide table, the elution windows, or `[[input.exclude]]`) are
+applied by the same `hxex run`, which reads or picks again where needed and fits again only the
+series whose spectra changed. `hxex check hxex.toml` says beforehand what it will do.
 `hxex info` shows when the test was added. The results' `run_settings_used.toml` then holds
-the project file's `[input]` and `[output]` settings, with the `[run]` settings the results
-were made with, the test included.
+the settings the results were made with, the test included.
 
 **How long it takes.** The simulations take ten to twenty times as long as the fits. On the
 [tutorial](tutorial.md)'s 3,874 spectra, on a workstation's CPU: the fits 1.2 minutes, the

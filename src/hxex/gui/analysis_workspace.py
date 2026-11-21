@@ -119,11 +119,12 @@ class AnalysisWorkspace(QWidget):
         self.stop_button.clicked.connect(self.stop)
         self.stop_button.hide()
         # a review K the run's screen skipped: hxex analyse refuses, so does Compute, and
-        # Resume fits it (E-4)
-        self.resume = QPushButton("Fit the chosen K (Resume)…")
-        self.resume.setToolTip(tip("hxex resume: fits (and bootstraps) the K your review chose "
-                                   "where the run's quick screen skipped it; until then the "
-                                   "analysis cannot be made, as hxex analyse refuses it"))
+        # Run fits it (E-4)
+        self.resume = QPushButton("Fit the chosen K (Run)…")
+        self.resume.setToolTip(tip("hxex run: brings the results up to date, which fits (and "
+                                   "bootstraps) the K your review chose where the run's quick "
+                                   "screen skipped it; until then the analysis cannot be made, "
+                                   "as hxex analyse refuses it"))
         self.resume.clicked.connect(lambda: self._resume())
         self.resume.hide()
         # [analysis.fragments] fit_rates, for results with fragment series: written to the
@@ -381,7 +382,7 @@ class AnalysisWorkspace(QWidget):
             return ""
         key, text, _, stamp = made_from
         if self.results_key() != key:
-            return "the results changed (a new run or resume, or a review decision)"
+            return "the results changed (a new run, or a review decision)"
         try:
             now = self._settings()[2]
         except Exception:  # noqa: BLE001 - a project file that does not read now
@@ -919,7 +920,7 @@ class AnalysisWorkspace(QWidget):
             refuse_unfitted(results)
         except ValueError as exc:
             self.status.setText(f"The analysis cannot be made, as hxex analyse refuses it: "
-                                f"{exc} (the Resume button beside Compute runs it).")
+                                f"{exc} (the Run button beside Compute fits it).")
             log.error("the analysis cannot be made: %s", exc)
             return
         if self._cancel is not None:

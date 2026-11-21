@@ -55,26 +55,44 @@ them later and leave the rest alone. The bundle's tables are described in
 [BUNDLE.md](../BUNDLE.md); the CSV tables hold the same results for spreadsheets.
 
 These folders, and their earlier generations (`results.1`, `results.1_tables`,
-`results_figures.1`, ...), belong to *hxex*: every command refuses to write over one unless
-given `--overwrite` or `--keep-previous` (see [Running again](#running-again) below). In all of
-them, *hxex* removes only the files it wrote itself. Keep your own files elsewhere. The
-bundle's own format is described in [BUNDLE.md](../BUNDLE.md).
+`results_figures.1`, ...), belong to *hxex*: the commands write them again whenever they are
+run (see [Running again](#running-again) below). In all of them, *hxex* removes only the files
+it wrote itself. Keep your own files elsewhere. The bundle's own format is described in
+[BUNDLE.md](../BUNDLE.md).
 
 ## Running again
 
-A command that would write into a folder that already holds results stops before it writes
-anything, and says what to do. There are three ways on:
+Each command writes its own folders again whenever you run it; you need not say so.
 
-- `--overwrite`: replace the earlier results in that folder (for the bundle, your review
-  decisions are carried over);
-- `--keep-previous`: first move the folder to the next free name (`results_figures.1`,
-  `results_analysis_WT.1`, ...; the bundle moves to `results.1` together with its tables,
-  figures, and analyses);
-- another folder: `[output] bundle` (or `--bundle`) for `hxex run`, `--tables DIR` or
+- `hxex run` on a project whose results exist brings them up to date: it first lists where
+  the results stand, stage by stage (see "Where the results stand" below), then does again
+  only what is out of date, and keeps the rest (your review decisions included). When nothing
+  is out of date it says `the results are up to date, nothing to do` and changes nothing (it
+  only writes the tables if they are missing or belong to other results).
+- `hxex run --fresh` starts again: it reads your files, picks, and fits everything anew,
+  whatever the earlier results hold.
+- `hxex report` writes its tables (and, with `--figures`, its figures) again, and `hxex
+  analyse` its analysis folders.
+
+A file *hxex* wrote that you then changed (a table opened and saved in a spreadsheet program,
+say) is yours from then on. Every command that would write its folder again (`hxex run`, `hxex
+report`, `hxex analyse`) stops before doing any work and names the file. Copy what you changed
+out of the folder, or delete the file, and run the command again; or add `--keep-previous`,
+which keeps the folder, your file included, under the next free name. `hxex check` names such
+files beforehand, in its `outputs` lines, and so does the window when you press **Run**.
+
+To keep the earlier results as they are, for comparing:
+
+- `--keep-previous` first moves the folder to the next free name (`results_figures.1`,
+  `results_analysis_WT.1`, ...). With `hxex run`, the bundle moves to `results.1` together
+  with its tables, figures, and analyses, and the run then brings a copy up to date in
+  `results`, so you have both.
+- `keep_previous = true` in the `[output]` part of the project file does this every time you
+  start again with `hxex run --fresh`. It does not apply to an ordinary `hxex run`, which
+  keeps no copies (a session of small changes would otherwise fill a disk with near-identical
+  results).
+- Or write somewhere else: `[output] bundle` (or `--bundle`) for `hxex run`, `--tables DIR` or
   `--figures DIR` for `hxex report`, `--out DIR` for `hxex analyse`.
-
-`overwrite = true` or `keep_previous = true` in the `[output]` part of the project file does
-the same for every command, so you need not type the option each time.
 
 With `--keep-previous`, `hxex run` moves the earlier results before it reads anything, so you
 know at once whether it can: on Windows a folder cannot be moved while one of its files is open
@@ -85,75 +103,36 @@ generations: do not give another bundle such a name, since *hxex* would list it 
 
 | Command | Writes | Afterwards out of date |
 |---|---|---|
-| `hxex run` | `results`, `results_tables` | `results_figures`, `results_analysis_...` |
-| `hxex resume` | `results` (adds to it), `results_tables` | `results_figures`, `results_analysis_...` |
+| `hxex run` | `results` (made, or brought up to date), `results_tables` | `results_figures`, `results_analysis_...` |
 | `hxex report` | `results_tables` | |
 | `hxex report --figures` | `results_tables`, `results_figures` | |
 | `hxex analyse` | `results_analysis_...` | |
 
-`hxex resume` adds to the bundle and writes its tables again without asking: they belong to the
-same results (a tables folder made from other results is left as it is, with a warning; `hxex
-report --overwrite` writes it). `hxex report` likewise writes the tables of the same results
-again in place, so `hxex report hxex.toml --figures` right after `hxex run` needs no
-`--overwrite` for them; the figures folder, and tables made from other results, follow the rule
-above. One exception keeps your work safe: if you changed one of the tables after *hxex* wrote
-it (opened `spectra.csv` and saved it, say), `hxex report` stops and names the file. Copy what
-you changed out of the folder first (a review table belongs next to `hxex.toml`), or give
-`--overwrite` to replace it (*hxex* says which files it replaced) or `--keep-previous` to keep
-the folder as `results_tables.N`. Its last line names both folders, for example `5 table(s) in results_tables (review: 1
-rejected); 12 figure file(s) in results_figures`. After `hxex run` or `hxex resume`, *hxex* warns about every figures and analysis
-folder made from other results, and `hxex info results` lists each folder as `up to date` or
-`made from earlier results`. To bring them up to date:
+One exception keeps your work safe: if you changed one of the tables after *hxex* wrote it
+(opened `spectra.csv` and saved it, say), `hxex report` stops and names the file. Copy what
+you changed out of the folder first (a review table belongs next to `hxex.toml`) or delete the
+file, then report again; or give `--keep-previous` to keep the folder as `results_tables.N`.
+Its last line names both folders, for example `5 table(s) in results_tables (review: 1
+rejected); 12 figure file(s) in results_figures`. After `hxex run`, *hxex* warns about every
+figures and analysis folder made from other results, and `hxex info results` lists each folder
+as `up to date` or `made from earlier results`. To bring them up to date:
 
 ```bash
-hxex report hxex.toml --figures --overwrite
-hxex analyse hxex.toml --overwrite
+hxex report hxex.toml --figures
+hxex analyse hxex.toml
 ```
 
+`hxex report` and `hxex analyse` use the results as they are. When the project file has
+changed since the results were made, they warn that the results are not up to date and name
+what is out of date; `hxex run hxex.toml` brings them up to date first.
+
 `hxex check hxex.toml` lists these folders under `outputs`: which exist, whether each was made
-from the results in the bundle now, and which command writes each, with one closing line on
-`--overwrite` and `--keep-previous`. They are information, not problems: the check still ends with `ok`, since each
-command stops by itself, before doing any work.
-
-**Spectra kept from the earlier results.** When `hxex run` replaces a bundle (`--overwrite`
-or `--keep-previous`) and nothing that decides the read has changed, it takes the raw spectra
-stored in that bundle instead of reading your data files again. Nothing has changed when the
-`[input]` settings, the peptide table, the elution-window table, the FASTA files, and, for
-mzML and Thermo files, the `[run.picker]` settings are the same, and every data file still has
-the size and checksum it had when it was read. A change of preset or of the fitting settings
-is not such a change, so the run goes straight to fitting. The log says either `taking the raw
-spectra stored in results` or why the input is read (`reading the input: [input] scans changed
-...`), and `hxex info results` says `read  not repeated` when the read was skipped.
-`hxex run --overwrite --reread` reads the input again in any case. A newer *hxex* whose readers
-changed reads again by itself, and so do results made before 16 November 2026, which do not
-record what their read depended on; results written with `keep_spectra = false` have no
-spectra to take.
-
-**Fits kept from the earlier results.** When `hxex run` replaces a bundle (`--overwrite` or
-`--keep-previous`), it picks every spectrum (the picking stored in the bundle is taken when
-the spectra, the picking settings, and *hxex*'s picking code are the same), but it does not fit again the
-peptides and fragments whose spectra are all exactly as before: each keeps its fits,
-population test, and bootstrap from the earlier results. Only what changed is fitted, so a run
-after a small change (a retention window edited in the window, one spectrum left out, a peptide
-added) takes minutes rather than the full time. Everything that uses all the spectra at once
-(the controls, the noise measured from the undeuterated controls, the quality flags) is worked
-out again, so the results are those a full run would give. The run's log says how many spectra
-kept their fits, and `hxex info results` repeats it (`fits reused`). Nothing is kept when the
-`[run.fit]`, `[run.population_test]`, or `[run.bootstrap]` settings changed, when the noise
-measured from the undeuterated controls changed (an undeuterated control edited, for example),
-or when *hxex*'s fitting code differs from the one that made the earlier fits; the log says
-which, and names the versions that differ. A newer *hxex* whose changes lie elsewhere (the
-window, the figures, the documentation) keeps them. So does another computer: fits made on a
-graphics card are kept when you run the project again on a laptop without one, and the other
-way round, as long as the device is the only difference (`[run.fit.backend] device` does not
-count as a changed setting). Their values then agree with a fresh fit to the last digits of
-the arithmetic, and `hxex info results` names the software they were made with. Results made
-before 11 November 2026 do not record their fitting code, so they are kept only by the very
-same software. `hxex run --overwrite --refit` fits everything again.
+from the results in the bundle now, and which command writes each. They are information, not
+problems: the check still ends with `ok`.
 
 **Where the results stand.** `hxex check hxex.toml` ends with one line per stage of the run,
 from the reading of your files to the bootstrap, saying how the results in the bundle compare
-with the project as it is now:
+with the project as it is now, and one line saying what `hxex run` would do now:
 
 ```
 stages         read: done
@@ -162,8 +141,8 @@ stages         read: done
                fit: out of date ([run.fit] k_max: 3, was 2)
                population test: out of date (after the fit)
                correction and flags: out of date ([run.controls] fulldeut_at: 20 h, was unset (which spectra are controls))
-               bootstrap: not done (stopped partway: hxex resume continues it)
-hxex run       with --overwrite or --keep-previous: takes the stored spectra, keeps the picking, measures the per-bin noise again, fits every spectrum again ([run.fit] changed), works out the correction and the quality flags again
+               bootstrap: not done (stopped partway: hxex run continues it)
+hxex run       takes the stored spectra, keeps the picking, measures the per-bin noise again, keeps the fits, fits the K missing (k_max 3), makes the population test again, makes the bootstrap (it stopped partway), works out the correction and the quality flags again
 ```
 
 Each stage is `done`, `out of date` (with what changed: a setting with its value now and
@@ -173,23 +152,70 @@ or stopped partway), or `off` (not asked for, such as the population test withou
 `[run.population_test]` table). The stages are the read of your files, the pick (the peaks
 of each spectrum), the noise (measured from the undeuterated controls), the fit, the
 population test, the correction and flags (the back-exchange correction and the quality
-flags), and the bootstrap. The last line says what `hxex run` would do now when it replaces
-the results (`--overwrite`, `--keep-previous`, or the same switches under `[output]`), as
-described in the two paragraphs above. `hxex info hxex.toml` prints the same lines; `hxex info
-results`, given the bundle alone, says only what the bundle knows of itself (a stage stopped
-partway, or made by another version of *hxex*). The analysis folders are listed under
-`outputs`, as before. Results made before 20 November 2026 do not record the code of their
-picking and correction; the check says so, and judges those stages on their settings alone.
-None of this is a problem for the check: it still ends with `ok`.
+flags), and the bootstrap. When every stage is `done` or `off`, the last line says `nothing
+to do: the results are up to date`. `hxex run` prints the same lines at its start, before it
+does anything. `hxex info hxex.toml` prints them too; `hxex info results`, given the bundle
+alone, says only what the bundle knows of itself (a stage stopped partway, or made by another
+version of *hxex*). The analysis folders are listed under `outputs`, as before. Results made
+before 20 November 2026 do not record the code of their picking and correction: those two
+stages read out of date (`made before hxex recorded its picking code`), and the next `hxex
+run` does them once more. None of this is a problem for the check: it still ends with `ok`.
+
+What `hxex run` keeps and what it does again, stage by stage:
+
+**Spectra kept from the earlier results.** When nothing that decides the read has changed,
+`hxex run` takes the raw spectra stored in the bundle instead of reading your data files
+again. Nothing has changed when the `[input]` settings, the peptide table, the elution-window
+table, the FASTA files, and, for mzML and Thermo files, the `[run.picker]` settings are the
+same, and every data file still has the size and checksum it had when it was read. A change of
+preset or of the fitting settings is not such a change, so the run goes straight to fitting.
+The log says either `taking the raw spectra stored in results` or why the input is read
+(`reading the input: [input] scans changed ...`), and `hxex info results` says `read  not
+repeated` when the read was skipped. A newer *hxex* whose readers changed reads again by
+itself, and so do results made before 16 November 2026, which do not record what their read
+depended on; results written with `keep_spectra = false` have no spectra to take.
+
+**Fits kept from the earlier results.** `hxex run` takes the picking stored in the bundle when
+the spectra, the picking settings, and *hxex*'s picking code are the same, and picks again
+otherwise. It does not fit again the peptides and fragments whose spectra are all exactly as
+before: each keeps its fits from the earlier results. Only what changed is fitted, so a run
+after a small change (a retention window edited in the window, one spectrum left out, a
+peptide added) takes minutes rather than the full time. Everything that uses all the spectra
+at once (the controls, the noise measured from the undeuterated controls, the quality flags)
+is worked out again every time, so the results are those a full run would give. The run's log
+says how many spectra kept their fits, and `hxex info results` repeats it (`fits reused`).
+Every spectrum is fitted again when a `[run.fit]` setting other than `k_max` changed, when the
+noise measured from the undeuterated controls moved by more than 1 % (its counting term, b1,
+which every spectrum's noise uses: an undeuterated control edited or added moves it a little,
+and below 1 % the earlier noise is kept, so that the fits can be), or when *hxex*'s fitting code differs from the one that made the earlier fits; the
+log says which, and names the versions that differ. A newer *hxex* whose changes lie elsewhere
+(the window, the figures, the documentation) keeps them. So does another computer: fits made
+on a graphics card are kept when you run the project again on a laptop without one, and the
+other way round, as long as the device is the only difference (`[run.fit.backend] device` does
+not count as a changed setting). Their values then agree with a fresh fit to the last digits
+of the arithmetic, and `hxex info results` names the software they were made with. Results
+made before 11 November 2026 do not record their fitting code, so they are kept only by the
+very same software.
+
+**What else is done again.** When only `k_max` changed (moving to another
+[preset](presets.md), for example), the fits are kept and only the K missing are fitted (or
+those above the new `k_max` dropped). The [population test](population-test.md) is made again
+when its settings, the D2O fraction, or the K fitted changed, added when you add a
+`[run.population_test]` table, and removed when you take it away; otherwise each series keeps
+its test. The bootstrap is made again when its settings changed (`n_boot`, for example) or when it
+stopped partway; a fixed K newly listed in `ks` is added alone, and so is a
+bootstrap at a K your review table chose for a spectrum. `hxex info results` lists each update
+of the bundle with what it did again (see [BUNDLE.md](../BUNDLE.md)).
+
+`hxex run --fresh` keeps nothing: it reads, picks, and fits everything again.
 
 Rerunning with more or fewer spectra can change results even for spectra you did not touch: a
 few values (stand-in controls, outlier limits, the comparisons' critical difference) come from
 the whole project. [Analysing part of a dataset](part-of-a-dataset.md) lists them.
 
-Deleting only the `results` folder does not start afresh: its tables, figures, and analysis
-folders stay beside it, and the next `hxex run` stops at the tables folder. To start afresh,
-delete every folder whose name starts with `results`, or use `--overwrite` or
-`--keep-previous`.
+Deleting only the `results` folder makes the next `hxex run` start from the beginning, as
+`--fresh` does; it writes the tables folder again, and the figures and analysis folders left
+beside it are listed as made from earlier results until you write them again.
 
 ## Words used in the tables
 
@@ -320,7 +346,7 @@ Flags mark spectra for review; nothing is dropped. They appear in the `flags` co
 
 New flags are added to *hxex* from time to time. Results made before a flag existed do not
 have it: the run that made them could not set it. When you open such results, *hxex* says that
-an earlier version assessed their flags (`hxex info` says so too), and `hxex resume hxex.toml`
+an earlier version assessed their flags (`hxex info` says so too), and `hxex run hxex.toml`
 assesses every flag again with the current version, keeping the fits.
 
 Every flag is listed with what it means, what *hxex* does about it, and what to look at in
@@ -373,7 +399,7 @@ same way, and a flattened envelope is what two populations side by side look lik
 Results made before 20 November 2026 may carry the flag `bright`: it marked every labelled
 spectrum at least as bright as a flagged control of its series. Those spectra were no further from
 their replicates and chose two populations as often as their dimmer siblings, so it was retired;
-`hxex resume hxex.toml` assesses the flags again without it.
+`hxex run hxex.toml` assesses the flags again without it.
 
 What to do: none of these flags removes or changes anything. When a result rests on a
 `saturated` series, check its corrected uptake against the peptide's other charge states. When
@@ -854,13 +880,13 @@ paper, say) without keeping the project file in step:
 - `analysis_settings_used.toml`, in each analysis folder: the settings of `hxex analyse`.
   Beside it is a copy of the run's `run_settings_used.toml` (with an analysis of several runs,
   one per run: `run_settings_used_A.toml`, ...). The analysis folder therefore still says how
-  its results were made after `hxex run --overwrite` has replaced the bundle.
+  its results were made after `hxex run` has updated or replaced the bundle.
 
 `hxex run` leaves the analysis folders as they were, so for a while they describe the earlier
 results. `hxex info results` lists each analysis folder as `up to date` or `made from earlier
 results`, and `hxex analyse` warns about the other analysis folders of the same results that
-are out of date. Run `hxex analyse --overwrite` again (with that folder's `--reference`) to
-bring one up to date.
+are out of date. Run `hxex analyse` again (with that folder's `--reference`) to bring one up
+to date.
 
 Both are ordinary project files: open them in a text editor to read them, or copy one out of
 its folder and use it as a project file to repeat the run. *hxex* writes them with the

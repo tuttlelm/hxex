@@ -19,7 +19,7 @@ def _elsewhere(folder):
 def _specexport(folder):
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "SpecExport").mkdir()
-    text = template().replace("overwrite = false ", "overwrite = true  ", 1)
+    text = template().replace("keep_previous = false ", "keep_previous = true  ", 1)
     text += f"""
 [review]
 table = "user_review_table.csv"
@@ -62,11 +62,11 @@ def test_a_copy_in_another_folder_reads_the_same_data(tmp_path):
     assert text.startswith("# my own note at the top")  # comments kept
     assert "# the reference's own sequence" in text
     assert copy.output.bundle == tmp_path / "second" / "results_v2"
-    assert not copy.output.overwrite
+    assert not copy.output.keep_previous
     assert copy.review is None or copy.review.table is None
     assert "exclude" not in _data(target).get("review", {})
     assert any("2 rule(s) removed" in line for line in said)
-    assert any("overwrite cleared" in line for line in said)
+    assert any("keep_previous cleared" in line for line in said)
     assert _data(target)["analysis"]["reference"] == "WT"  # other settings kept
 
 
@@ -78,7 +78,7 @@ def test_a_copy_beside_the_original_keeps_its_paths(tmp_path):
     assert data["input"]["data_dir"] == "SpecExport"
     assert data["analysis"]["fasta"]["WT"] == "sequences/wt.fasta"
     assert not any("data_dir" in line for line in said)
-    assert source.read_text(encoding="utf-8").count("overwrite = true") == 1  # untouched
+    assert source.read_text(encoding="utf-8").count("keep_previous = true") == 1  # untouched
 
 
 def test_scan_runs_keep_their_files_through_data_root(tmp_path):

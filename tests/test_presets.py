@@ -230,55 +230,60 @@ def _same_results(a, b):
                 assert np.allclose(ba.mean_se, bb.mean_se, equal_nan=True, atol=1e-12)
 
 
-def test_resume_moves_a_quick_run_up_to_bimodal_as_a_new_run_would(tmp_path, capsys):
+def test_run_moves_a_quick_run_up_to_bimodal_as_a_new_run_would(tmp_path, capsys):
+    """A preset changed after the run: hxex run fits only the K missing (or drops those above),
+    makes the population test again keeping the null of the steps it had, and gives what a new
+    run with the preset gives (docs/PLAN.md Next steps 40)."""
     path = _preset_project(tmp_path / "a", "quick")
     assert cli.main(["-q", "run", str(path)]) == 0
     with open_bundle(tmp_path / "a" / "out") as b:
         assert b.fit().k_values == (1, 2) and b.bootstrap() is None
     _switch(path, "quick", "bimodal")
     capsys.readouterr()
-    assert cli.main(["resume", str(path)]) == 0
-    assert ("fitting K = 3 (k_max 2 -> 3); the fits at K = 1, 2 are kept"
-            in capsys.readouterr().err)
+    assert cli.main(["run", str(path)]) == 0
+    assert "the kept fits: fitting K = 3 (k_max 2 -> 3)" in capsys.readouterr().err
     fresh = _preset_project(tmp_path / "b", "bimodal")
     assert cli.main(["-q", "run", str(fresh)]) == 0
     _same_results(tmp_path / "a" / "out", tmp_path / "b" / "out")
     with open_bundle(tmp_path / "a" / "out") as b:
         assert b.manifest["configs"]["project_file"]["preset"]["name"] == "bimodal"
-        assert any("fits to K = 3" in r.get("added", "")
-                   for r in b.manifest["provenance"]["resumed"])
+        assert b.manifest["provenance"]["redone"] == ["fits to K = 3", "population test",
+                                                      "bootstrap"]
     # and across: bimodal to multimodal simulates the 2-against-3 step only
     _switch(path, "bimodal", "multimodal")
     capsys.readouterr()
-    assert cli.main(["resume", str(path)]) == 0
+    assert cli.main(["run", str(path)]) == 0
     err = capsys.readouterr().err
     assert "1 against 2: the null simulations of 6 spectra kept from the earlier test" in err
     assert "2 against 3: 10 null simulations of" in err
     assert "1 against 2: 10 null simulations" not in err
     _switch(fresh, "bimodal", "multimodal")
-    assert cli.main(["-q", "run", "--overwrite", str(fresh)]) == 0
+    assert cli.main(["-q", "run", "--fresh", str(fresh)]) == 0
     _same_results(tmp_path / "a" / "out", tmp_path / "b" / "out")
     # back to bimodal: nothing simulated, the 2-against-3 step a chi-square flag again
     _switch(path, "multimodal", "bimodal")
     capsys.readouterr()
-    assert cli.main(["resume", str(path)]) == 0
+    assert cli.main(["run", str(path)]) == 0
     assert " 10 null simulations of" not in capsys.readouterr().err
     with open_bundle(tmp_path / "a" / "out") as b:
         test = b.population_test()
         assert test.config.decide_up_to == 2 and set(test.null_kind[:, 1]) <= {"chi_square", ""}
-    # down to quick: refused, the results hold more than it gives
+    # down to quick: the fits above K = 2 go, as a new quick run (with the same bootstrap
+    # table) gives
     path.write_text(path.read_text().replace('preset = "bimodal"', 'preset = "quick"'))
-    capsys.readouterr()
-    assert cli.main(["resume", str(path)]) == 1
-    assert "the results already hold more than that" in capsys.readouterr().err
+    assert cli.main(["-q", "run", str(path)]) == 0
+    other = _preset_project(tmp_path / "c", "quick")
+    other.write_text(other.read_text() + FAST_BOOT)
+    assert cli.main(["-q", "run", str(other)]) == 0
+    _same_results(tmp_path / "a" / "out", tmp_path / "c" / "out")
 
 
-def test_resume_refuses_other_fit_settings_beside_k_max(tmp_path, capsys):
+def test_run_fits_everything_again_for_other_fit_settings_beside_k_max(tmp_path, capsys):
     path = _preset_project(tmp_path, "quick")
     assert cli.main(["-q", "run", str(path)]) == 0
     _switch(path, "quick", "bimodal")
     path.write_text(path.read_text().replace("adam_steps = 60", "adam_steps = 70", 1))
     capsys.readouterr()
-    assert cli.main(["resume", str(path)]) == 1
+    assert cli.main(["run", str(path)]) == 0
     err = capsys.readouterr().err
-    assert "[run.fit] adam_steps: 70, was 60" in err and "--overwrite" in err
+    assert "[run.fit] adam_steps: 70, was 60" in err and "fitting every spectrum" in err

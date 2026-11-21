@@ -96,3 +96,24 @@ def test_tables_and_figures_are_listed_and_replaced(tmp_path, results):
     second = write_figures(results, figures, pdf)
     assert len(second) == 1  # the png files of the earlier call are gone
     assert sorted(p.name for p in figures.iterdir()) == sorted([LISTING, second[0].name])
+
+
+def test_a_file_hxex_wrote_and_you_changed_is_never_replaced(tmp_path):
+    """A listed file changed since hxex wrote it is yours now (owner, 2026-11-20): writing the
+    folder again is refused, naming it, also with overwrite; keep_previous moves it aside."""
+    from hxex.io.outputs import prepare_output
+
+    folder = tmp_path / "tables"
+    with replace_outputs(folder, ["a.csv", "b.csv"]) as written:
+        for name in ("a.csv", "b.csv"):
+            (folder / name).write_text("hxex\n")
+            written.append(folder / name)
+    (folder / "b.csv").write_text("mine\n")
+    for attempt in (lambda: prepare_output(folder, overwrite=True),
+                    lambda: replace_outputs(folder, ["a.csv"]).__enter__()):
+        with pytest.raises(OutputError, match="b.csv changed after hxex wrote it"):
+            attempt()
+    assert (folder / "a.csv").read_text() == "hxex\n"  # nothing touched
+    assert (folder / "b.csv").read_text() == "mine\n"
+    moved = prepare_output(folder, keep_previous=True)
+    assert (moved / "b.csv").read_text() == "mine\n" and not folder.exists()

@@ -24,14 +24,14 @@ The bundle and the folders named after it (`results_tables`, `results_figures`,
 the analysis folders `results_analysis` and `results_analysis_<reference>` (named after the
 reference the analysis compares with), and the earlier generations `results.1`,
 `results.1_tables`, `results.1_figures`, `results.1_analysis_<reference>`, or `results.1.zip`
-for a zip) are hxex's: a later `hxex run` replaces or renames them. Three kinds of content
+for a zip) are hxex's: a later `hxex run` brings them up to date, replaces, or renames them. Three kinds of content
 live there and are treated differently:
 
 - **Computed results** (the bundle's tables, the CSV tables, the figures, and the settings
   files `run_settings_used.toml` and `analysis_settings_used.toml`) are replaced. A
   bundle directory is replaced file by file as above. A tables, figures, or analysis folder
   keeps a listing of the files hxex wrote, `hxex_listing.json`; writing again (`hxex run`,
-  `resume`, `report`, `analyse`, `write_tables`, `write_figures`, `write_analysis`) removes the listed files and writes the new ones,
+  `report`, `analyse`, `write_tables`, `write_figures`, `write_analysis`) removes the listed files and writes the new ones,
   so the folder holds what the current bundle gives. A folder with files but no listing (one
   written before the listing existed) is written only if no file in it is named like a new
   one.
@@ -46,23 +46,34 @@ live there and are treated differently:
   about to write stops the run before anything changes; keep your own files elsewhere, or
   under other names.
 
-`hxex run --overwrite` (or `[output] overwrite = true`) replaces in place; `--keep-previous`
-(`keep_previous = true`) first moves the bundle, with its `_tables`, `_figures`, and
-analysis folders, to the next generation (`results.N`, `results.N_tables`,
-`results.N_figures`, `results.N_analysis_<reference>`; N is one more than
-any number ever used beside the bundle, so a name is never reused; `hxex.io.keep_previous`).
-A tables directory named explicitly in `[output]`, or an analysis directory named by
-`[analysis] out` or `--out`, is not moved with the bundle; it follows the rule of every output
-folder (owner, 2026-10-21): a folder whose listing (`hxex_listing.json`) names files is refused
-by the command about to write it (`hxex run` for its tables, before anything is fitted; `hxex
-report`; `hxex analyse`) unless `--overwrite` (its hxex files are replaced) or
-`--keep-previous` (it moves to `NAME.N` first, N never reused; `hxex.io.prepare_output`), or
-`[output] overwrite` / `keep_previous`. `hxex resume` rewrites the tables of the bundle it adds to without asking (beside it by
-default; a folder there made from other results is left as it is, with a warning). Every listing records the bundle it was made from (`made_from`: the
-bundle's `created` stamp), so `hxex info` and the warnings after `hxex run` and `hxex resume`
-name the tables, figures, and analysis folders made from other results. `hxex run` does not
-write the analysis or the figures: after it they describe the replaced results until `hxex
-analyse` or `hxex report --figures` runs again. `hxex info` lists the generations (`hxex.io.generations`) and the provenance below.
+`hxex run` on a project whose bundle exists updates it in place: it compares the project with
+the bundle stage by stage (`hxex.stages.standing`, the manifest's `stages` below), takes the
+stored spectra and picking where they would come out the same, keeps the fits, population
+test, and bootstrap of the spectra whose input is unchanged (`hxex.reuse`), does again only
+what is out of date, and rewrites the bundle with a provenance entry for the update (below).
+When nothing is out of date it writes nothing. `hxex run --fresh` makes everything again and
+replaces the bundle in place. No option is needed for either (the manifest records no
+`overwrite`; `[output] overwrite` is refused in a project file). `--keep-previous` first moves
+the bundle, with its `_tables`, `_figures`, and analysis folders, to the next generation
+(`results.N`, `results.N_tables`, `results.N_figures`, `results.N_analysis_<reference>`; N is
+one more than any number ever used beside the bundle, so a name is never reused;
+`hxex.io.keep_previous`) and updates from it; `[output] keep_previous = true` does the same
+whenever the run starts again with `--fresh` (and only then). A tables directory named
+explicitly in `[output]`, or an analysis directory named by `[analysis] out` or `--out`, is not
+moved with the bundle; it follows the rule of every output folder (owner, 2026-10-21,
+2026-11-20): the command that writes it (`hxex run` for its tables; `hxex report`; `hxex
+analyse`) writes its hxex files again, or with `--keep-previous` moves it to `NAME.N` first (N
+never reused; `hxex.io.prepare_output`). Every command refuses a folder
+holding files changed after hxex wrote them (their checksums in the listing differ;
+`hxex.io.outputs.edited_refusal`; `hxex check` names them) unless `--keep-previous`, also with
+`overwrite=True`; from Python,
+`prepare_output` refuses a folder holding hxex output unless given `overwrite=True` or
+`keep_previous=True`. Every listing records the bundle it was made from (`made_from`: the
+bundle's `created` stamp), so `hxex info` and the warnings after `hxex run` name the tables,
+figures, and analysis folders made from other results. `hxex run` does not write the analysis
+or the figures: after it they describe the earlier results until `hxex analyse` or `hxex
+report --figures` runs again. `hxex info` lists the generations (`hxex.io.generations`) and the
+provenance below.
 
 ## Keys and conventions
 
@@ -90,29 +101,34 @@ analyse` or `hxex report --figures` runs again. `hxex info` lists the generation
 `kind` (`hxex-results-bundle`), `schema_version`, `created` (UTC, to the millisecond; to the
 second in bundles written before 2026-11-09), `project`, `notes`, `versions` (python, hxex, numpy, scipy, torch, pyarrow, pyteomics, and `hxex_commit` when
 known), `fitted_with` (the same keys for the software that made the fits, the population test
-and the bootstrap: a run's own; `hxex resume` keeps the bundle's when the software resuming is
-the same, else writes `{"mixed": true}`; absent before 2026-11-07, read then as `versions` when
-no resume rewrote the bundle; `hxex.reuse` compares it), `k_values` (the K tried),
+and the bootstrap: a run's own (fits an update kept from other software with the same fitting
+code are named in the provenance's `fits_reused_made_with`); `hxex.pipeline.resume_bootstrap`
+keeps the bundle's when the software is the same, else writes `{"mixed": true}`; absent before
+2026-11-07, read then as `versions` when nothing rewrote the bundle; `hxex.reuse` compares it), `k_values` (the K tried),
 `n_measurements`, `pending` (the stages the run has still to add: `["bootstrap"]` for the
 bundle a run writes as soon as its fits are done, which it rewrites complete at the end, or
-`hxex.pipeline.resume_bootstrap` completes if the run stopped during the bootstrap; empty or absent
-when complete), `provenance` (null for a bundle written where there was none; for one that
-replaced a bundle: `replaced` (its path), `replaced_created` and `replaced_hxex` (its stamp
-and version), `at`, `moved_to` (the generation it was moved to with `keep_previous`, else
-null), `settings_changed` (the dotted paths of the run settings that differ, `fit.k_max`,
+the next `hxex run` completes (or `hxex.pipeline.resume_bootstrap`) if the run stopped during
+the bootstrap; empty or absent when complete), `provenance` (null for a bundle written where
+there was none; for one that updated or replaced a bundle: `replaced` (its path),
+`replaced_created` and `replaced_hxex` (its stamp and version), `at`, `moved_to` (the
+generation it was moved to with `keep_previous`, else null), `settings_changed` (the dotted paths of the run settings that differ, `fit.k_max`,
 and `spectra_source` when other files were read or read differently) and `review`
 (`carried`, `stale`: the review entries carried over and how many are stale), `fits_reused`
 and `spectra` (how many of the run's spectra kept the replaced bundle's fit, population test
 and bootstrap because their series' input was unchanged, out of how many; `hxex.reuse`;
 absent before 2026-11-07), `spectra_taken` (true when the run took the replaced bundle's
-stored spectra instead of reading the input: `hxex.stored_read`; absent otherwise);
-`hxex.io.provenance_of` builds it, and a resumed bundle keeps it; `resumed` lists what
-`hxex resume` added to the bundle since, one entry each: `at`, `added` (`population test`,
-`bootstrap` (added or made again), `bootstrap at chosen K` (the K a review chose), or
-`bootstrap at set K` (the spectra of sets with three populations or more, at that number:
-`[run.bootstrap] set_k`))
-and `project_file_replaced` (whether the record of the project file, `configs.project_file`,
-was replaced by the one resume was given)), `peak_measure` (whether the
+stored spectra instead of reading the input: `hxex.stored_read`; absent otherwise),
+`fits_reused_made_with` (the software that made kept fits, when other than this run's),
+`redone` (what the update did to the results it kept, in words: `fits to K = 3`,
+`population test`, `population test taken away`, `bootstrap`, `bootstrap at K = 2`; empty when
+the kept results needed nothing more; absent before 2026-11-20), `fresh` (true for `hxex run
+--fresh`, which kept nothing; absent before 2026-11-20), and `history` (the earlier updates,
+oldest first, each the provenance block its manifest held, without its own `history`; absent
+before 2026-11-20, `hxex info` lists them as `earlier` lines and the latest as `updated`,
+`started again`, or `replaced`); `hxex.io.provenance_of` builds it. Bundles written by the
+retired `hxex resume` may also hold `resumed`: what it added, one entry each, with `at`,
+`added` (`population test`, `bootstrap`, `bootstrap at chosen K`, or `bootstrap at set K`) and
+`project_file_replaced`; `hxex.pipeline.resume_bootstrap` still writes it), `peak_measure` (whether the
 bins took the peaks' heights or areas: `measure`, `setting` (the `[run.picker] measure` it came
 from), `fwhm_ppm` and `fwhm_exponent` (the peak width at m/z 1000 and its power in m/z),
 `width_ratio`, `n_controls`, `n_weak`, `area_fwhm`, `area_scale` and `reason`; with `pick =
@@ -122,11 +138,12 @@ at >= 60 %, 20-60 % and 5-20 % of their spectrum's tallest, each 1 at its apex; 
 class, 0 for a Gaussian; `n_controls`; `hxex.picking.profile.PeakShape`); absent in bundles
 written before 2026-10-27, whose bins are heights; `hxex.picking.PeakMeasure`), `chunk_plan`
 (the chunks the fits were made in: `budget_bytes` and `series`, the `data_id` of each chunk's
-series; `hxex resume` fits and tests in them, so that its fits are made as the run's were;
+series; an update that fits more K or makes the test again fits and tests in them, so that
+its fits are made as the run's were;
 absent before 2026-11-02; `hxex.pipeline.chunk_record`), `quality_version` (the version of
 the checks that assessed the quality flags, `hxex.quality.QUALITY_VERSION`; absent: 0, before
-2026-11-08; a resume that keeps the flags keeps it, and `hxex resume` assesses flags of an
-earlier version again), `noise_curve`
+2026-11-08; `hxex run` assesses the flags again on every update, so it writes the current
+version), `noise_curve`
 (with `[run.fit.noise] estimate = "controls"`, the default since 2026-10-31, when enough
 controls measured it: the per-bin noise the fit used, `b1`,
 `b1_se`, `model_error` (a share), `onset` (null: none), `n_controls`, `n_series` and `by_sample`
@@ -136,9 +153,10 @@ fingerprint of the code that made it, `hxex._engine`: the read's from the read p
 noise's, fit's, population test's and bootstrap's the engine of `fitted_with`, the pick's and
 the correction's recorded here only; null where not known) and `state` (`done`, `pending`:
 stopped partway, or `off`: not made); worked out from the rest of the manifest
-(`hxex.stages.record`), except the pick's and correction's code, which a resume keeps unless
-it made them again; absent before 2026-11-20; `hxex check` and `hxex info` compare it with
-the project, `hxex.stages.standing`), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry; bundles written before 2026-10-20 also hold `run.plots`, the figure settings of the time, which are ignored when read: figures are drawn by `hxex report`): the settings as written by the
+(`hxex.stages.record`), except the pick's and correction's code, which
+`hxex.pipeline.resume_bootstrap` keeps unless it made them again; absent before 2026-11-20;
+`hxex check`, `hxex info`, and `hxex run` compare it with the project,
+`hxex.stages.standing`), `configs` (`fit`, `bootstrap`, `picker`, `controls`, `quality`, `envelope`, `run` (the whole run configuration, including the modification registry; bundles written before 2026-10-20 also hold `run.plots`, the figure settings of the time, which are ignored when read: figures are drawn by `hxex report`): the settings as written by the
 `to_dict` of each config; the fit config includes the noise settings and the device;
 `spectra_source`: how the raw spectra were read, recorded whether or not they are stored, or
 null: for `read_mzml` the reader, project, runs (path, sample, rep, time, time offset, and
@@ -181,14 +199,15 @@ project file (`hxex.config.read_input`, since 2026-11-16) carries `read_plan`: w
 depended on, worked out before any data file was opened (the readers' code fingerprint, the
 `[input]` settings, the entries or targets of the peptide table, the elution-window rows, the
 picker and registry for scan files, the identities of FASTA, retention-time, and pooled FASTA
-files); `hxex run` replacing the bundle compares it with the project's, and the `files`
+files); `hxex run` updating the bundle compares it with the project's, and the `files`
 identities with the data, before taking the stored spectra (`hxex.stored_read`). Neither
 `stored_in` nor `read_plan` counts as a changed `spectra_source` in the provenance;
 `project_file`: the project file's other settings as the run used them (`project`, `threads`,
 `input` and `output`, each table with every setting written out and the command line's
-`--bundle`, `--overwrite`, and `--keep-previous` applied; paths recorded as `[input]
+`--bundle` and `--keep-previous` applied; records written before 2026-11-20 may hold
+`overwrite`, which is left out when they are read; paths recorded as `[input]
 record_paths` says), or null for a run from Python; `hxex.config.project_record` builds it,
-and a resumed bundle keeps it). Then
+and a bundle completed by `hxex.pipeline.resume_bootstrap` keeps it). Then
 `files`: for each file its `rows`, `bytes`, `sha256` (and `derived: true` for the tidy table).
 
 ## run_settings_used.toml
@@ -212,8 +231,8 @@ folder: `analysis_settings_used.toml` (the `[analysis]` table with every setting
 `hxex.config.analysis_settings_text`) and the run settings of the results it read, written
 from their manifests (also for bundles from before the file existed): `run_settings_used.toml`
 for one bundle, `run_settings_used_RUN.toml` for each run of an analysis of several. An
-analysis folder therefore keeps the settings of the results it was made from after `hxex run
---overwrite` replaces the bundle. The analysis folder's listing covers these files, and
+analysis folder therefore keeps the settings of the results it was made from after `hxex run`
+updates or replaces the bundle. The analysis folder's listing covers these files, and
 records the results read: `made_from` (run name, empty for a single bundle, to the bundle's
 `created` stamp; `hxex.io.made_from`). `hxex info` compares it with the bundle and lists each
 analysis folder as up to date, made from earlier results, or not known (a folder written
@@ -230,7 +249,7 @@ earlier results (`hxex.io.bundle.analysis_states`).
 | `noise_estimate.parquet` | measurement | when the noise was estimated from replicates: `gain`, `estimated`, `reason` (why a series was not estimated), `score` (consistency with replicates), `outlier` (flagged), `n_replicated` |
 | `bootstrap.parquet` | measurement | at the selected K: `selected_K`, `n_success`; `A_se`, `n_se`, `p_se`, `mean_se`, `population_se` (lists of `k_max`); `A_ci`, `n_ci`, `p_ci`, `mean_ci`, `population_ci` (lists of `k_max * 2`: low and high of each component); `average_se` (the standard error of the population-weighted mean deuteration over the resamples, one value; absent in bundles written before HISTORY item 211, read as None); `curve_lo`, `curve_hi` (the band of the total fitted curve, one value per bin); `component_lo`, `component_hi` (the same band for each population, `K * bins` values: population by population in the order of the original fit; absent in bundles written before they were added) |
 | `bootstrap_draws.parquet` | measurement | individual fits at the selected K (kept by default since 2026-11-13, `keep_draws`; a measurement with none has `ok` all false): `A`, `n`, `p` (lists of `n_boot * k_max`, draw-major), `ok` (list of `n_boot`) |
-| `bootstrap_k.parquet` | measurement and K | the fixed-K bootstrap (`BootstrapConfig.ks`): the columns of `bootstrap` plus `fit_K`; every measurement has a row for each K requested, and `selected_K` equals `fit_K`. A K outside `ks` can be there for some measurements only: the spectra shown at a K chosen in the review are bootstrapped at that K (`hxex resume`, `hxex run`; HISTORY item 124), and the other rows of that K are empty (`n_success` 0, NaN values, no curve band). A reader takes a measurement's errors at K from here only where `n_success` > 0, else from `bootstrap` when K is its selected K |
+| `bootstrap_k.parquet` | measurement and K | the fixed-K bootstrap (`BootstrapConfig.ks`): the columns of `bootstrap` plus `fit_K`; every measurement has a row for each K requested, and `selected_K` equals `fit_K`. A K outside `ks` can be there for some measurements only: the spectra shown at a K chosen in the review are bootstrapped at that K (`hxex run`; HISTORY item 124), and the other rows of that K are empty (`n_success` 0, NaN values, no curve band). A reader takes a measurement's errors at K from here only where `n_success` > 0, else from `bootstrap` when K is its selected K |
 | `bootstrap_k_draws.parquet` | measurement and K | the draws of the fixed-K bootstrap when kept: the columns of `bootstrap_draws` plus `fit_K` |
 | `binned.parquet` | spectrum | the peak-picked table: the index columns below plus `mz` (predicted), `intensity`, `n_deut`, `peak_mz` (where the peak was found, NaN for an empty bin) (lists per bin), `mz_offset_ppm` (the spectrum's intensity-weighted median peak offset; both NaN in bundles written before hxex recorded them), `env_width`, `env_symm`, `max_namides`, `threshold`, the flags `empty`, `no_signal`, `capped`, and the spectrum quality screens' scores `screen_below_mono`, `screen_off_position`, `screen_between`, `screen_between_separate`, `screen_beyond_reach` (`hxex.picking.screen`; NaN where not assessed, and absent in bundles written before them: read as NaN), and the m/z check of the spectrum's series (`hxex.picking.mz_check`): `envelope_offset_ppm` (its undeuterated envelope's offset from its runs' calibration), `envelope_offset_limit_ppm` (the limit it was compared with; both NaN where not assessed) and `window_shift_ppm` (how far the windows were moved from the predicted m/z, 0 for none; `mz` stays the predicted m/z; always 0 since `recentre` was removed, HISTORY 200); absent in bundles written before them: read as NaN, NaN, and 0; with `pick = "profile_fit"` (`hxex.picking.profile`) `peak_mz` holds each bin's fitted position, and `fit_offset_ppm` (the m/z offset the profile fit took), `purity` (the share of the profile the bins' fitted peaks account for within a peak width of each bin) and `stray_share` (the share of the fitted region the stray peaks account for) are NaN for a spectrum that kept the pick; absent in bundles written before them: read as NaN |
 | `spectra.parquet` | spectrum | optional raw spectra: the index columns (with `rt`, minutes, and `resolving_power` and `resolving_power_mz`, the instrument's recorded resolving power and the m/z it is quoted at; NaN when not recorded, absent in bundles written before them) plus `mz`, `intensity` (lists) |

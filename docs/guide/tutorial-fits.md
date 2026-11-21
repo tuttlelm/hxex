@@ -12,19 +12,11 @@ The steps are also in the notebook `hxex_b5_tutorial_2_fits.ipynb`
 
 ## Step 1: three more peptides
 
-This part runs `hxex report` and `hxex analyse` several times. So that each one replaces what
-it wrote before without being told, switch on `overwrite` in the `[output]` part of
-`hxex.toml`:
+This part runs `hxex report` and `hxex analyse` several times; each one replaces what it wrote
+before. (To keep an earlier figures or analysis folder as well, add `--keep-previous`: it is
+moved to `results_figures.1`, say, first.)
 
-```bash
-hxex set hxex.toml output.overwrite true
-```
-
-(Without it, each command stops at the folder it wrote before and asks for `--overwrite`. The
-rule is there to protect results you meant to keep: for your own projects, decide which you
-prefer.)
-
-Then three peptides to look at, in the `[figures]` part: WT 68-75 (`data_id` 107), WT 42-54
+Three peptides to look at, in the `[figures]` part: WT 68-75 (`data_id` 107), WT 42-54
 (56, from part 1), and R120G 114-137 at charge 3 (166):
 
 ```bash
@@ -192,11 +184,12 @@ hxex set hxex.toml run.population_test.simulations 20
 Then add the test to the results you have, and analyse again:
 
 ```bash
-hxex resume hxex.toml
+hxex run hxex.toml
 hxex analyse hxex.toml
 ```
 
-`hxex resume` keeps the fits and adds the test: about 40 minutes on eight cores of a workstation,
+`hxex run` brings the results up to date: among its first lines, `population test: not done
+(the results have none)` says what it is about to do. It keeps the fits and adds the test: about 40 minutes on eight cores of a workstation,
 up to an hour or more on a laptop, and 15 minutes with a GPU. Each spectrum's number of populations is now that of the population test (self) (`selected K: 1: 3218, 2: 654,
 3: 2`, against 2983, 875, and 16 before), and the analysis uses the population test (set):
 `species_uptake.csv` gains `set_test_K`, its verdict for each peptide and time, and
@@ -209,7 +202,7 @@ population test (set) finds the evidence for the small population strong (p = 2.
 one population there. Both readings are defensible; the test is the stricter one, and the one
 to report if you use it.
 
-The test also looks at the undeuterated controls of every peptide: `hxex resume` says that 6
+The test also looks at the undeuterated controls of every peptide: `hxex run` says that 6
 peptides have two populations or more in an undeuterated set, and `species_uptake.csv` marks
 them `undeuterated_two`. Here they are long peptides (residues 1-23, 24-37, 61-75, 80-96, and
 138-175 in every sample, and 90-112 in D109H). It is a flag, not a decision: whether an
@@ -268,7 +261,7 @@ controls the noise was measured on, such as those of step 2, are where this is l
 | 2 | `hxex info hxex.toml` | showed the run's noise and the brightness limit |
 | 5 | `hxex check hxex.toml` | read the review table and the rule |
 | 5 | `hxex report hxex.toml --figures`, `hxex analyse hxex.toml` | applied your decisions |
-| 6 | `hxex resume hxex.toml` | added the population test, the fits kept |
+| 6 | `hxex run hxex.toml` | added the population test, the fits kept |
 | 6 | `hxex analyse hxex.toml` | analysed with the test |
 
 For your own data, start from [Your first project](first-project.md); the

@@ -80,10 +80,10 @@ def test_a_refused_value_leaves_the_file_and_says_why(editor, project, caplog):
 
 def test_true_false_and_choices(editor, project):
     _page(editor, "output")
-    overwrite = editor.rows["output.overwrite"]
-    assert not overwrite.editor.isChecked()  # the default
-    overwrite.editor.setChecked(True)
-    assert _data(project)["output"]["overwrite"] is True
+    keep = editor.rows["output.keep_previous"]
+    assert not keep.editor.isChecked()  # the default
+    keep.editor.setChecked(True)
+    assert _data(project)["output"]["keep_previous"] is True
     _page(editor, "input")
     fmt = editor.rows["input.format"]
     assert fmt.editor.currentText() == "specexport"
@@ -157,7 +157,7 @@ def test_a_path_setting_shows_where_it_points(editor, project, tmp_path):
     bundle.editor.setText("../elsewhere/run1")
     bundle.editor.textEdited.emit("../elsewhere/run1")
     assert bundle.where.text() == f"→ {tmp_path.parent / 'elsewhere' / 'run1'}"
-    assert editor.rows["output.overwrite"].where is None  # not a path
+    assert editor.rows["output.keep_previous"].where is None  # not a path
     _page(editor, "input")
     assert editor.rows["input.data_dir"].where.text() == f"→ {tmp_path / 'SpecExport'}"
     assert editor.rows["input.retention_times"].where.isHidden()  # unset
@@ -431,7 +431,7 @@ def test_changes_are_undone_and_redone_and_the_last_one_is_shown(editor, project
     # a new change after an undo: nothing to redo
     assert editor.undo()
     _page(editor, "output")
-    editor.rows["output.overwrite"].editor.setChecked(True)
+    editor.rows["output.keep_previous"].editor.setChecked(True)
     assert not editor.redo_steps
     # changed elsewhere since: not undone, that change kept, and said
     project.write_text(project.read_text() + "\n# typed in an editor\n", encoding="utf-8")

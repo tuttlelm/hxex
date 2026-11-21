@@ -1,18 +1,22 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The listing of an output folder (tables, figures): which files hxex wrote there.
 
-A folder of tables or figures beside a bundle is written again by every ``hxex run``,
-``resume`` and ``report``. As a bundle directory is replaced file by file (the files its
+A folder of tables or figures beside a bundle is written again by every ``hxex run`` and
+``report``. As a bundle directory is replaced file by file (the files its
 manifest lists go, see :mod:`hxex.io.bundle`), an output folder keeps a listing,
 ``hxex_listing.json``, of the files hxex wrote: writing again removes the listed files, refuses
 to replace a file of yours named like one of the new files before anything changes, and leaves
 every other file alone. A folder with files but no listing (one written before the listing
-existed, or your own) is only written when no file of yours would be replaced.
+existed, or your own) is only written when no file of yours would be replaced. A file hxex
+wrote that was changed since (a table opened and saved in a spreadsheet program, say) is
+yours now: writing the folder again is refused, naming it, until it is moved out or the folder
+is kept as ``name.N`` (owner, 2026-11-20).
 
 Every command that writes an output folder follows the bundle's rule (:func:`prepare_output`;
-owner, 2026-10-21): a folder that already holds hxex output is refused unless the command is
-told to overwrite it (its files are replaced) or to keep it (it is moved to ``name.N`` first);
-``[output] overwrite`` and ``keep_previous`` in a project file say so for every folder.
+owner, 2026-10-21, 2026-11-20): the commands write hxex's folders again (``overwrite``), or
+move one to ``name.N`` first (``keep_previous``: ``--keep-previous``, and ``[output]
+keep_previous`` with ``hxex run --fresh``); from Python, a folder that holds hxex output is
+refused unless one of the two is given.
 """
 
 from __future__ import annotations
@@ -92,6 +96,23 @@ def edited_outputs(directory: str | Path) -> list[str]:
     return sorted(out)
 
 
+def edited_refusal(directory: str | Path) -> str | None:
+    """The refusal to write ``directory`` again when files hxex wrote there were changed since
+    (:func:`edited_outputs`), saying how to go on; None when none was."""
+    edited = edited_outputs(directory)
+    if not edited:
+        return None
+    directory = Path(directory)
+    it = "it" if len(edited) == 1 else "them"
+    return (f"{directory}: {', '.join(edited[:5])}{', ...' if len(edited) > 5 else ''} "
+            f"changed after hxex wrote {it}, and writing the folder again would replace {it}. "
+            f"To go on:\n"
+            f"  copy what you changed out of the folder (a review table belongs next to the "
+            f"project file) or delete {it}, then run the command again;\n"
+            f"  or --keep-previous moves the folder aside first, as {directory.name}.N "
+            f"(keep_previous=True from Python)")
+
+
 def _write_listing(directory: Path, files: Iterable[str],
                    made: Mapping[str, str] | None = None) -> None:
     files = sorted(set(files))
@@ -136,31 +157,35 @@ def prepare_output(directory: str | Path, *, overwrite: bool = False,
     """Apply the rule of an output folder that already holds hxex output (the bundle's rule):
     refused (:class:`OutputError`, saying how to go on) unless ``overwrite`` (its hxex files are
     replaced by the write that follows) or ``keep_previous`` (it is moved to ``name.N`` now, and
-    that path is returned; with ``move`` False only checked). A folder without hxex output
-    passes. ``what`` names its content and ``elsewhere`` the way to write somewhere else, for
-    the message."""
+    that path is returned; with ``move`` False only checked). With ``overwrite``, files hxex
+    wrote that were changed since are refused all the same (:func:`edited_refusal`). A folder
+    without hxex output passes. ``what`` names its content and ``elsewhere`` the way to write
+    somewhere else, for the message."""
     directory = Path(directory)
     if not holds_output(directory):
         return None
     if keep_previous:
         return keep_previous_folder(directory) if move else None
     if overwrite:
+        if refusal := edited_refusal(directory):
+            raise OutputError(refusal)
         return None
     raise OutputError(
         f"{directory} holds the {what} written before. To go on:\n"
-        f"  --overwrite replaces them;\n"
-        f"  --keep-previous moves the folder to {directory.name}.N first;\n"
-        f"  or write to {elsewhere}.\n"
-        "In a project file, [output] overwrite = true or keep_previous = true does either for "
-        "every command")
+        f"  overwrite=True replaces them;\n"
+        f"  keep_previous=True moves the folder to {directory.name}.N first;\n"
+        f"  or write to {elsewhere}.")
 
 
 def check_output(directory: str | Path, names: Iterable[str]) -> None:
     """Refuse (:class:`OutputError`) a ``directory`` holding a file named like one of
     ``names`` that its listing does not cover (a file of your own, or one written before hxex
-    kept listings): :func:`replace_outputs` would refuse it. Commands call it before they read
-    or fit anything, so the refusal comes first."""
+    kept listings), or holding files hxex wrote that were changed since
+    (:func:`edited_refusal`): :func:`replace_outputs` would refuse it. Commands call it before
+    they read or fit anything, so the refusal comes first."""
     directory = Path(directory)
+    if refusal := edited_refusal(directory):
+        raise OutputError(refusal)
     names = sorted({Path(n).as_posix() for n in names})  # compared with the listing's form
     listed = output_listing(directory)
     owned = set(listed or ()) | {LISTING}
@@ -181,18 +206,14 @@ def replace_outputs(directory: str | Path, names: Iterable[str], *,
     caller appends every written path to; the listing is written from that list when the
     block ends, also when it fails part-way, so the next write knows what is hxex's. Before
     anything changes: a file in ``directory`` named like one of ``names`` that the listing
-    does not cover is refused (:class:`OutputError`); then the listed files are removed, so
+    does not cover, or a listed file changed since hxex wrote it, is refused
+    (:class:`OutputError`); then the listed files are removed, so
     the folder holds only what this write produces (and your own files). ``made`` (run name
     -> the ``created`` stamp of the bundle read; :func:`made_from`) is recorded in the listing
     of an analysis folder, so a later command can tell whether it is out of date."""
     directory = Path(directory)
     check_output(directory, names)
     listed = output_listing(directory)
-    edited = edited_outputs(directory)
-    if edited:  # the command was told to write over them (or they are its own, unchanged)
-        log.warning("%s: %s changed after hxex wrote %s; replaced now", directory,
-                    ", ".join(edited[:5]) + (", ..." if len(edited) > 5 else ""),
-                    "it" if len(edited) == 1 else "them")
     directory.mkdir(parents=True, exist_ok=True)
     for name in listed or ():
         target = directory / name

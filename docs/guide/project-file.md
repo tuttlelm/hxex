@@ -34,7 +34,9 @@ hxex analyse hxex.toml                       # post-fitting analysis ([analysis]
    `k_max` (`[run.fit]`, default 1 to 3) to each and chooses the best, runs the bootstrap and the
    controls if they are on, and writes the bundle and the CSV tables. Progress
    goes to the terminal; Ctrl-C stops cleanly and keeps the fits if the bootstrap had started
-   (`hxex resume` finishes it). It draws no figures.
+   (`hxex run` again finishes it). On a project whose results exist, it brings them up to date
+   instead, doing again only what changed since they were made (`--fresh` starts again). It
+   draws no figures.
 4. **`hxex report`** writes the tables again from a bundle and, with `--figures`, draws the
    figures, with the project file's `[figures]` settings when given the project file. Changing
    the figure settings needs only `hxex report`, never a new run.
@@ -165,9 +167,7 @@ The main commands and options; every option is in the
 | `hxex init [--format F] [--project NAME] [-o FILE] [--force]` | write a project file with every default (`-o -` prints it) |
 | `hxex set PROJECT SETTING VALUE` or `hxex set PROJECT SETTING --default` | change one setting of the project file (`run.controls.d2o_fraction 0.85`), or switch it off again; the file is written only when the new value passes the checks |
 | `hxex check PROJECT [--spectra PATH]` | check the file and show what would be read |
-| `hxex run PROJECT` | read, pick, fit, bootstrap; write the bundle and tables, no figures. Slow: minutes to hours, most of it the bootstrap |
-| `hxex resume BUNDLE` | finish a run that stopped during its bootstrap. Slow: the rest of the bootstrap |
-| `hxex resume PROJECT` | complete the bootstrap of the project's bundle, the fits kept: add one (the project's `[run.bootstrap]`) when there is none, redo it when its settings changed, and bootstrap the spectra whose number of populations the review table chose (only those). Slow: a whole bootstrap; only the chosen spectra when that is all that is missing |
+| `hxex run PROJECT` | read, pick, fit, bootstrap; write the bundle and tables, no figures. Slow: minutes to hours, most of it the bootstrap. When the results exist: bring them up to date, doing again only what changed (finish a bootstrap that stopped, add or redo the bootstrap or the population test, bootstrap the spectra whose number of populations the review table chose, work the controls out again); seconds when little changed |
 | `hxex report PROJECT` or `hxex report BUNDLE` `[--tables [DIR]] [--figures [DIR]] [--series flagged\|all] [--k K] [--format F]` | the tables from a bundle, and the figures with `--figures` (given the project file: its bundle, `[figures]` settings and exclusion rules); fits nothing. The tables take seconds; the figures about a second per peptide drawn, so an hour or more with `--series all` on a large run |
 | `hxex analyse PROJECT` or `hxex analyse BUNDLE` or `hxex analyse A=runA B=runB` | the post-fitting analysis (`--out`, `--reference`, `--format`); fits nothing. Seconds to minutes |
 | `hxex info PROJECT` or `hxex info BUNDLE` `[--verify]` | what a bundle holds (given the project file: its bundle, and what its review table decides): counts, K, bootstrap, controls, roles, noise reference, times, review, what it replaced, earlier generations |
@@ -178,13 +178,15 @@ accident; `--force` replaces it with a fresh template.
 Options of `hxex run`:
 
 - `--bundle PATH` writes to another bundle than `[output] bundle`.
-- `--overwrite` replaces an existing bundle and its tables (the review is carried over).
-- `--keep-previous` moves them to the next generation (`results.1`, ...) first.
+- `--fresh` starts again: reads, picks, and fits everything anew instead of bringing the
+  existing results up to date (the review is carried over). With `keep_previous = true` in
+  `[output]`, the earlier results are first moved to the next generation (`results.1`, ...).
+- `--keep-previous` moves the existing bundle and its folders to the next generation
+  (`results.1`, ...) first, then brings a copy up to date, so you can compare the two.
 
-`hxex report` and `hxex analyse` take `--overwrite` and `--keep-previous` too, for their own
-folders (`results_tables`, `results_figures`, `results_analysis_...`): without one of them, a
-folder that already holds results stops the command. `overwrite = true` or `keep_previous =
-true` in `[output]` applies to every command. See [Running again](outputs.md#running-again).
+`hxex report` and `hxex analyse` write their own folders (`results_tables`, `results_figures`,
+`results_analysis_...`) again each time; `--keep-previous` moves the earlier folder to
+`NAME.1` first. See [Running again](outputs.md#running-again).
 - `--spectra PATH` fits the raw spectra stored in an earlier bundle instead of reading the input.
 - `--device cpu|cuda|cuda:N` chooses where the fit runs.
 - `--threads N` sets the CPU threads. On a laptop or an ordinary desktop leave it unset:
@@ -244,7 +246,7 @@ and you can make them in a spreadsheet.
      chose (`K`). *hxex* has already fitted every spectrum with each number from `k_min` to
      `k_max`, so this picks one of those fits; nothing is refitted. (With `[run.fit] screen =
      true` some of those fits are skipped. `hxex run` always fits a number this table chooses;
-     for a table filled in after the run, `hxex report` says so, and `hxex resume hxex.toml`
+     for a table filled in after the run, `hxex report` says so, and `hxex run hxex.toml`
      fits it for those spectra.) `0` clears a number chosen before (in a review stored in the
      results). `1`, for example, keeps the
      spectrum but uses only its one-population fit, in the analysis too: its two-population
@@ -267,7 +269,7 @@ and you can make them in a spreadsheet.
    exclusion rules (`[[review.exclude]]`). `hxex run` (for its tables), `hxex report`, and
    `hxex analyse` all apply them.
 
-5. Run `hxex report hxex.toml --figures --overwrite`. The figures now use your decisions.
+5. Run `hxex report hxex.toml --figures`. The figures now use your decisions.
 
 **Which columns to touch.** *hxex* reads only four columns: `spectrum_id`, `review_status`,
 `review_K`, and `note`.
@@ -309,18 +311,18 @@ bootstrap at that number too, so that its errors compare with the others'. `hxex
 when one is missing, and
 
 ```bash
-hxex resume hxex.toml
+hxex run hxex.toml
 ```
 
 bootstraps exactly those spectra (nothing else is redone), after which `hxex report` works.
-When the table is in place before a run, `hxex run` does this itself.
+When the table is in place before the first run, that run does this itself.
 
 **Checking it.** `hxex check hxex.toml` reads the table and says how many spectra it rejects,
 accepts, and gives a number of populations, or which row has a value it cannot read. Once the
 bundle exists it also matches every row against the results: a `spectrum_id` the results do not
 have (a typing slip, or a table from an earlier run) is a problem, since `hxex report` and the
-analysis would skip that row, and so is a `review_K` the bundle was not fitted with (raising
-`k_max` takes effect only with `hxex run --overwrite`; `hxex resume` fits no new K). `review.csv`
+analysis would skip that row, and so is a `review_K` the bundle was not fitted with (raise
+`k_max` if needed, and `hxex run hxex.toml` adds the fits). `review.csv`
 in the tables folder lists every decision in effect, with `source` saying where it came from
 (`review table`, `exclusion rule`, or `review`).
 
@@ -331,8 +333,9 @@ in the tables folder lists every decision in effect, with `source` saying where 
   after it. See [Excluding spectra](excluding-spectra.md). A spectrum a rule excludes stays excluded,
   whatever the review table says.
 - **The bundle's own review layer** stores decisions inside the results, entered from Python
-  ([Using *hxex* from Python](python.md#reviewing-spectra)). They are kept when the run is
-  repeated with `--overwrite` (decisions the new run cannot apply are kept but marked stale).
+  ([Using *hxex* from Python](python.md#reviewing-spectra)). They are kept when `hxex run`
+  updates the results or starts again with `--fresh` (decisions the new run cannot apply are
+  kept but marked stale).
   The review table's decisions take the place of the stored ones for the same spectrum.
 
 ## From Python

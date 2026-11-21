@@ -827,7 +827,7 @@ def test_a_skipped_k_chosen_keeps_the_window_working_and_the_commands_refusing(
     """D-9 option (a): a K the screen skipped, chosen in the review, is kept unfitted when the
     window loads the project's results (shown at the fit's K, as the panel says), while the
     commands and load_results refuse it; E-4: Compute refuses it as hxex analyse does, with
-    the Resume button."""
+    the Run button."""
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QMessageBox
 
@@ -859,6 +859,6 @@ def test_a_skipped_k_chosen_keeps_the_window_working_and_the_commands_refusing(
     page.compute()
     assert not page.computing and page.outputs is None
     assert "as hxex analyse refuses it" in page.status.text()
-    assert "was not fitted" in page.status.text() and "Resume" in page.status.text()
+    assert "was not fitted" in page.status.text() and "Run button" in page.status.text()
     page.resume.click()
     assert asked == [1]

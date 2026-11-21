@@ -1319,7 +1319,7 @@ def species_uptake(
             log.warning(
                 "%d species and times with three populations or more have spectra without a "
                 "bootstrap at that number, so the error of their average is the replicates' "
-                "scatter only: %s%s; hxex resume hxex.toml bootstraps them ([run.bootstrap] "
+                "scatter only: %s%s; hxex run hxex.toml bootstraps them ([run.bootstrap] "
                 "set_k)", len(named),
                 "; ".join(f"{x[1]} {x[4]}-{x[5]} at {format_time(x[6])} (K = {x[7]})"
                           for x in named[:5]),

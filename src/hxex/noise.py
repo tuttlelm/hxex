@@ -496,6 +496,10 @@ class ControlsNoise:
     b1_se: float = float("nan")
     by_sample: tuple[SampleNoise, ...] = ()
     model_error_at: str = "prediction"
+    # the undeuterated controls the review rejects, left out (spectrum ids; owner, 2026-11-20):
+    # not compared by ``==`` (the measured values are), recorded so that hxex check can tell a
+    # later rejection
+    left_out: tuple[str, ...] = ()
 
     def _key(self) -> tuple:
         """The values compared by ``==``: a NaN (not measured) equals a NaN."""
@@ -537,7 +541,7 @@ class ControlsNoise:
                 "b1_se": num(self.b1_se),
                 "by_sample": [{"sample": s.sample, "b1": num(s.b1), "b1_se": num(s.b1_se),
                                "n_series": s.n_series} for s in self.by_sample],
-                "model_error_at": self.model_error_at}
+                "model_error_at": self.model_error_at, "left_out": list(self.left_out)}
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ControlsNoise:
@@ -552,7 +556,9 @@ class ControlsNoise:
                                                int(s["n_series"]))
                                    for s in data.get("by_sample", ())),
                    # recorded since HISTORY 291; fits made before put it at the observed intensity
-                   model_error_at=str(data.get("model_error_at", "observed")))
+                   model_error_at=str(data.get("model_error_at", "observed")),
+                   # recorded since 2026-11-20; before, rejected controls were not left out
+                   left_out=tuple(str(x) for x in data.get("left_out", ())))
 
 
 def _natural_fit(bins, observed, shape) -> tuple[np.ndarray, np.ndarray] | None:

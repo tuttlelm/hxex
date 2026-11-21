@@ -300,7 +300,7 @@ series without an undeuterated control; the `mz_shift` flag looks after those.
 | `[analysis.filters] off_mz = false` | the flagged series stay in the analysis, controls included |
 
 No setting changes how any series is picked. `off_mz_sd` acts when *hxex* picks the spectra,
-so it takes effect in `hxex run` only (not in `hxex report`, `hxex resume`, or `hxex analyse`);
+so it takes effect in `hxex run` only (not in `hxex report` or `hxex analyse`);
 `off_mz` acts in `hxex analyse`. To apply a change of `off_mz_sd` to results you already
 have, change the setting in `hxex.toml` and run again from the spectra stored in the bundle,
 which does not read the raw files again, into a new folder:
@@ -343,8 +343,8 @@ left out. Look at a flagged spectrum and its elution trace, and leave it out wit
 `spectra.csv` shows the check in `spectrum_offset_ppm` (how far the spectrum's peaks sit from
 its injection's median) and `spectrum_offset_limit_ppm` (the limit for a spectrum of its
 brightness). Fragment ions are not checked, and nor are spectra in an injection with fewer than
-ten spectra. `spectrum_off_mz_sd = false` turns the check off. It is set in `hxex run`;
-`hxex resume` adds it to results made before it existed.
+ten spectra. `spectrum_off_mz_sd = false` turns the check off. It is set in `hxex run`, which
+also adds it to results made before it existed.
 
 ## Seeing the window
 

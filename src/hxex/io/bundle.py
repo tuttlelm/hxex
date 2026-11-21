@@ -1647,7 +1647,7 @@ class Bundle:
     def set_review(self, review: ReviewTable) -> None:
         """Replace the review layer (directory bundles only); no fit is touched. The tables and
         figures made before are not marked out of date (they record the bundle's ``created``
-        stamp, which does not change): write them again (``hxex report --overwrite``) to show
+        stamp, which does not change): write them again (``hxex report``) to show
         the new review."""
         if not self._store.writable:
             raise BundleError("a zip bundle is read only; unpack it to edit the review layer")
@@ -1752,6 +1752,6 @@ def open_bundle(path: str | Path) -> Bundle:
             f"{path} is not a complete bundle: {', '.join(missing[:3])}"
             f"{', ...' if len(missing) > 3 else ''} {'is' if len(missing) == 1 else 'are'} "
             "listed in its manifest but missing (a "
-            "bundle is the whole folder hxex run wrote: copy the whole folder, or run again "
-            "with --overwrite)")
+            "bundle is the whole folder hxex run wrote: copy the whole folder, or start again "
+            "with hxex run --fresh)")
     return Bundle(path, store, manifest)

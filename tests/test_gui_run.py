@@ -94,7 +94,7 @@ def workspace(qtbot, tmp_path):
     return page
 
 
-def test_the_run_workspace_runs_hxex_and_offers_to_replace_earlier_results(qtbot, workspace,
+def test_the_run_workspace_runs_hxex_and_asks_how_to_run_again(qtbot, workspace,
                                                                             tmp_path):
     page = workspace
     assert all(b.isEnabled() for b in page.buttons.values()) and not page.stop_button.isEnabled()
@@ -115,17 +115,34 @@ def test_the_run_workspace_runs_hxex_and_offers_to_replace_earlier_results(qtbot
     assert "@hxex-progress" not in page.console.toPlainText()
     # the total run time beside the bar, kept when the command has ended (owner, 2026-11-05)
     assert page.elapsed.text().startswith("total ") and not page._clock.isActive()
-    # again: hxex refuses to write over the bundle; the window offers to replace it
+    # again: the window shows where the results stand and asks (docs/PLAN.md Next steps 40)
     asked = []
 
-    def answer():
-        asked.append(1)
-        return "overwrite"
+    def answer(rows, up_to_date):
+        asked.append((rows, up_to_date))
+        return "fresh"
 
-    page.ask_output_exists = answer
+    page.ask_run = answer
     with qtbot.waitSignal(page.results_changed, timeout=300000):
         page.buttons["run"].click()
-    assert asked == [1] and page.command.text() == "hxex run hxex.toml --overwrite"
+    assert asked[0][1] and ("stages", "read: done") in asked[0][0]
+    assert page.command.text() == "hxex run hxex.toml --fresh"
+    # a change: Bring up to date runs hxex run alone
+    page.project.write_text(page.project.read_text().replace("n_boot = 3", "n_boot = 4"))
+    page.ask_run = lambda rows, up_to_date: asked.append((rows, up_to_date)) or "update"
+    with qtbot.waitSignal(page.results_changed, timeout=300000):
+        page.buttons["run"].click()
+    assert not asked[-1][1] and any("bootstrap: out of date" in text for _, text in asked[-1][0])
+    assert page.command.text() == "hxex run hxex.toml"
+    # Cancel: nothing runs; a table changed by hand is named in the question (the run would
+    # stop at it: owner, 2026-11-20)
+    uptake = tmp_path / "out_tables" / "uptake.csv"
+    uptake.write_text(uptake.read_text() + "a note\n")
+    page.ask_run = lambda rows, up_to_date: asked.append((rows, up_to_date)) and None
+    page.buttons["run"].click()
+    assert not page.runner.running
+    assert any(key == "outputs" and "uptake.csv" in text and "changed since hxex wrote" in text
+               for key, text in asked[-1][0])
 
 
 def test_closing_during_a_command_asks_and_stops_it(qtbot, stand_in, tmp_path):
@@ -268,7 +285,7 @@ def test_a_command_that_ends_for_another_project_asks_nothing(qtbot, stand_in, t
     qtbot.waitUntil(lambda: "working" in page.console.toPlainText(), timeout=20000)
     page.show_project(b)
     asked, changed = [], []
-    page.ask_output_exists = lambda: (asked.append(1), "overwrite")[1]
+    page.ask_output_exists = lambda *a: (asked.append(1), "overwrite")[1]
     page.results_changed.connect(lambda: changed.append(1))
     page._tail.append("run again with 'hxex run --overwrite' (or --keep-previous)")
     with qtbot.waitSignal(page.runner.finished, timeout=20000):
@@ -327,10 +344,19 @@ sys.exit(1)
 
 def test_the_replace_question_comes_only_for_the_refusal_of_a_replaceable_command(
         qtbot, tmp_path):
-    """A-4: a resume refusing a settings mismatch, or a check printing its outputs block,
-    named --keep-previous and got the Replace question (and Replace reran resume with an
-    option it does not take); only run, report and analyse refusing to write over their output
-    ask, and after the finished slot has returned (A-16)."""
+    """A-4: a check printing its outputs block names --keep-previous and must not get the
+    question; only run, report and analyse refusing to write over output edited by hand ask
+    (keep it as NAME.N; owner, 2026-11-20), with the refusal's lines naming the files, and
+    after the finished slot has returned (A-16). Kept, the command runs again with its own
+    options and --keep-previous."""
+    from hxex.io.outputs import _write_listing, edited_refusal
+
+    folder = tmp_path / "out_tables"
+    folder.mkdir()
+    (folder / "spectra.csv").write_text("a\n")
+    _write_listing(folder, ["spectra.csv"])
+    (folder / "spectra.csv").write_text("b\n")
+    refusal = "hxex: error: " + edited_refusal(folder)
     script = tmp_path / "refuser.py"
     script.write_text(REFUSER)
     message = tmp_path / "message.txt"
@@ -340,39 +366,46 @@ def test_the_replace_question_comes_only_for_the_refusal_of_a_replaceable_comman
     project.write_text('project = "p"\n')
     page.show_project(project)
     asked = []
-    page.ask_output_exists = lambda: asked.append(1) or None
+    page.ask_output_exists = lambda *a: asked.append(a) or None
     cases = [
-        ("resume", "run again with 'hxex run --overwrite' (or --keep-previous)", False),
-        ("check", "to write one again, give its command --overwrite (replace) or "
-                  "--keep-previous (keep the earlier one as NAME.N)", False),
-        ("run", "out exists: --overwrite replaces it (and its tables, carrying its review "
-                "over), --keep-previous moves it to the next generation first (out.N)", True),
-        ("report", "out_tables holds the tables written before. To go on:\n  --overwrite "
-                   "replaces them;\n  --keep-previous moves the folder to out_tables.N first",
-         True),
+        ("check", "each command writes its folder again (hxex run brings the bundle up to "
+                  "date); --keep-previous keeps the earlier one as NAME.N", False),
+        ("report", refusal, True),
+        ("analyse", refusal, True),
+        ("run", refusal, True),
     ]
     for command, text, asks in cases:
         message.write_text(text)
         asked.clear()
         with qtbot.waitSignal(page.runner.finished, timeout=30000):
-            page.run_command(command)
+            page.run_command(command, ("--fresh",) if command == "run" else ())
         assert asked == [], command  # never inside the finished slot (A-16)
         if asks:
-            qtbot.waitUntil(lambda: asked == [1], timeout=5000)
+            qtbot.waitUntil(lambda: len(asked) == 1, timeout=5000)
+            asked_command, detail = asked[0]
+            assert asked_command == command
+            assert "spectra.csv changed after hxex wrote it" in detail
         else:  # the question is asked from a zero timer: delivered, not waited for (Q-29)
             from PySide6.QtWidgets import QApplication
 
             QApplication.processEvents()
             QApplication.processEvents()
             assert asked == [], command
+    # kept as NAME.N: the run again, with its own options and --keep-previous
+    answers = ["keep-previous"]
+    page.ask_output_exists = lambda *a: answers.pop() if answers else None
+    with qtbot.waitSignal(page.runner.finished, timeout=30000):
+        page._ask_replace("run")
+    assert page.args[-2:] == ["--fresh", "--keep-previous"]
     # not asked while the window is closing or the project changed under it
-    message.write_text(cases[2][1])
+    asked.clear()
+    page.ask_output_exists = lambda *a: asked.append(a) or None
     page._closing = True
-    page._ask_replace("run")
+    page._ask_replace("report")
     page._closing = False
     page.show_project(tmp_path / "other.toml")
-    page._ask_replace("run")
-    assert asked == [1]
+    page._ask_replace("report")
+    assert asked == []
 
 
 def test_a_finished_command_lets_its_process_go(qtbot, stand_in, tmp_path):

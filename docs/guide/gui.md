@@ -11,7 +11,7 @@ The window is being built in steps. What it does today:
 - **Results**: opens results as a tree of peptides (or, with fragment ions, of precursors),
   their series (one per charge state, or per fragment ion), time points, and spectra (the
   replicates), and shows the figures of what you select (below).
-- **Run**: runs *hxex*'s commands on the project (check, run, resume, report, analyse, info),
+- **Run**: runs *hxex*'s commands on the project (check, run, report, analyse, info),
   with their messages, a progress bar, and a Stop button (below).
 - **Analysis**: shows the figures `hxex analyse` would write with the project's settings, and
   why each figure left out is left out (below).
@@ -93,7 +93,7 @@ for the new file's name and a folder for its results, then writes a copy and ope
 - Paths the project reads (the data folder, the peptide table, the FASTA files, the elution
   windows) are rewritten so the copy reads the same files from its own folder.
 - The copy gets its own results folder, which must not exist yet, so neither project replaces
-  the other's results. `overwrite` and `keep_previous` go back to false, and a tables folder
+  the other's results. `keep_previous` goes back to false, and a tables folder
   or an `[analysis] out` folder named in the original is left out.
 - The review is not copied: `[review] table` and the `[[review.exclude]]` rules are left out,
   so the copy starts unreviewed. To use the original's review decisions, choose its review
@@ -555,9 +555,8 @@ match; when the table cannot be read (a row edited by hand that the project refu
 status bar says why and the boxes show the window the results hold. **Undo** puts the table (and the project file, after the first save) back as it was
 before the last save; it covers the saves made while these results are shown, and opening
 other results leaves the earlier saves as they are. Saving needs the results opened from
-their project file, and the table opens in **Tables** like the others. The saved windows are used when you run the project again with overwrite enabled: **Run** on
-the Run tab with `overwrite = true` in the project file's `[output]` part, or **Replace** when
-it asks about the earlier results (on the command line, `hxex run --overwrite`). That run reads every file again but fits again only the series whose spectra
+their project file, and the table opens in **Tables** like the others. The saved windows are used when you bring the results up to date: **Run** on
+the Run tab, then **Bring up to date** (on the command line, `hxex run hxex.toml`). That run reads every file again but fits again only the series whose spectra
 changed, so it takes a fraction of the first run's time, and your review decisions are kept; each spectrum stays in its series (see [A peptide's own window in one
 file](inputs.md#a-peptides-own-window-in-one-file)). A spectrum's id names the scans it summed,
 so a spectrum with a new window has a new id after the run; your review decisions for it follow
@@ -706,10 +705,10 @@ it; its figures are those of its first series).
 - **K**: the fit's choice, or the number of populations to use (as far as the run fitted);
   with several spectra selected whose K differ, the list reads "(differs between the
   spectra)" until you choose one for them all.
-  When no bootstrap was made at the K you choose, **Add the bootstrap (Resume)** runs `hxex
-  resume`, which adds it. When the run's quick screen (`[run.fit] screen`) skipped that K for
-  the spectrum, the spectrum stays at the fit's K, and the panel says so, until **Resume** fits
-  it (with its bootstrap); the window keeps opening the project's results meanwhile, while
+  When no bootstrap was made at the K you choose, **Add the bootstrap (Run)…** runs `hxex
+  run`, which brings the results up to date and so adds it. When the run's quick screen
+  (`[run.fit] screen`) skipped that K for the spectrum, the spectrum stays at the fit's K, and
+  the panel says so, until **Run** fits it (with its bootstrap); the window keeps opening the project's results meanwhile, while
   `hxex report` and `hxex analyse` (and **Compute** on the Analysis page) refuse until then.
 - **Not reviewed** takes a decision back: it is written as `unreviewed`, which also clears a
   status the run's own review layer holds (one set from Python, or carried over by a rerun).
@@ -819,7 +818,8 @@ file), so what you see here is what the command writes.
   computes, ends the computation at its next step (between the tables, the figures, and
   each parent's ladder rate fits); the figures of the earlier analysis stay. When your review
   chose a K the run's quick screen skipped for a spectrum, **Compute** refuses as `hxex
-  analyse` does, and **Fit the chosen K (Resume)…** beside it runs `hxex resume` to fit it.
+  analyse` does, and **Fit the chosen K (Run)…** beside it runs `hxex run`, which brings the
+  results up to date and so fits it.
 - When the results change (a new run, a review decision), the `[analysis]` settings change,
   or your review table changes (in **Tables**, or in a spreadsheet), the line at the top says
   the figures are out of date and why; they stay until you press **Recompute**, which draws the
@@ -848,8 +848,8 @@ file), so what you see here is what the command writes.
 
 ## Running the commands
 
-**Run** has a button for each command: **Check**, **Run**, **Resume**, **Report**, **Analyse**,
-and **Info**. Each runs that command on the project file, in the project's folder, exactly as
+**Run** has a button for each command: **Check**, **Run**, **Report**, **Analyse**, and
+**Info**. Each runs that command on the project file, in the project's folder, exactly as
 `hxex run hxex.toml` would in a terminal: the line above the messages shows the command as you
 would type it. One command runs at a time.
 
@@ -857,23 +857,28 @@ would type it. One command runs at a time.
   step it is on and the time left when *hxex* can tell. Beside the bar, **total** counts the
   command's run time, and keeps it when the command has ended.
 - **Stop** stops the command after the step it is on, as Ctrl-C does in a terminal: what is
-  finished is kept, and a bootstrap stopped part way is finished later with **Resume**. Press
+  finished is kept, and a bootstrap stopped part way is finished by the next **Run**. Press
   it again (**Abort now**) to end the command at once; one that still does not end is ended by
   the window a few seconds later.
-- When **Run**, **Report**, or **Analyse** finds results it would replace (a second **Run**,
-  say), it changes nothing and the window asks: replace them, keep them under the next free
-  name (`results.1`, ...), or cancel. These are the command's `--overwrite` and
-  `--keep-previous`. Another command that fails (a **Resume** whose settings no longer match
-  the results, say) is not asked about: its messages say what to do.
-- Run the project again after changing what is read: the peptide table, the elution windows
-  saved in the elution tab, or the picking or fit settings, with overwrite enabled:
-  `overwrite = true` in the project file's `[output]` part (then **Run** replaces the earlier
-  results without asking), or **Replace** when it asks. The run reads your data files again only
+- When the project already has results, **Run** first shows where they stand, stage by stage,
+  and what it would do to bring them up to date (the lines `hxex check` ends with), and asks:
+  **Bring up to date** (`hxex run`), **Start again** (`hxex run --fresh`: read, pick, and fit
+  everything anew), or **Cancel**. When the results are up to date it says so and offers only
+  **Start again** or **Cancel**.
+- Run the project again after changing anything in it: the peptide table, the elution windows
+  saved in the elution tab, the picking or fit settings, the preset, the bootstrap, the
+  population test, or the controls. **Bring up to date** reads your data files again only
   when something that decides the read changed (otherwise it takes the spectra stored in the
-  results: after a change of preset or fit settings, say), and fits again only the series whose
-  spectra changed, so it takes a fraction of the first run's time, and your review decisions
+  results: after a change of preset or fit settings, say), and fits again only what the change
+  touches, so it usually takes a fraction of the first run's time, and your review decisions
   are kept ([Running again](outputs.md#running-again)).
-- The list below the buttons chooses where **Run** and **Resume** fit. Its first entry is the
+- **Report** and **Analyse** write their folders again each time. When **Run**, **Report**, or
+  **Analyse** finds a file it wrote before that was changed since (opened and saved in a
+  spreadsheet, say), it changes nothing, and the window names the file and asks whether to keep
+  that folder under the next free name (`results_tables.1`, ...; for **Run**, the results with
+  their folders) and run the command again (its `--keep-previous`), or cancel. **Run** names
+  such files in its question beforehand too.
+- The list below the buttons chooses where **Run** fits. Its first entry is the
   project file's setting, `[run.fit.backend] device`, with its value (`auto`, the default, uses
   an NVIDIA graphics card when *hxex* can see one, else the CPU); **Change…** opens that
   setting. **cpu** or **cuda** use that device for this command only (`--device`). The box
@@ -891,8 +896,8 @@ would type it. One command runs at a time.
   **Earlier commands**, below the console, lists the project's other commands, newest first:
   choose one to see its output. Only the project file's own commands are listed, also when
   several project files share a folder. The next command you run clears the console.
-- After **Run**, **Resume**, or **Report**, the Results part shows the new results. While a
-  **Run** or **Resume** of the project whose results are shown is running, the Results part
+- After **Run** or **Report**, the Results part shows the new results. While a **Run** of the
+  project whose results are shown is running, the Results part
   and the status bar say that the results shown are updated when the run finishes; you can keep
   looking at them meanwhile.
 - While a command runs, the other parts of the window show it too: the tab reads **Running**

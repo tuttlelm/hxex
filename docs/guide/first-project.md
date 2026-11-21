@@ -182,7 +182,7 @@ hxex run hxex.toml
 *hxex* reads every spectrum, fits it, and writes the results. It prints a line every half minute
 to show how far it has got. A few hundred peptides take minutes to an hour, depending on the
 computer and the settings. To stop it, press Ctrl + C. (Once the fits are done and the
-bootstrap has begun, they are kept, and `hxex resume hxex.toml` finishes the run later; stopped
+bootstrap has begun, they are kept, and `hxex run hxex.toml` finishes the run later; stopped
 earlier, the run starts again from the beginning.)
 
 When it has finished, the project folder holds:
@@ -203,9 +203,8 @@ look (a poor fit, a missing control) its spectra and uptake. It also writes the 
 `--series all`, or set `series = "all"` in the `[figures]` part of `hxex.toml` (just above the
 advanced settings).
 Open the `.pdf` files as usual. `hxex run` never draws figures, so changing how they look needs
-only this command again, not a new run: then add `--overwrite`, which replaces the figures
-drawn before (without it, *hxex* stops rather than write over them). The tables of the same
-results are written again without it.
+only this command again, not a new run: it replaces the figures drawn before, and writes the
+tables again.
 
 ## Step 8: compare samples
 
@@ -253,9 +252,9 @@ Once `hxex.toml` holds everything (the input, the `[analysis]` settings, and any
 the whole analysis takes three commands, one for each kind of result:
 
 ```bash
-hxex run hxex.toml --overwrite
-hxex report hxex.toml --figures --overwrite
-hxex analyse hxex.toml --overwrite
+hxex run hxex.toml
+hxex report hxex.toml --figures
+hxex analyse hxex.toml
 ```
 
 - `hxex run` fits and writes the results and their tables (step 6), `hxex report` writes the
@@ -265,19 +264,23 @@ hxex analyse hxex.toml --overwrite
   three side by side.
 - After changing only the `[figures]` settings, run only `hxex report`; after changing only
   the `[analysis]` settings, only `hxex analyse`. Neither fits anything again.
-- `--overwrite` replaces the earlier results. Without it, each command stops because its
-  folder already holds results; use `--keep-previous` instead to keep the earlier ones
-  (`results.1` with its tables, figures, and analyses for `hxex run`; `results_figures.1` or
-  `results_analysis_WT.1` for the other two). Files of your own in these folders are kept.
-- To stop typing `--overwrite`, set `overwrite = true` in the `[output]` part of `hxex.toml`.
-  [Running again](outputs.md#running-again) has the details.
+- `hxex run` on a project that already has results brings them up to date: it says, stage by
+  stage, what changed since they were made, and does again only that (a new preset, say, adds
+  what the preset needs and keeps the fits). When nothing changed, it says the results are up
+  to date and does nothing. `hxex run hxex.toml --fresh` starts again from the beginning.
+- `hxex report` and `hxex analyse` replace what they wrote before. To keep the earlier
+  results as well, add `--keep-previous` (`results.1` with its tables, figures, and analyses
+  for `hxex run`; `results_figures.1` or `results_analysis_WT.1` for the other two). Files of
+  your own in these folders are kept. [Running again](outputs.md#running-again) has the
+  details.
 
-Run `hxex check hxex.toml` first whenever you have changed the file.
+Run `hxex check hxex.toml` first whenever you have changed the file: its last lines say where
+the results stand and what `hxex run` would do.
 
 ## What next
 
 - Better uncertainties: switch on `[run.bootstrap]` in the project file, then run
-  `hxex resume hxex.toml`. It adds the bootstrap to your results without fitting again. It
+  `hxex run hxex.toml`. It adds the bootstrap to your results without fitting again. It
   takes much longer than the fit, but gives the error bars the comparisons need. Run it again
   after changing the bootstrap settings (more resamples, say) to replace the earlier one; with
   the settings unchanged it keeps the bootstrap and adds only what is missing, such as the

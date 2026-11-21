@@ -385,8 +385,7 @@ def samples_reading(reader, spectrum_id: str, data_id: int, ions: Sequence[str],
 
 # how a saved window reaches the results, said wherever a window is saved or shown (owner,
 # 2026-11-11: "requires a new run" did not say how, nor that it must replace the results)
-APPLY = ("to use it, run the project again with overwrite enabled: Run on the Run tab with "
-         "[output] overwrite = true, or Replace when it asks (hxex run --overwrite); only the "
+APPLY = ("to use it, bring the results up to date: Run on the Run tab (hxex run); only the "
          "series whose spectra changed are fitted again, and your review decisions are kept")
 
 

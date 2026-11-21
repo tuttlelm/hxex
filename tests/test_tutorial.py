@@ -79,7 +79,7 @@ def test_every_hxex_set_of_the_tutorial_works_on_the_template(part, tmp_path, mo
     project = load_project(tmp_path / "hxex.toml")
     assert project.project == "hspb5"
     if part == 2:
-        assert project.output.overwrite and project.review is not None
+        assert project.review is not None
 
 
 def test_the_zip_holds_what_the_page_lists(tmp_path):

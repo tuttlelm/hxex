@@ -3365,7 +3365,8 @@ def test_sets_at_three_take_their_average_from_their_own_k(results_k3, monkeypat
     with caplog.at_level(logging.WARNING, logger="hxex"):
         up = species_uptake(reviewed, ks=(1, 2, 3), filters=None, populations="best_set")
     # the run bootstrapped each spectrum at its own K only: the error is the replicates'
-    assert "without a bootstrap at that number" in caplog.text and "hxex resume" in caplog.text
+    assert "without a bootstrap at that number" in caplog.text
+    assert "hxex run hxex.toml" in caplog.text
     assert (up.average_K[up.role == ""] == 3).all() and (up.average_K[up.role != ""] == 1).all()
 
     at = ctl.rows(fit.data_id)

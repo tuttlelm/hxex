@@ -60,7 +60,7 @@ Check a project file and show what would be read, and where its results stand, s
 
 ## hxex run
 
-Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures: hxex report).
+Run a project, or bring its results up to date (only what changed is done again; hxex check shows what): read, pick, fit, bootstrap, write the bundle and tables (figures: hxex report).
 
 `hxex run hxex.toml [options]`
 
@@ -68,26 +68,16 @@ Run a project: read, pick, fit, bootstrap, write the bundle and tables (figures:
 |---|---|
 | `hxex.toml` | the project file (hxex.toml, written by hxex init) |
 | `--bundle` `BUNDLE` | the results bundle (instead of output.bundle; relative to the current folder, not to the project file's) |
-| `--overwrite` | replace an existing bundle (and its tables), carrying its review over; also a tables folder left from a bundle that is gone |
-| `--keep-previous` | move an existing bundle (with its tables, figures and analysis folders) to the next generation, NAME.N, before writing |
-| `--refit` | fit every spectrum again; without it, a spectrum whose input is the same as in the bundle being replaced keeps its fit, population test and bootstrap |
-| `--reread` | read the input again; without it, a run that replaces a bundle takes the raw spectra stored there when the input settings and files are those they were read from |
+| `--fresh` | start again: read, pick and fit everything anew instead of bringing the existing results up to date (with [output] keep_previous = true the earlier results are first moved to NAME.N) |
+| `--keep-previous` | move the existing bundle (with its tables, figures and analysis folders) to the next generation, NAME.N, first, and update from it (to compare the two) |
 | `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of run.fit.backend) |
 | `--spectra` `PATH` | take the raw spectra stored in this bundle (or spectra file) instead of reading the input (as input.spectra) |
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 
 ## hxex resume
 
-Complete a bundle's bootstrap (finish a stopped one, add or redo one, or bootstrap the review's chosen K), add the population test, or work the controls or the quality flags out again.
+Retired: hxex run continues a stopped stage and brings the results up to date.
 
-`hxex resume hxex.toml|BUNDLE [options]`
-
-| Argument | Meaning |
-|---|---|
-| `hxex.toml\|BUNDLE` | the project file (hxex.toml), or a results bundle (a folder, or .zip) waiting for its bootstrap. With the project file, its [output] bundle gets a bootstrap with its [run.bootstrap] settings (redone only if they changed), one at the K its [review] table chooses where that is missing, and the population test with its [run.population_test] settings (made again only if they changed), and its controls are worked out again when its [run.controls] changed (or, without the table, when the bundle's spectra hold the controls and it has none); the fits kept. Quality flags made by an earlier version of hxex are assessed again either way. Any other change of the project since the results were made (another [run] or [input] setting, or which spectra are controls: undeut_at, fulldeut_at) is refused, naming each change: hxex run applies those |
-| `--device` `DEVICE` | cpu, cuda, cuda:1, ... (instead of the run's device) |
-| `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
-| `--tables` `[DIR]` | where the tables go (default: beside the bundle, or a project file's [output] tables) |
 
 ## hxex report
 
@@ -101,8 +91,7 @@ Write the tables again (with the review applied), and with --figures draw the fi
 | `--threads` `N` | CPU threads (default: the project file's threads, else PyTorch's) |
 | `--tables` `[DIR]` | where the tables go (default: beside the bundle, NAME_tables, or the project file's [output] tables); they are always written, and with [output] tables = false only when --tables is given |
 | `--figures` `[DIR]` | also draw the figures (default: beside the bundle, NAME_figures) |
-| `--overwrite` | replace hxex's files in the tables and figures folders when they hold earlier output (or [output] overwrite = true) |
-| `--keep-previous` | move the tables and figures folders to NAME.N first when they hold earlier output (or [output] keep_previous = true) |
+| `--keep-previous` | move the tables and figures folders to NAME.N first when they hold earlier output, instead of writing it again |
 | `--series` `{flagged,all}` | which series to draw (default: [figures] series, else flagged) |
 | `--k` `K` | draw every series at this number of populations (default: [figures] k, else each spectrum's own) |
 | `--format` `{pdf,png,svg}` | figure file format |
@@ -120,8 +109,7 @@ Also spelt `hxex analyze`.
 | `hxex.toml\|BUNDLE ...` | the project file, hxex.toml (its [analysis] settings, and [analysis.runs] or output.bundle; a file with only [analysis] is enough), a bundle, or several bundles to compare as separate runs (NAME=BUNDLE, or BUNDLE named after its file; the tables get a run column) |
 | `--bundle` `BUNDLE` | the bundle (instead of the project's output.bundle; relative to the current folder, not to the project file's) |
 | `--out` `OUT` | the output directory (default: [analysis] out, else the bundle's name + _analysis + _REFERENCE when there is a reference, e.g. results_analysis_WT, or + _GROUP for each group of [analysis.groups]) |
-| `--overwrite` | replace hxex's files in the analysis folder when it holds earlier output (or [output] overwrite = true) |
-| `--keep-previous` | move the analysis folder to NAME.N first when it holds earlier output (or [output] keep_previous = true) |
+| `--keep-previous` | move the analysis folder to NAME.N first when it holds earlier output, instead of writing it again |
 | `--reference` `REFERENCE` | the reference sample (instead of [analysis] reference; `RUN:sample` when the sample is in several runs); several, separated by commas, or all (every sample): a folder each |
 | `--group` `GROUP` | the group(s) of [analysis.groups] to analyse, separated by commas (default: every group) |
 | `--format` `{pdf,png,svg}` | figure file format |

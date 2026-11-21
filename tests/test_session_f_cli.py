@@ -35,32 +35,30 @@ def test_report_always_writes_the_tables_and_figures_add_to_them(tmp_path, capsy
     assert (tables / "review.csv").is_file()
     with (tables / "spectra.csv").open() as fh:
         assert {r["review_status"] for r in csv.DictReader(fh)} == {"rejected", "unreviewed"}
-    # the figures folder follows the rule; nothing is written when it refuses
-    stamp = (tables / "spectra.csv").stat().st_mtime_ns
-    assert cli.main(["-q", "report", str(path), "--figures"]) == 1
-    assert "out_figures holds the figures written before" in capsys.readouterr().err
-    assert (tables / "spectra.csv").stat().st_mtime_ns == stamp
-    assert cli.main(["-q", "report", str(path), "--figures", "--overwrite"]) == 0
-    # tables of other results (here: another bundle's) are refused without --overwrite
+    from hxex.io import made_from, open_bundle
+
+    # the figures folder is written again (it is hxex's)
+    assert cli.main(["-q", "report", str(path), "--figures"]) == 0
+    # tables of other results (here: another bundle's) are written again too
     other = tmp_path / "other.toml"
     other.write_text(path.read_text().replace('bundle = "out"', 'bundle = "out2"', 1)
                      .replace("[output]", '[output]\ntables = "out_tables"', 1))
-    assert cli.main(["-q", "run", str(other), "--overwrite"]) == 0  # its tables: replaced
+    assert cli.main(["-q", "run", str(other)]) == 0  # its tables: replaced
     capsys.readouterr()
-    assert cli.main(["-q", "report", str(path)]) == 1
-    assert "out_tables holds the tables written before" in capsys.readouterr().err
-    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 0
+    assert cli.main(["-q", "report", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        assert made_from(tables) == {"": b.manifest["created"]}
     # [output] tables = false: only the figures, and the line says so
     path.write_text(path.read_text().replace("[output]", "[output]\ntables = false", 1))
     capsys.readouterr()
-    assert cli.main(["report", str(path), "--figures", "--overwrite"]) == 0
+    assert cli.main(["report", str(path), "--figures"]) == 0
     assert capsys.readouterr().out.strip().endswith("no tables ([output] tables = false)")
 
 
 def test_tables_changed_by_hand_are_not_written_over_without_asking(tmp_path, capsys):
     """The same results' tables are written again in place, unless one of them was changed
-    after hxex wrote it (owner, 2026-11-02): then report stops and names it; --overwrite
-    replaces it with a warning, and --keep-previous keeps it in the earlier folder."""
+    after hxex wrote it (owner, 2026-11-02): then report stops and names it, and
+    --keep-previous keeps it in the earlier folder (or the file is moved away)."""
     from hxex.io import edited_outputs
 
     path = mzml_project(tmp_path)
@@ -74,18 +72,64 @@ def test_tables_changed_by_hand_are_not_written_over_without_asking(tmp_path, ca
     capsys.readouterr()
     assert cli.main(["-q", "report", str(path)]) == 1
     err = capsys.readouterr().err
-    assert "spectra.csv changed after hxex wrote it" in err and "--overwrite" in err
+    assert "spectra.csv changed after hxex wrote it" in err and "--keep-previous" in err
     assert spectra.read_text() == edited  # nothing written
     assert cli.main(["-q", "report", str(path), "--keep-previous"]) == 0
     assert (tmp_path / "out_tables.1" / "spectra.csv").read_text() == edited
     assert edited_outputs(tables) == []  # the new tables, as written
     spectra.write_text(spectra.read_text().replace("unreviewed", "rejected", 1))
     capsys.readouterr()
-    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 0
-    assert "spectra.csv changed after hxex wrote it; replaced now" in capsys.readouterr().err
+    assert cli.main(["-q", "report", str(path)]) == 1  # --overwrite is no longer a way past
+    spectra.unlink()  # the edited table deleted: written again
+    assert cli.main(["-q", "report", str(path)]) == 0
     assert edited_outputs(tables) == []
     # an unchanged folder is written again in place, as before
     assert cli.main(["-q", "report", str(path)]) == 0
+
+
+def test_every_command_refuses_to_write_over_a_file_changed_by_hand(tmp_path, capsys):
+    """A file hxex wrote that was changed since is never written over (owner, 2026-11-20):
+    run, report (tables of earlier results too) and analyse stop before any work and name it,
+    and hxex check names it up front."""
+    from hxex.io import edited_outputs
+
+    path = mzml_project(tmp_path)
+    assert cli.main(["-q", "run", str(path)]) == 0
+    assert cli.main(["-q", "analyse", str(path)]) == 0
+    tables = tmp_path / "out_tables"
+    analysis = next(p for p in tmp_path.iterdir() if p.name.startswith("out_analysis"))
+    uptake = tables / "uptake.csv"
+    uptake.write_text(uptake.read_text() + "a note\n")
+    capsys.readouterr()
+    assert cli.main(["check", str(path)]) in (0, 1)
+    out = capsys.readouterr().out
+    line = next(x for x in out.splitlines() if "out_tables:" in x)
+    assert "1 file changed since hxex wrote it (uptake.csv)" in line
+    # run (a fresh start: it would rewrite the tables) stops before reading anything
+    assert cli.main(["-q", "run", str(path), "--fresh"]) == 1
+    err = capsys.readouterr().err
+    assert "uptake.csv changed after hxex wrote it" in err and "--keep-previous moves" in err
+    assert "a note" in uptake.read_text()
+    # report on tables made from earlier results (a fresh run made new ones) stops too
+    uptake.unlink()
+    assert cli.main(["-q", "run", str(path), "--fresh"]) == 0
+    spectra = tables / "spectra.csv"
+    spectra.write_text(spectra.read_text() + "x\n")
+    listing = tables / "hxex_listing.json"  # as if made from earlier results
+    listing.write_text(listing.read_text().replace('"made_from"', '"made_from_old"'))
+    assert cli.main(["-q", "report", str(path)]) == 1
+    assert "spectra.csv changed after hxex wrote it" in capsys.readouterr().err
+    spectra.unlink()
+    # analyse: an analysis table changed by hand
+    table = next(p for p in sorted(analysis.glob("*.csv")))
+    table.write_text(table.read_text() + "x\n")
+    assert edited_outputs(analysis) == [table.name]
+    assert cli.main(["-q", "analyse", str(path)]) == 1
+    assert f"{table.name} changed after hxex wrote it" in capsys.readouterr().err
+    assert table.read_text().endswith("x\n")
+    assert cli.main(["-q", "analyse", str(path), "--keep-previous"]) == 0
+    assert (analysis.with_name(analysis.name + ".1") / table.name).read_text().endswith("x\n")
+    assert edited_outputs(analysis) == []
 
 
 def test_info_takes_the_project_file_and_tells_its_review_from_the_bundles(tmp_path, capsys):
@@ -106,7 +150,7 @@ def test_info_takes_the_project_file_and_tells_its_review_from_the_bundles(tmp_p
     assert "review.csv" in line and "1 rejected" in line and "(from hxex.toml" in line
     assert cli.main(["info", str(tmp_path / "out")]) == 0  # the bundle alone: as before
     assert "review table" not in capsys.readouterr().out
-    for command in ("info", "report", "resume", "analyse"):  # shown with the project file
+    for command in ("info", "report", "analyse"):  # shown with the project file
         with pytest.raises(SystemExit):
             cli.main([command, "-h"])
         assert f"hxex {command} [-h]" in (usage := capsys.readouterr().out)

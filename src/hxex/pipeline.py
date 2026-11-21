@@ -95,7 +95,7 @@ from .population_test import (
 )
 from .quality import QualityConfig, QualityFlags, assess_quality, injection_keys
 from .review_table import merge_choices
-from .spectra import SpectrumSet
+from .spectra import UNDEUT, SpectrumSet
 
 if TYPE_CHECKING:
     from .report.figures import PlotConfig
@@ -468,10 +468,13 @@ _BOOTSTRAP_WEIGHT = 7.0 / 3.0
 _MEASURE = object()  # _fit_part's noise_curve when none was measured before it
 
 
-def bundle_noise(picked, meas: Measurements, config: RunConfig, measurement=None):
+def bundle_noise(picked, meas: Measurements, config: RunConfig, measurement=None,
+                 rejected=None):
     """The bundle's per-bin noise (``[run.fit.noise] estimate = "controls"``,
     :func:`hxex.noise.controls_noise`) from the undeuterated controls that every picker screen
-    passes at the loose level (a control not assessed counts as passing), with ``b1`` per
+    passes at the loose level (a control not assessed counts as passing) and the review does
+    not reject (``rejected``, per measurement, :func:`hxex.review_table.rejected_spectra`:
+    left out of ``b1`` and of the onset, and named in the curve's ``left_out``), with ``b1`` per
     sample; a warning names the samples whose own ``b1`` differs from the bundle's (more than
     three standard errors), which a bundle mixing instruments or settings would show. None when
     the setting is off or there are too few controls (the fit then uses one sd per
@@ -488,11 +491,23 @@ def bundle_noise(picked, meas: Measurements, config: RunConfig, measurement=None
             score = getattr(picked, name, None)
             if score is not None:
                 usable &= ~(np.asarray(score, dtype=np.float64) >= limit)
-    curve = controls_noise(meas.bins, meas.observed, meas.shapes, meas.role, meas.charges(),
-                           meas.data_id, model_error=noise.model_error / 100.0, usable=usable,
-                           sample=picked.sample,
+    role = np.asarray(meas.role, dtype=object)
+    out = (np.zeros(len(meas), dtype=bool) if rejected is None
+           else np.asarray(rejected, dtype=bool) & (role == UNDEUT))
+    if out.any():  # left out of the onset too: a rejected control is often another species
+        role = np.where(out, "rejected", role)
+        log.info("per-bin noise: %d undeuterated control%s the review rejects left out",
+                 int(out.sum()), "" if out.sum() == 1 else "s")
+    curve = controls_noise(meas.bins, meas.observed, meas.shapes, role.astype(str),
+                           meas.charges(), meas.data_id, model_error=noise.model_error / 100.0,
+                           usable=usable, sample=picked.sample,
                            measurement=(same_measurement(picked) if measurement is None
                                         else measurement))
+    if curve is not None:
+        import dataclasses
+
+        curve = dataclasses.replace(curve, left_out=tuple(sorted(
+            str(s) for s in np.asarray(meas.spectrum_id, dtype=str)[out])))
     if curve is None:
         log.info("per-bin noise not measured (fewer than 5 series of usable undeuterated "
                  "controls, or no counting term found): one sd per spectrum")
@@ -1066,8 +1081,8 @@ def _fit_moves(stored: FitConfig, wanted: FitConfig, path) -> bool:
     if settings(stored) != settings(wanted):
         differ = sorted(k for k, v in settings(wanted).items() if settings(stored).get(k) != v)
         raise ValueError(f"{path}: the bundle's fits were made with other [run.fit] settings "
-                         f"({', '.join(differ)}); resume can only fit more or fewer K (k_max): "
-                         "run again with 'hxex run --overwrite' (or --keep-previous)")
+                         f"({', '.join(differ)}); only more or fewer K (k_max) can be added to "
+                         "them: run again with these settings")
     return stored.k_max != wanted.k_max
 
 
@@ -1359,6 +1374,7 @@ def run(
     view_exclude: Sequence = (),
     project_file: Mapping | None = None,
     chosen_k: Mapping[str, int] | None = None,
+    review_table: str | Path | None = None,
     reuse: bool = True,
     analysis=None,
     progress: ProgressHook | None = None,
@@ -1371,6 +1387,8 @@ def run(
     picked or fitted, and the bundle records the rules and the spectra they left out.
     ``view_exclude`` (``[[review.exclude]]``) treats its spectra as rejected in the figures
     of :meth:`RunResult.write_figures` (in memory; the fits are kept). A run draws no figures.
+    The undeuterated controls the review rejects (the carried-over review, the project's review
+    table ``review_table``, and ``view_exclude``) are left out of the per-bin noise.
 
     Spectra flagged ``empty`` (and ``no_signal`` if ``config.drop_no_signal``), and spectra without
     a bin, are dropped and recorded. With ``out`` the results bundle is written there (with the raw
@@ -1530,14 +1548,22 @@ def run(
 
         chosen_k = moved_choices(chosen_k, measurements.spectrum_id,
                                  None if raw is None else raw.source)
-    noise_curve = bundle_noise(picked, measurements, config, measurement)
+    from .review_table import ReviewSettings, rejected_spectra
+
+    # the review's rejections (the replaced bundle's, the project's table, [[review.exclude]]):
+    # rejected undeuterated controls are left out of the per-bin noise
+    rejected = rejected_spectra(
+        ReviewSettings(table=None if review_table is None else str(review_table),
+                       exclude=tuple(view_exclude)),
+        picked, stored=review, source=None if raw is None else raw.source)
+    noise_curve = bundle_noise(picked, measurements, config, measurement, rejected)
     if reuse and previous is not None:  # a curve hardly moved: the replaced bundle's kept
         from .reuse import kept_curve
 
         noise_curve = kept_curve(moved if moved is not None else out, noise_curve)
     _warn_own_reference(measurements, picked, config, noise_curve)
     plan = _plan(measurements, config, (UNITS * pick_share, float(UNITS - _FINISH)))
-    reused = None
+    reused, redone = None, []
     if reuse and previous is not None:
         from .reuse import describe, reused_fits
 
@@ -1545,6 +1571,9 @@ def run(
                              noise_curve, merge_choices(chosen_k))
         if reused is not None:
             log.info("%s", describe(reused, len(measurements)))
+            reused, redone = _updated_part(
+                measurements, config, reused, merge_choices(chosen_k), progress, cancel,
+                (plan.lo, plan.lo + (plan.hi - plan.lo) * plan.fit_share))
             plan = _without(plan, measurements, reused.rows)
     from .io.drift_gate import unclear_series
     from .io.mzml import elution_cut_spectra
@@ -1605,6 +1634,11 @@ def run(
             provenance["spectra_taken"] = True
         if reused is not None and reused.made_with:  # kept from other software, same engine
             provenance["fits_reused_made_with"] = list(reused.made_with)
+        provenance["redone"] = list(redone)
+        provenance["fresh"] = not reuse
+        # one entry per update: the earlier ones, each as its manifest recorded it
+        before = dict(previous.get("provenance") or {})
+        provenance["history"] = [*before.pop("history", ()), *([before] if before else [])]
     checkpoint = out is not None and config.bootstrap is not None
     if checkpoint:  # the fits are kept if the bootstrap is stopped or fails
         check_cancel(cancel)
@@ -1617,8 +1651,8 @@ def run(
         boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel, reused=reused)
     except BaseException:
         if checkpoint:
-            log.warning("the bootstrap did not finish: the fits are in %s; 'hxex resume' (or "
-                        "hxex.pipeline.resume_bootstrap) adds the bootstrap to them", out)
+            log.warning("the bootstrap did not finish: the fits are in %s; the next 'hxex run' "
+                        "(or hxex.pipeline.resume_bootstrap) adds the bootstrap to them", out)
         raise
     by_k = _chosen_part(config, measurements, fit, by_k,
                         merge_choices(_review_choices(review), chosen_k), progress, cancel)
@@ -1627,6 +1661,63 @@ def run(
     return _finish(result, out, spectra=spectra, project=project, notes=notes,
                    overwrite=overwrite, progress=progress, cancel=cancel, review=review,
                    provenance=provenance)
+
+
+def _updated_part(data: Measurements, config: RunConfig, reused, chosen: Mapping[str, int],
+                  progress, cancel, progress_range: tuple[float, float]):
+    """The previous results' part a run keeps (:class:`hxex.reuse.Reused`) brought to the
+    run's settings, as :func:`hxex.reuse.reused_fits` says it needs (docs/PLAN.md Next steps
+    40: a run updates the results): the fits to another ``k_max`` (the K missing fitted, those
+    above dropped), the population test made again (the null simulations of the steps it had
+    with the same settings kept) or taken away, the bootstrap made again or the fixed-K
+    bootstraps newly listed added, and the spectra whose K changed bootstrapped at their new K.
+    Each measurement is seeded from its own id, so the result is the one a run gives.
+    ``(reused, what was redone)``, the second for the log and the provenance."""
+    sub = data.select(reused.rows)
+    fit, test = reused.fit, reused.test
+    redone: list[str] = []
+    if reused.k_max is not None:
+        log.info("the kept fits: fitting K = %s (k_max %d -> %d)",
+                 ", ".join(str(k) for k in config.fit.k_values if k not in fit.k_values)
+                 or "none", fit.config.k_max, config.fit.k_max)
+        fit, _ = _extended_fit(sub, config, fit, progress, cancel, progress_range)
+        fit = dataclasses.replace(fit, config=config.fit)
+        redone.append(f"fits to K = {config.fit.k_max}")
+        width = config.fit.k_max
+        reused = dataclasses.replace(  # the bootstraps as wide as the new fits' populations
+            reused, boot=None if reused.boot is None else reused.boot.with_width(width),
+            by_k=None if reused.by_k is None else {
+                k: v.with_width(width) for k, v in reused.by_k.items() if k <= width})
+    if reused.retest:
+        log.info("the kept fits: %s the population test", "making again"
+                 if test is not None else "adding")
+        fit = _test_screened(sub, fit, chosen or {}, cancel)
+        fit, test = _test_part(sub, config, fit, progress, cancel, progress_range,
+                               previous=test)
+        redone.append("population test")
+    elif reused.untest:
+        fit, test = dataclasses.replace(fit, selected_K=_criterion_K(fit)), None
+        redone.append("population test taken away")
+    boot, by_k = reused.boot, reused.by_k
+    if config.bootstrap is not None:
+        if reused.rebootstrap:
+            log.info("the kept fits: making the bootstrap (%d resamples)",
+                     config.bootstrap.n_boot)
+            plan = dataclasses.replace(_plan(sub, config, progress_range), fit_share=0.0)
+            boot, by_k = _bootstrap_part(config, plan, [fit.select(r) for r in plan.chunks],
+                                         progress, cancel)
+            redone.append("bootstrap")
+        else:
+            if by_k is not None:  # a K no longer fitted goes with its fits
+                by_k = {k: v for k, v in by_k.items() if k in fit.k_values}
+            missing = [k for k in reused.new_ks if k in fit.k_values and (
+                (by_k or {}).get(k) is None
+                or not all(by_k[k].covers(int(i)) for i in np.flatnonzero(fit.fitted(k))))]
+            by_k = _fixed_part(config, sub, fit, by_k, reused.new_ks, progress, cancel)
+            if missing:
+                redone.append("bootstrap at K = " + ", ".join(map(str, missing)))
+            boot = _patched_bootstrap(config, sub, fit, boot, by_k, cancel)
+    return dataclasses.replace(reused, fit=fit, test=test, boot=boot, by_k=by_k), redone
 
 
 def _stored_picking(raw: SpectrumSet, config: RunConfig):
@@ -1968,7 +2059,7 @@ def resume_bootstrap(
                                 if k not in ("ks", "set_k", "keep_draws")
                                 and stored_settings.to_dict()[k] != v)
                 raise ValueError(f"{path}: these bootstrap settings ({', '.join(differ)}) change "
-                                 "its values: make it again (add=True; hxex resume does when the "
+                                 "its values: make it again (add=True; hxex run does when the "
                                  "project file's [run.bootstrap] differs)")
             fitted = b.fit().k_values
             new_fixed = tuple(k for k in fixed_ks(merged, fitted)
@@ -1996,7 +2087,7 @@ def resume_bootstrap(
                              "bootstrap or the population test, or to work the controls out "
                              "again, give the project file with its [run.bootstrap], "
                              "[run.population_test] or changed [run.controls] "
-                             "(hxex resume hxex.toml)")
+                             "('hxex run hxex.toml' brings the results up to date)")
         if add and bootstrap is None:
             raise ValueError("adding a bootstrap needs its settings (bootstrap=)")
         if add and "bootstrap" not in b.pending:

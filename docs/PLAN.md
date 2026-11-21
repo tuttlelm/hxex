@@ -2179,7 +2179,8 @@ Planned, not built:
      applies, naming `hxex run` (closes the case above), and a set whose spectra were all held
      out reads "not tested", not one population (built 2026-11-20, HISTORY 428). Then the
      per-stage record and the status in `hxex check`/`info` (built 2026-11-20, HISTORY 430: `hxex.stages`, the manifest's `stages` block, and a closing `hxex run` line saying what `run --overwrite` does now); then `run` as update (resume's incremental paths moved into it) and
-     `--fresh`; then the window's stage row. Tests: each incremental path against a fresh run,
+     `--fresh` (built 2026-11-20, HISTORY 433: resume retired, `[output] overwrite` refused,
+     report and analyse write their folders again); then the window's stage row. Tests: each incremental path against a fresh run,
      as the preset tests do (HISTORY 354).
 
 ## Risks and open decisions

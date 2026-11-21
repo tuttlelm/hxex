@@ -140,12 +140,13 @@ A run is described by a TOML project file:
 hxex init --format specexport -o hxex.toml   # a project file with every default; edit it
 hxex check hxex.toml                         # what would be read, and any problem
 hxex run hxex.toml                           # read, pick, fit, bootstrap; bundle and tables
-hxex run hxex.toml --keep-previous           # again, keeping the earlier results as results.1
+                                             # (again: brings them up to date, redoing only
+                                             # what changed; also finishes a stopped bootstrap)
+hxex run hxex.toml --fresh                   # start again: read, pick and fit everything anew
+hxex run hxex.toml --keep-previous           # update a copy, keeping the earlier as results.1
 hxex run hxex.toml --spectra old_results     # the same from the raw spectra a bundle stored
 hxex info results                            # what the results bundle holds
 hxex report hxex.toml --figures              # figures ([figures]; and --tables)
-hxex resume results                          # finish a run stopped during its bootstrap
-hxex resume hxex.toml                        # add (or redo) a bootstrap, [run.bootstrap]
 hxex analyse hxex.toml                       # post-fitting analysis: coverage, residues,
                                              # populations, comparisons ([analysis])
 hxex analyse A=runA.zip B=runB.zip --reference A:WT   # compare separate runs (a run column;
@@ -156,16 +157,17 @@ The output bundle (`[output] bundle`, say `results`) and the folders named after
 (`results_tables`, `results_figures`, `results_analysis_<reference>`, and the generations
 `results.1`,
 `results.1_tables`, ...)
-are hxex's: `hxex run`, `report` and `analyse` refuse to write over them unless told to, and
-then either replace them (`--overwrite`; the review layer is carried over) or move them to the
-next free name first (`--keep-previous`: `results.1` with its folders for a run,
-`results_figures.1` or `results_analysis_WT.1` for the others); `[output] overwrite` or
-`keep_previous` does it for every command. Files of your own inside them are kept, but one named
-like an hxex file stops the command; keep your own files elsewhere. `hxex info` shows what a
-bundle replaced, what changed and its earlier generations (see `docs/BUNDLE.md`).
+are hxex's: `hxex run` brings an existing bundle up to date (`hxex check` shows, stage by
+stage, what it would do again; the review layer is carried over), and `report` and `analyse`
+write their folders again. `--keep-previous` moves the earlier folder to the next free name
+first (`results.1` with its folders for a run, `results_figures.1` or `results_analysis_WT.1`
+for the others); `[output] keep_previous` does it whenever a run starts again with `--fresh`.
+Files of your own inside them are kept, but one named like an hxex file stops the command; keep
+your own files elsewhere. `hxex info` shows each update of a bundle, what changed and its
+earlier generations (see `docs/BUNDLE.md`).
 
 Progress goes to stderr; Ctrl-C stops a run cleanly, keeping its fits if the bootstrap had
-started. On the CPU, `--threads N` (or `threads = N` in the project file) sets the number of
+started (`hxex run` again finishes it). On the CPU, `--threads N` (or `threads = N` in the project file) sets the number of
 threads; about half the physical cores was fastest on a 24-core machine.
 With `screen = true` in `[run.fit]`, K = 2 and 3 are fitted only for the spectra that could
 select them (an exact bound; the selected K does not change), which takes about a third of the

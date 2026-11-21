@@ -5,7 +5,8 @@ status (not reviewed, accepted, rejected), a K (the fit's choice or one the run 
 are written at once to the project's user review table (:mod:`hxex.gui.review`), the same file a
 spreadsheet user edits, and laid over the results in memory, so the tree and the figures show
 them at once. A table another program holds keeps the decisions waiting (Try again). A K
-without a bootstrap at it offers Resume, as ``hxex resume`` adds one.
+without a bootstrap at it offers Run, as ``hxex run`` adds one when it brings the results up to
+date.
 """
 
 from __future__ import annotations
@@ -93,8 +94,9 @@ class ReviewPanel(QGroupBox):
         self.retry = QPushButton("Try again")
         self.retry.clicked.connect(lambda: self.decide())
         self.retry.hide()
-        self.resume = QPushButton("Add the bootstrap (Resume)…")
-        self.resume.setToolTip(tip("hxex resume: bootstraps the spectra shown at a K without one"))
+        self.resume = QPushButton("Add the bootstrap (Run)…")
+        self.resume.setToolTip(tip("hxex run: brings the results up to date, which bootstraps "
+                                   "the spectra shown at a K without one"))
         self.resume.clicked.connect(self.resume_asked)
         self.resume.hide()
         self.previous = QPushButton("◀")
@@ -511,10 +513,10 @@ class ReviewPanel(QGroupBox):
             if any(s in unfitted for s in waiting):  # the screen skipped it: drawn at the fit's K
                 self.message.setText(f"{self.message.text()} K={ks} was not fitted for these "
                                      "spectra (the screen skipped it): shown at the fit's K "
-                                     "until Resume fits it.")
+                                     "until Run fits it.")
             else:
                 self.message.setText(f"{self.message.text()} No bootstrap at K={ks} for these "
-                                     "spectra yet: its errors come with Resume.")
+                                     "spectra yet: its errors come with Run.")
 
     def key(self, letter: str) -> None:
         """A, R or U in the tree: accepted, rejected, not reviewed."""

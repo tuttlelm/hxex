@@ -251,6 +251,11 @@ WINDOW_MAX_REMOVED = (
     "Results picked with it still load")
 
 
+OVERWRITE_GONE = ("no longer a setting: hxex run brings the results up to date (only what changed "
+                  "is done again; hxex check shows what it would do), and report and analyse "
+                  "replace their own folders")
+
+
 def _without_window_max(picker: Mapping) -> dict:
     """``[run.picker]`` without the settings of the removed ``pick = "window_max"``: refused
     when they ask for it, dropped with a note when they hold the value they had by default."""
@@ -492,14 +497,14 @@ class OutputSettings:
     """Where results go (the ``[output]`` table): the bundle and the tables (a directory, or
     True for the bundle's name plus ``_tables``). The bundle and the folders named after it
     (its tables, figures and analyses, and their earlier generations, ``name.N``) are hxex's: a
-    later command replaces them (``overwrite``) or moves them first (``keep_previous``: the
-    bundle with its folders to ``name.N``, see :func:`hxex.pipeline.run`; a figures, tables or
+    later command brings them up to date, or moves them first (``keep_previous``, with
+    ``hxex run --fresh``: the bundle with its folders to ``name.N``, see
+    :func:`hxex.pipeline.run`; a figures, tables or
     analysis folder written alone to its own ``NAME.N``, :func:`hxex.io.prepare_output`), for
     ``hxex run``, ``report`` and ``analyse`` alike. A run draws no figures (``hxex report``
     does, into ``name_figures``)."""
 
     bundle: Path | None = None
-    overwrite: bool = False
     keep_previous: bool = False
     keep_spectra: bool = True
     tables: Path | bool = True
@@ -930,6 +935,9 @@ def _output_from(data: Mapping, base: Path) -> OutputSettings:
         log.info("[output] figures = false is no longer needed (hxex run draws no figures): "
                  "the line can go")
         data = {k: v for k, v in data.items() if k != "figures"}
+    if "overwrite" in data:
+        raise ProjectError(f"[output] overwrite = {toml_value(data['overwrite'])}: {OVERWRITE_GONE}"
+                           "; delete the line")
     _check_keys(data, {f.name for f in fields(OutputSettings)}, "[output]")
     data = _false_to_none(data, OutputSettings)
     _check_types(data, OutputSettings, "output")
@@ -944,7 +952,6 @@ def _output_from(data: Mapping, base: Path) -> OutputSettings:
 
     out = OutputSettings(
         bundle=_path(base, data.get("bundle"), "output.bundle"),
-        overwrite=bool(data.get("overwrite", False)),
         keep_previous=bool(data.get("keep_previous", False)),
         keep_spectra=bool(data.get("keep_spectra", True)),
         tables=where("tables", True), notes=str(data.get("notes", "")),
@@ -2488,18 +2495,14 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "[output]",
         "# The bundle and the folders named after it (results_tables, results_figures,",
         "# results_analysis_..., and the earlier ones results.1, results_figures.1, ...) belong",
-        "# to hxex: run, report and analyse stop at a folder that holds results unless",
-        "# overwrite or keep_previous (here, or --overwrite / --keep-previous) says what to do.",
+        "# to hxex: hxex run brings the results up to date (only what changed is done again;",
+        "# hxex check shows what it would do), and report and analyse replace their folders.",
         "# Keep your own files elsewhere (files of yours inside them are kept, but one named",
         "# like an hxex file stops the command).",
         'bundle = "results"               # name of the folder (or .zip archive) hxex creates',
-        "#                                 # for the results (an existing one is replaced or",
-        "#                                 # moved only with overwrite or keep_previous below)",
-        "overwrite = false                # replace earlier results in the bundle (its review",
-        "#                                 # is carried over), tables, figures and analysis",
-        "keep_previous = false            # move earlier results first: the bundle with its",
-        "#                                 # folders to results.1, a figures or analysis",
-        "#                                 # folder alone to NAME.1 (report, analyse)",
+        "#                                 # for the results",
+        "keep_previous = false            # hxex run --fresh: move the earlier results first,",
+        "#                                 # the bundle with its folders to results.1",
         "keep_spectra = true              # store the raw spectra in the bundle",
         "tables = true                    # CSV tables beside the bundle, or a directory",
         'notes = ""',
@@ -2510,7 +2513,7 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         '# table = "user_review_table.csv"  # a copy of spectra.csv with review_status,',
         "#                                 # review_K and note filled in (other columns are",
         "#                                 # ignored); a chosen review_K needs a bootstrap at",
-        "#                                 # it: hxex resume hxex.toml adds the missing ones",
+        "#                                 # it: hxex run hxex.toml adds the missing ones",
         "# [[review.exclude]]              # spectra treated as rejected (their fits are kept);",
         '# sample = "WT"                   # the keys of [[input.exclude]]',
         '# time = "30 s"',
@@ -2797,7 +2800,7 @@ def project_record(project: Project) -> dict[str, Any]:
         "project": project.project, "threads": project.threads,
         "preset": None if project.preset is None else project.preset.record(),
         "input": None if inp is None else _input_record(inp, mode),
-        "output": {"bundle": _recorded(out.bundle, mode), "overwrite": out.overwrite,
+        "output": {"bundle": _recorded(out.bundle, mode),
                    "keep_previous": out.keep_previous, "keep_spectra": out.keep_spectra,
                    "tables": folder(out.tables), "notes": out.notes},
     }
@@ -2866,8 +2869,9 @@ def run_settings_text(manifest: Mapping) -> str:
                   "# or before hxex recorded them); manifest.json says how the spectra were "
                   "read",
                   "# (configs.spectra_source)."]
-    if record.get("output"):
-        lines += [""] + _toml_table("output", record["output"], cls=OutputSettings)
+    if record.get("output"):  # results made before overwrite went recorded it: left out
+        lines += [""] + _toml_table("output", {k: v for k, v in record["output"].items()
+                                               if k != "overwrite"}, cls=OutputSettings)
     if run is None:
         lines += ["", "# [run]: the results do not record their run settings."]
     else:

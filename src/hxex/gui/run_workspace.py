@@ -3,10 +3,12 @@
 stages"). Each button runs one command on the project file as a child process
 (:class:`hxex.gui.runner.CommandRun`), shows the command as it would be typed in a terminal,
 its output in a console, and a progress bar; Stop stops it after the current step, and a second
-press aborts. One command runs at a time. A command that refuses to write over earlier output
-offers to run again replacing it or keeping it as ``NAME.N`` (``--overwrite``,
-``--keep-previous``); when a run, resume or report has finished, the window shows the new
-results.
+press aborts. One command runs at a time. Run on a project with results first shows where they
+stand, stage by stage, and what ``hxex run`` would do, and asks: Bring up to date (``hxex
+run``), Start again (``--fresh``), or Cancel (docs/PLAN.md Next steps 40). A run, report or
+analyse refusing to write over files of an output folder edited by hand offers to keep the
+folder as ``NAME.N`` (``--keep-previous``) and run the command again;
+when a run or report has finished, the window shows the new results.
 
 Every command's whole output also goes to a log file beside the project file
 (``hxex_logs/PROJECT_COMMAND_DATE_TIME.log``; owner: the console keeps only its last lines, and a
@@ -51,26 +53,21 @@ log = logging.getLogger(__name__)
 # (button, command, what it does): the commands a project runs, in the order of a project's life
 COMMANDS = (("Check", "check", "check the project file and show what would be read"),
             ("Run", "run",
-             "read, pick, fit, and bootstrap: the results bundle; run again (Replace when it "
-             "asks) after changing what is read: the data files are read again only when "
-             "something that decides the read changed, only the series whose spectra changed "
-             "are fitted again, and your review decisions are kept"),
-            ("Resume", "resume",
-             "add to the results without fitting again: a stopped or changed bootstrap, the K "
-             "your review chose, the population test, a changed back-exchange correction (not "
-             "which spectra are controls), or the quality flags; any other change of the "
-             "project is refused, and Run applies it"),
+             "read, pick, fit, and bootstrap: the results bundle; with results already there, "
+             "it shows where they stand and brings them up to date: only what your changes "
+             "touch is done again (a stopped bootstrap is finished), and your review decisions "
+             "are kept; or Start again"),
             ("Report", "report", "write the tables again (with the review applied)"),
             ("Analyse", "analyse", "compare the samples: the analysis tables and figures"),
             ("Info", "info", "what the results hold"))
-CHANGES_RESULTS = ("run", "resume", "report")  # the window shows the results again after these
+CHANGES_RESULTS = ("run", "report")  # the window shows the results again after these
 DEVICE_SETTING = "[run.fit.backend] device"  # the project file's device setting, by its name
-# the commands that take --overwrite and --keep-previous, and the words their refusal to write
-# over earlier output has (hxex.io.outputs.prepare_output, cmd_run, cmd_report); any other
-# line naming the options (resume's settings mismatch, check's outputs block) is not that
-# refusal (audit of 2026-11-15, A-4)
+# the commands that take --keep-previous, and the words their refusal to write over output
+# edited by hand has (hxex.io.outputs.edited_refusal); any other line naming the option is not
+# that refusal (audit of 2026-11-15, A-4)
 REPLACEABLE = ("run", "report", "analyse")
 REFUSED = "--keep-previous moves"
+EDITED = "changed after hxex wrote"  # the refusal's first line, naming the files
 # before the window closes (or shows another project) with a command running: stopped after
 # its step, aborted when the step has not ended after STOP_WAIT_MS, killed ABORT_WAIT_MS
 # after that; the window's events are handled meanwhile (audit of 2026-11-15, A-5)
@@ -82,7 +79,7 @@ KILL_WAIT_MS = 5000
 class RunWorkspace(QWidget):
     """The commands of the project shown, one at a time."""
 
-    results_changed = Signal()  # a run, resume or report finished: the results are new
+    results_changed = Signal()  # a run or report finished: the results are new
     show_setting = Signal(str)  # the user asked to change a setting (its table's name)
     # what the command is doing, in a few words, for the rest of the window (the Run tab's
     # title and the status bar: owner, 2026-11-09); "" when nothing runs
@@ -96,6 +93,7 @@ class RunWorkspace(QWidget):
         # the file here (the workspace on its own)
         self.project_values = None
         self.args: list[str] = []
+        self._extra: tuple[str, ...] = ()  # the last command's options (asked again with them)
         self.runner = CommandRun(self, program)
         self.log_file = None  # the open log of the command running
         self.log_path: Path | None = None
@@ -119,7 +117,7 @@ class RunWorkspace(QWidget):
         row.addStretch()
         self.device = QComboBox()
         self.device.addItems([DEVICE_SETTING, "cpu", "cuda"])
-        self.device.setToolTip(tip("where the fits run (Run and Resume): the project file's "
+        self.device.setToolTip(tip("where the fits run (Run): the project file's "
                                    "setting first; cpu or cuda for this command only (--device)"))
         change = QPushButton("Change…")
         change.setToolTip(tip("the project file's device setting, in the Project workspace"))
@@ -201,19 +199,45 @@ class RunWorkspace(QWidget):
 
     # --- the questions (replaced in tests) -------------------------------------------------
 
-    def ask_output_exists(self) -> str | None:
-        """'overwrite', 'keep-previous', or None (cancel): the command refused to write over
-        earlier output."""
+    def ask_output_exists(self, command: str = "report", detail: str = "") -> str | None:
+        """'keep-previous', or None (cancel): ``command`` refused to write over output that
+        was edited by hand (``detail``: its message, naming the files)."""
         box = QMessageBox(self)
-        box.setWindowTitle("Earlier results")
-        box.setText("The command found earlier output in its folder and did not touch it. "
-                    "Run it again and replace that output, or keep it under the next free "
-                    "name NAME.N?")
-        replace = box.addButton("Replace", QMessageBox.ButtonRole.AcceptRole)
+        box.setWindowTitle("Edited output")
+        again = ("Keep the results and their folders under the next free name (NAME.N) and run "
+                 "again? The run keeps the fits that are still up to date." if command == "run"
+                 else "Keep the folder under the next free name (NAME.N) and write it again?")
+        box.setText("Files hxex wrote before were changed since (opened and saved in a "
+                    "spreadsheet, say), so the command stopped without touching them. " + again)
+        if detail:
+            box.setInformativeText(detail)
         keep = box.addButton("Keep it as NAME.N", QMessageBox.ButtonRole.AcceptRole)
         box.addButton(QMessageBox.StandardButton.Cancel)
         box.exec()
-        return {replace: "overwrite", keep: "keep-previous"}.get(box.clickedButton())
+        return "keep-previous" if box.clickedButton() is keep else None
+
+    def ask_run(self, rows: list[tuple[str, str]], up_to_date: bool) -> str | None:
+        """'update', 'fresh', or None (cancel): Run on a project whose results exist, after
+        showing where they stand (``rows``: the lines of ``hxex check``)."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Results already there")
+        text = "\n".join(f"{key:<10} {value}" if key else f"{'':<10} {value}"
+                         for key, value in rows)
+        box.setText("The results are up to date: nothing to do. Start again?" if up_to_date
+                    else "Where the results stand, and what Run does to bring them up to date:")
+        box.setInformativeText(text)
+        box.setStyleSheet("QLabel { font-family: monospace; }")
+        update = None if up_to_date else box.addButton("Bring up to date",
+                                                       QMessageBox.ButtonRole.AcceptRole)
+        fresh = box.addButton("Start again", QMessageBox.ButtonRole.DestructiveRole)
+        fresh.setToolTip(tip("hxex run --fresh: read, pick and fit everything anew"))
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        if update is not None:
+            box.setDefaultButton(update)
+        box.exec()
+        clicked = box.clickedButton()
+        return ("update" if update is not None and clicked is update
+                else "fresh" if clicked is fresh else None)
 
     def ask_stop_to_close(self) -> bool:
         return QMessageBox.question(
@@ -221,7 +245,7 @@ class RunWorkspace(QWidget):
             f"{shown_command(self.args)} is still running. Stop it and close? (It is stopped "
             "after its current step, as Stop does, and the window waits for it; a step not "
             f"over after {STOP_WAIT_MS // 1000} s is aborted, and killed {ABORT_WAIT_MS // 1000} "
-            "s later. A bootstrap stopped part way can be finished with Resume.)",
+            "s later. A bootstrap stopped part way is finished by the next Run.)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
         ) == QMessageBox.StandardButton.Yes
 
@@ -298,7 +322,7 @@ class RunWorkspace(QWidget):
     def arguments(self, command: str, extra: tuple[str, ...] = ()) -> list[str]:
         """The command's arguments for the project shown, with the options chosen."""
         args = [command, self.project.name]
-        if command in ("run", "resume") and self.device.currentIndex() > 0:
+        if command == "run" and self.device.currentIndex() > 0:
             args += ["--device", self.device.currentText()]
         if command == "report" and self.figures.isChecked():
             args.append("--figures")
@@ -307,6 +331,12 @@ class RunWorkspace(QWidget):
     def run_command(self, command: str, extra: tuple[str, ...] = ()) -> None:
         if self.project is None or self.runner.running:
             return
+        if command == "run" and not extra:
+            chosen = self._run_choice()
+            if chosen is None:
+                return
+            extra = chosen
+        self._extra = tuple(extra)  # asked again (Keep it as NAME.N) with these options
         self.args = self.arguments(command, extra)
         typed = shown_command(self.args)
         self.command.setText(typed)
@@ -327,6 +357,31 @@ class RunWorkspace(QWidget):
         self._enable()
         self.stop_button.setText("Stop")
         self._tell()
+
+    def _run_choice(self) -> tuple[str, ...] | None:
+        """The options of Run: none when there are no results yet; else, after showing where
+        the results stand (:func:`hxex.stages.standing`), none to bring them up to date,
+        ``--fresh`` to start again, or None (cancelled)."""
+        from ..stages import lines, standing
+
+        try:
+            from ..config import load_project
+
+            project = load_project(self.project, analysis_only=True)
+            bundle = project.output.bundle
+            if bundle is None or not bundle.exists():
+                return ()
+            st = standing(project, bundle)
+            rows = lines(st)
+            from ..cli import EDITED_NOTE, output_lines
+
+            # an output folder with files edited by hand: the run would stop at it
+            rows += [("outputs", line) for line in output_lines(project) if EDITED_NOTE in line]
+        except Exception as exc:  # noqa: BLE001 - hxex run itself reports a project's problems
+            log.info("where the results stand not worked out: %s", exc)
+            return ()
+        choice = self.ask_run(rows, st.up_to_date)
+        return None if choice is None else ("--fresh",) if choice == "fresh" else ()
 
     def stop(self) -> None:
         sent = self.runner.stop()
@@ -428,7 +483,7 @@ class RunWorkspace(QWidget):
 
     @property
     def running_command(self) -> str:
-        """The command running (``run``, ``resume``, ...; '' when none)."""
+        """The command running (``run``, ``report``, ...; '' when none)."""
         return self.args[0] if self.runner.running and self.args else ""
 
     @property
@@ -484,9 +539,12 @@ class RunWorkspace(QWidget):
         the window is closing, another command has started, or the project changed."""
         if self._closing or self.runner.running or self.project != self._ran_on:
             return
-        choice = self.ask_output_exists()
+        detail = "\n".join(line for line in self._tail
+                            if EDITED in line or line.lstrip().startswith(("copy ", "or ")))
+        choice = self.ask_output_exists(command, detail)
         if choice is not None:
-            self.run_command(command, (f"--{choice}",))
+            extra = tuple(a for a in self._extra if a != f"--{choice}")
+            self.run_command(command, (*extra, f"--{choice}"))
 
     def may_close(self) -> bool:
         """Before the window closes or shows another project: a running command is stopped

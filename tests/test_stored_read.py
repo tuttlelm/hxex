@@ -21,9 +21,17 @@ READ = "reading the mzml input"
 
 
 def _run(path, capsys, *extra) -> str:
-    """The log of ``hxex run --overwrite`` (the command line logs to standard error)."""
+    """The log of ``hxex run`` updating the results (the command line logs to standard error),
+    with their bootstrap marked stopped partway so that there is something to do."""
+    import json
+
+    manifest = path.parent / "out" / "manifest.json"
+    if manifest.is_file():
+        data = json.loads(manifest.read_text())
+        data["pending"] = ["bootstrap"]
+        manifest.write_text(json.dumps(data))
     capsys.readouterr()
-    assert cli.main(["run", str(path), "--overwrite", *extra]) == 0
+    assert cli.main(["run", str(path), *extra]) == 0
     return capsys.readouterr().err
 
 

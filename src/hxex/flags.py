@@ -238,7 +238,7 @@ _add("tails_low", "quality", "spectrum", SPECTRA_FLAGS,
 _add("bright", "quality", "spectrum", SPECTRA_FLAGS,
      "Retired: a labelled spectrum or fully deuterated control at least as bright as a "
      "control of its series flagged `saturated` or `tails_low`.",
-     "None: no longer set. Results assessed before keep it until hxex resume assesses their "
+     "None: no longer set. Results assessed before keep it until hxex run assesses their "
      "flags again.",
      "Its spectra were no further from their replicates and chose two populations as often as "
      "their dimmer siblings, so it marked nothing useful.",

@@ -1,22 +1,24 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The previous results' fits reused by a run that replaces them (docs/PLAN.md Next steps 26,
-"Applying"): ``hxex run --overwrite`` reads and picks every spectrum again, as always, and then
-takes the fit, the population test, and the bootstrap of every spectrum whose input is the same
-as in the bundle it replaces, fitting only the others. Everything that uses all the spectra at
-once (the peak measure, the envelopes, the per-bin noise, the m/z check, the controls, the
-quality flags) is worked out again, so the result is the one a full run gives, up to the
-rounding a fit takes from the other measurements of its batch (HISTORY 46, 219).
+"""The previous results' fits reused by a run that updates them (docs/PLAN.md Next steps 26,
+"Applying", and 40): ``hxex run`` takes the stored spectra or reads them again, and then takes
+the fit, the population test, and the bootstrap of every spectrum whose input is the same as in
+the bundle it updates, fitting only the others. Everything that uses all the spectra at once
+(the peak measure, the envelopes, the per-bin noise, the m/z check, the controls, the quality
+flags) is worked out again, so the result is the one a full run gives, up to the rounding a fit
+takes from the other measurements of its batch (HISTORY 46, 219).
 
 A spectrum's input is the same when the bundle holds a measurement with its ``spectrum_id``
 and the same bins, intensities, envelope, bound on n, charge, control role, random key and
 scan cut, whose noise references are the same spectra and unchanged too, and whose series is
 unchanged as a whole (every spectrum of it the same, none added or gone: the noise estimated
-from replicates is per series); the bundle must have
-been written by the same software (hxex and the numerical packages) with the same fit,
-population-test, and bootstrap settings and the same per-bin noise (a curve that moved by
-less than 1 % of its standard error is replaced by the bundle's: :func:`kept_curve`), and be
-complete (no pending bootstrap). A spectrum whose K a review table chooses is reused only when
-the bundle fitted that K for it.
+from replicates is per series); the bundle must have been made by the same fitting code with
+the same ``[run.fit]`` settings but ``k_max`` and the same per-bin noise (a curve whose b1
+moved by less than :data:`CURVE_SHARE` is replaced by the bundle's: :func:`kept_curve`), and no
+stage but the bootstrap may have stopped partway. The kept fits are then brought to the run's
+other settings (:func:`hxex.pipeline.run`): the K missing fitted, the population test made again
+when its settings, the D2O fraction or the K fitted changed, and the bootstrap made again
+(stopped partway, or other settings) or completed (a fixed K newly listed). A spectrum whose K a
+review table chooses is reused only when the bundle fitted that K for it.
 """
 
 from __future__ import annotations
@@ -46,6 +48,11 @@ class Reused:
     boot: object | None = None
     by_k: dict | None = None
     made_with: tuple[str, ...] = ()
+    k_max: int | None = None
+    retest: bool = False
+    untest: bool = False
+    rebootstrap: bool = False
+    new_ks: tuple[int, ...] = ()
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -207,28 +214,20 @@ def _settings(config):
     return config
 
 
-CURVE_SHARE = 0.01  # a noise curve moved by less than this share of its standard error is kept
-
-
-def _close(new: float, old: float, se: float) -> bool:
-    if np.isnan(new) and np.isnan(old):
-        return True
-    return bool(np.isfinite(se) and abs(new - old) <= CURVE_SHARE * se)
-
-
-def _same_number(a: float, b: float) -> bool:
-    return a == b or (np.isnan(a) and np.isnan(b))
+# a per-bin noise curve whose b1 moved by less than this share of itself is kept, and with it the
+# fits of the unchanged spectra (HISTORY 433: refits at b1 x 0.98 ... 1.2 on two datasets;
+# the fits move about in proportion to the move, with no level below which none does)
+CURVE_SHARE = 0.01
 
 
 def kept_curve(path: str | Path | None, curve):
-    """The per-bin noise a run that replaces the bundle at ``path`` fits with: ``curve`` (what
-    the run measured), or the bundle's own when the two differ only in ``b1`` (and per sample),
-    by less than :data:`CURVE_SHARE` of the bundle's standard error of it. Editing an
-    undeuterated control's window moves ``b1`` by a tiny amount (on the private targeted
-    dataset, by 0.0000005 of its standard error), which would otherwise change every
-    spectrum's noise and leave no fit to keep; the earlier curve is as good a measurement.
-    The same controls must remain (``n_controls``, ``n_series``), with the same onset and
-    model error. Logged when the earlier curve is kept."""
+    """The per-bin noise a run that updates the bundle at ``path`` fits with: ``curve`` (what
+    the run measured), or the bundle's own when the fits would hardly differ: the same
+    model-error term, and the bundle's ``b1`` (the one number of the curve the fits use; the
+    onset and the per-sample values are only reported) within :data:`CURVE_SHARE` of the new
+    one. Editing a control's window, or another set of undeuterated controls (a changed
+    ``undeut_at``), moves ``b1`` a little, which would otherwise change every spectrum's noise
+    and leave no fit to keep. Logged either way, with the move."""
     from .io.bundle import BundleError, bundle_manifest
     from .noise import ControlsNoise
 
@@ -243,31 +242,37 @@ def kept_curve(path: str | Path | None, curve):
     old = ControlsNoise.from_dict(record)
     if old == curve:
         return curve
-    samples_new = {s.sample: s for s in curve.by_sample}
-    samples_old = {s.sample: s for s in old.by_sample}
-    if (old.n_controls != curve.n_controls or old.n_series != curve.n_series
-            or not _same_number(old.onset, curve.onset)
-            or old.model_error != curve.model_error
-            or old.model_error_at != curve.model_error_at
-            or not _close(curve.b1, old.b1, old.b1_se)
-            or set(samples_new) != set(samples_old)
-            or any(samples_new[n].n_series != o.n_series
-                   or not _close(samples_new[n].b1, o.b1, o.b1_se)
-                   for n, o in samples_old.items())):
+    move = abs(curve.b1 - old.b1) / old.b1 if old.b1 else float("inf")
+    if (old.model_error != curve.model_error or old.model_error_at != curve.model_error_at
+            or not move <= CURVE_SHARE):
+        log.info("per-bin noise: b1 %.6g measured now, %.6g in the results (moved %.2g %%, more "
+                 "than %g %%): every spectrum is fitted with the new curve", curve.b1, old.b1,
+                 100 * move, 100 * CURVE_SHARE)
         return curve
-    log.info("per-bin noise: b1 %.6g measured now, %.6g in the results being replaced (%.2g of "
-             "its standard error): the earlier curve is kept, so the unchanged series keep "
-             "their fits", curve.b1, old.b1, abs(curve.b1 - old.b1) / old.b1_se)
-    return old
+    log.info("per-bin noise: b1 %.6g measured now, %.6g in the results (moved %.2g %%, within "
+             "%g %%): the earlier curve is kept, so the unchanged spectra keep their fits",
+             curve.b1, old.b1, 100 * move, 100 * CURVE_SHARE)
+    import dataclasses
+
+    return dataclasses.replace(old, left_out=curve.left_out)  # what this run left out
 
 
 def reused_fits(path: str | Path | None, data, config, noise_curve,
                 chosen: Mapping[str, int] | None = None) -> Reused | None:
     """The fits, population test and bootstrap of the bundle at ``path`` (the one the run
-    replaces) that the run can take for its measurements ``data``, fitted with ``config``
+    updates) that the run can take for its measurements ``data``, fitted with ``config``
     (:class:`hxex.pipeline.RunConfig`) and the per-bin noise ``noise_curve``; ``chosen``: the
     K a review table chooses per spectrum. None, with the reason logged, when nothing can be
-    taken."""
+    taken: other fitting code, other ``[run.fit]`` settings than ``k_max``, another per-bin
+    noise, or a stage other than the bootstrap stopped partway.
+
+    What the kept spectra still need is said on the result (docs/PLAN.md Next steps 40, an
+    update): their fits brought to another ``k_max`` (``k_max``), the population test made
+    again (``retest``: added, other settings or ``d2o_fraction``, or other K fitted), taken
+    away (``untest``), the bootstrap made again (``rebootstrap``: stopped partway, added, or
+    other values) or the fixed-K bootstraps ``[run.bootstrap] ks`` newly lists added
+    (``new_ks``); the run does it (:func:`hxex.pipeline.run`)."""
+    from .bootstrap import same_values
     from .io.bundle import BundleError, _versions, open_bundle
     from .pipeline import RunConfig, _bootstrap_ks, _d2o_fraction
 
@@ -286,32 +291,42 @@ def reused_fits(path: str | Path | None, data, config, noise_curve,
                 why.append(reason)
             if stored is None:
                 why.append("they do not record their run settings")
-            else:
-                for name, label in (("fit", "[run.fit]"),
-                                    ("population_test", "[run.population_test]"),
-                                    ("bootstrap", "[run.bootstrap]")):
-                    if _settings(getattr(stored, name)) != _settings(getattr(config, name)):
-                        why.append(f"{label} changed")
-            if b.pending:
-                why.append(f"they wait for their {', '.join(b.pending)}")
+            elif not same_fit_settings(stored.fit, config.fit):
+                why.append("[run.fit] changed")
+            stopped = [s for s in b.pending if s != "bootstrap"]
+            if stopped:
+                why.append(f"they wait for their {', '.join(stopped)}")
             fit = b.fit()
-            if not why and _settings(fit.config) != _settings(config.fit):
+            if not why and not same_fit_settings(fit.config, config.fit):
                 why.append("[run.fit] changed")
             if not why and fit.noise_curve != noise_curve:
                 why.append("the per-bin noise measured from the undeuterated controls changed")
-            test = b.population_test() if config.population_test is not None else None
-            if not why and test is not None and test.d2o_fraction != _d2o_fraction(config):
-                why.append("[run.controls] d2o_fraction changed (the population test uses it)")
             if why:
                 log.info("fitting every spectrum: the previous results in %s cannot be reused "
                          "(%s)", path, "; ".join(why))
                 return None
+            k_max = config.fit.k_max if fit.config.k_max != config.fit.k_max else None
+            test = b.population_test()
+            testing = config.population_test is not None
+            retest = testing and (
+                test is None or k_max is not None
+                or _settings(test.config) != _settings(config.population_test)
+                or test.d2o_fraction != _d2o_fraction(config))
+            untest = not testing and test is not None
+            boot_settings = None if stored is None else stored.bootstrap
+            rebootstrap, new_ks = False, ()
+            if config.bootstrap is not None:
+                rebootstrap = ("bootstrap" in b.pending or boot_settings is None
+                               or b.bootstrap() is None
+                               or not same_values(_without_ks(boot_settings),
+                                                  _without_ks(config.bootstrap)))
             pos = same_inputs(data, b.measurements())
+            fitted_k = config.fit.k_values if k_max is not None else fit.k_values
             if chosen:
                 for i, sid in enumerate(map(str, data.spectrum_id)):
                     k = int(chosen.get(sid, 0))
-                    if pos[i] >= 0 and k and (k not in fit.k_values
-                                              or not fit.fitted(k)[pos[i]]):
+                    if pos[i] >= 0 and k and (k not in fitted_k or (
+                            k in fit.k_values and not fit.fitted(k)[pos[i]])):
                         pos[i] = -1  # a K the review chooses, not fitted for it then
             pos = whole_series(pos, data, b.measurements())
             rows = np.flatnonzero(pos >= 0)
@@ -320,23 +335,50 @@ def reused_fits(path: str | Path | None, data, config, noise_curve,
                 return None
             old = pos[rows]
             boot = by_k = None
-            if config.bootstrap is not None:
+            if config.bootstrap is not None and not rebootstrap:
                 boot = b.bootstrap().select(old)
-                ks = _bootstrap_ks(config, fit)
-                if ks:
-                    by_k = {k: b.bootstrap(k).select(old) for k in ks}
+                held = set(b.bootstrap_ks())
+                ks = [k for k in _bootstrap_ks(config, fit) if k in fitted_k]
+                by_k = {k: b.bootstrap(k).select(old) for k in ks if k in held}
+                new_ks = tuple(ks)  # those not held whole are completed by the run
             other = differences(made, _versions())
             if other:
                 log.info("the previous results' fits are kept although made with other "
                          "software (%s): the fitting code is the same, so they agree with a new "
                          "fit to the rounding of the arithmetic", "; ".join(other))
-            return Reused(rows=rows, fit=fit.select(old), made_with=tuple(other),
-                          test=None if test is None else test.select(old),
-                          boot=boot, by_k=by_k)
+            kept_fit = fit.select(old)
+            if data.role is not None:  # the run's roles (the fits do not depend on them)
+                import dataclasses
+
+                kept_fit = dataclasses.replace(kept_fit, role=np.asarray(data.role)[rows])
+            return Reused(rows=rows, fit=kept_fit, made_with=tuple(other),
+                          test=None if test is None or untest else test.select(old),
+                          boot=boot, by_k=by_k, k_max=k_max, retest=retest, untest=untest,
+                          rebootstrap=rebootstrap, new_ks=new_ks)
     except (BundleError, KeyError, ValueError) as exc:
         log.info("fitting every spectrum: the previous results in %s cannot be read for reuse "
                  "(%s)", path, exc)
         return None
+
+
+def same_fit_settings(a, b) -> bool:
+    """Whether fits made with ``[run.fit]`` settings ``a`` can be kept for ``b``: the same
+    settings but for ``k_max`` (the K missing are fitted, those above dropped: each K is
+    fitted the same whatever ``k_max`` is) and where they run."""
+    if a is None or b is None:
+        return a is b
+
+    def plain(c) -> dict:
+        return {k: v for k, v in c.to_dict().items() if k not in ("k_max", "backend")}
+
+    return plain(a) == plain(b)
+
+
+def _without_ks(config):
+    """A bootstrap configuration without what only adds to it (``ks``, ``set_k``)."""
+    import dataclasses
+
+    return dataclasses.replace(config, ks="selected", set_k=False)
 
 
 def describe(reused: Reused | None, total: int) -> str:

@@ -6,8 +6,8 @@
     hxex init [--format F] [-o hxex.toml]   write a project file with every default
     hxex set PROJECT SETTING VALUE          change one setting of the project file
     hxex check PROJECT                      check it and show what would be read
-    hxex run PROJECT                        read, pick, fit, bootstrap; bundle, tables, figures
-    hxex resume PROJECT|BUNDLE              complete a bundle's bootstrap, add the population test
+    hxex run PROJECT                        read, pick, fit, bootstrap: the bundle and tables, or
+                                            bring them up to date (only what changed)
     hxex report PROJECT|BUNDLE [--figures]  the tables (and the figures) from a saved bundle
     hxex info PROJECT|BUNDLE                what a bundle holds
     hxex analyse PROJECT|BUNDLE...          the post-fitting analysis: tables and figures
@@ -16,7 +16,7 @@
 The project file is described in :mod:`hxex.config`. Progress and messages go to stderr through
 ``logging`` (``-q`` for warnings only, ``-v`` for more); results and summaries go to stdout.
 Ctrl-C stops a run cleanly after the current step (a second Ctrl-C aborts at once); a run
-stopped during its bootstrap keeps the bundle of its fits, which ``hxex resume`` completes.
+stopped during its bootstrap keeps the bundle of its fits, which ``hxex run`` completes.
 Exit status: 0 done, 1 an error (its message is logged), 2 a usage error, 130 stopped.
 """
 
@@ -35,14 +35,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
-
-from .stages import ROLE_KEYS as _ROLE_KEYS
-from .stages import at as _at
-from .stages import role_text as _role_text
-from .stages import run_tables_given as _run_tables_given
-from .stages import setting_name as _setting_name
-from .stages import under as _under
-from .stages import value_text as _value_text
 
 log = logging.getLogger("hxex.cli")
 
@@ -105,54 +97,35 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the project file (hxex.toml, written by hxex init)")
     _spectra_option(p)
 
-    p = sub.add_parser("run", help="run a project: read, pick, fit, bootstrap, write the "
-                                   "bundle and tables (figures: hxex report)")
+    p = sub.add_parser("run", help="run a project, or bring its results up to date (only what "
+                                   "changed is done again; hxex check shows what): read, pick, "
+                                   "fit, bootstrap, write the bundle and tables (figures: hxex "
+                                   "report)")
     p.add_argument("project_file", metavar="hxex.toml",
                    help="the project file (hxex.toml, written by hxex init)")
     p.add_argument("--bundle", help="the results bundle (instead of output.bundle; relative "
                                     "to the current folder, not to the project file's)")
-    p.add_argument("--overwrite", action="store_true",
-                   help="replace an existing bundle (and its tables), carrying its review "
-                        "over; also a tables folder left from a bundle that is gone")
+    p.add_argument("--fresh", action="store_true",
+                   help="start again: read, pick and fit everything anew instead of bringing "
+                        "the existing results up to date (with [output] keep_previous = true "
+                        "the earlier results are first moved to NAME.N)")
     p.add_argument("--keep-previous", action="store_true",
-                   help="move an existing bundle (with its tables, figures and analysis "
-                        "folders) to the next generation, NAME.N, before writing")
-    p.add_argument("--refit", action="store_true",
-                   help="fit every spectrum again; without it, a spectrum whose input is the "
-                        "same as in the bundle being replaced keeps its fit, population test "
-                        "and bootstrap")
-    p.add_argument("--reread", action="store_true",
-                   help="read the input again; without it, a run that replaces a bundle takes "
-                        "the raw spectra stored there when the input settings and files are "
-                        "those they were read from")
+                   help="move the existing bundle (with its tables, figures and analysis "
+                        "folders) to the next generation, NAME.N, first, and update from it "
+                        "(to compare the two)")
+    p.add_argument("--overwrite", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--refit", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--reread", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of run.fit.backend)")
     _spectra_option(p)
     _threads_option(p)
 
-    p = sub.add_parser("resume", help="complete a bundle's bootstrap (finish a stopped one, add "
-                                      "or redo one, or bootstrap the review's chosen K), add "
-                                      "the population test, or work the controls or the "
-                                      "quality flags out again")
-    p.add_argument("bundle", metavar="hxex.toml|BUNDLE",
-                   help="the project file (hxex.toml), or a results bundle (a folder, or .zip) "
-                        "waiting for its bootstrap. With the project file, its [output] bundle "
-                        "gets a bootstrap with its "
-                        "[run.bootstrap] settings (redone only if they changed), one at the "
-                        "K its [review] table chooses where that is missing, and the population "
-                        "test with its [run.population_test] settings (made again only if they "
-                        "changed), and its controls are worked out again when its "
-                        "[run.controls] changed (or, without the table, when the bundle's "
-                        "spectra hold the controls and it has none); the fits kept. Quality "
-                        "flags made by an earlier "
-                        "version of hxex are assessed again either way. Any other change of the "
-                        "project since the results were made (another [run] or [input] "
-                        "setting, or which spectra are controls: undeut_at, fulldeut_at) is "
-                        "refused, naming each change: hxex run applies those")
-    p.add_argument("--device", help="cpu, cuda, cuda:1, ... (instead of the run's device)")
-    _threads_option(p)
-    p.add_argument("--tables", nargs="?", const=True, default=None, metavar="DIR",
-                   help="where the tables go (default: beside the bundle, or a project "
-                        "file's [output] tables)")
+    p = sub.add_parser("resume", help="retired: hxex run continues a stopped stage and brings "
+                                      "the results up to date")
+    p.add_argument("bundle", metavar="hxex.toml|BUNDLE", help=argparse.SUPPRESS)
+    p.add_argument("--device", help=argparse.SUPPRESS)
+    p.add_argument("--threads", help=argparse.SUPPRESS)
+    p.add_argument("--tables", nargs="?", const=True, default=None, help=argparse.SUPPRESS)
 
     p = sub.add_parser("report", help="write the tables again (with the review applied), and "
                                       "with --figures draw the figures, from the results; fits "
@@ -255,14 +228,13 @@ def _spectra_option(p) -> None:
 
 
 def _output_options(p, folder: str) -> None:
-    """--overwrite and --keep-previous for a command that writes an output folder."""
+    """--keep-previous (and the retired --overwrite) for a command that writes an output
+    folder: hxex's folders are written again without being asked."""
     holds = "they hold" if folder.endswith("folders") else "it holds"
-    p.add_argument("--overwrite", action="store_true",
-                   help=f"replace hxex's files in {folder} when {holds} earlier output "
-                        "(or [output] overwrite = true)")
+    p.add_argument("--overwrite", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--keep-previous", action="store_true",
-                   help=f"move {folder} to NAME.N first when {holds} earlier output (or "
-                        "[output] keep_previous = true)")
+                   help=f"move {folder} to NAME.N first when {holds} earlier output, instead "
+                        "of writing it again")
 
 
 def _threads_option(p) -> None:
@@ -460,7 +432,6 @@ PROGRESS_PREFIX = "@hxex-progress "
 
 def _progress_json(record: dict) -> None:
     """One progress record as a line on stderr: ``@hxex-progress`` and the record as JSON."""
-    import json
 
     sys.stderr.write(PROGRESS_PREFIX + json.dumps(record) + "\n")
     sys.stderr.flush()
@@ -726,7 +697,7 @@ def cmd_check(args) -> int:
         _say(f"{'fits on':14s} {device}")
         if problem:
             problems.append(problem)
-    for n, line in enumerate(_output_lines(project)):
+    for n, line in enumerate(output_lines(project)):
         _say(f"{'' if n else 'outputs':14s} {line}")
     if project.output.bundle is not None:
         for key, text in _stage_rows(project, project.output.bundle):
@@ -831,7 +802,7 @@ def _shared_check_line(project) -> None:
 
 
 def _device_text(project) -> tuple[str, str | None]:
-    """Where ``hxex run`` and ``hxex resume`` would fit, with this Python's PyTorch: the GPU
+    """Where ``hxex run`` would fit, with this Python's PyTorch: the GPU
     or the CPU (and its threads), from ``[run.fit.backend] device`` ("auto" resolved), and
     the PyTorch and Python it was found with (a CPU-only PyTorch makes "auto" the CPU; owner,
     2026-11-08). The problem: a CUDA device asked for where there is none. The window's device
@@ -882,11 +853,30 @@ def _format_hint(project) -> str:
     return ""
 
 
-def _output_lines(project) -> list[str]:
-    """What ``hxex check`` says of the project's output folders: which exist, which commands
-    would then need ``--overwrite`` or ``--keep-previous`` (or what ``[output] overwrite`` /
-    ``keep_previous`` will do), and whether each was made from the results in the bundle now.
-    Information only: each command refuses by itself, before doing any work."""
+EDITED_NOTE = "changed since hxex wrote"  # in output_lines: a folder the commands now refuse
+
+
+def _edited_note(folder: Path) -> str:
+    """``; 2 files changed since hxex wrote them (spectra.csv, uptake.csv): ...`` for a folder
+    holding files hxex wrote that were changed since (the commands refuse to write it again:
+    :func:`hxex.io.outputs.edited_refusal`); "" when none was."""
+    from .io import edited_outputs
+
+    edited = edited_outputs(folder)
+    if not edited:
+        return ""
+    one = len(edited) == 1
+    names = ", ".join(edited[:5]) + (", ..." if len(edited) > 5 else "")
+    return (f"; {len(edited)} file{'' if one else 's'} {EDITED_NOTE} "
+            f"{'it' if one else 'them'} ({names}): writing the folder again is refused until "
+            f"{'it is' if one else 'they are'} moved out (or --keep-previous)")
+
+
+def output_lines(project) -> list[str]:
+    """What ``hxex check`` says of the project's output folders: which exist, which command
+    writes each again, whether each was made from the results in the bundle now, and the files
+    hxex wrote there that were changed since (:data:`EDITED_NOTE`; the window's Run question
+    shows those lines too)."""
     from .io import holds_output, made_from
     from .io.bundle import analysis_folder_name, analysis_states, bundle_manifest
 
@@ -912,7 +902,7 @@ def _output_lines(project) -> list[str]:
         state = ("left from a bundle that is gone" if not bundle.exists()
                  else "made from results not recorded" if not stamp
                  else "up to date" if stamp == created else "made from earlier results")
-        lines.append(f"{folder.name}: {state} {writes(command)}")
+        lines.append(f"{folder.name}: {state} {writes(command)}{_edited_note(folder)}")
     analysis = project.analysis  # none: hxex analyse uses the default settings
     refs = [r for r in (analysis.analysis_names if analysis is not None else ()) or ("",)]
     every = "all" in refs  # every sample in turn: each of the bundle's analysis folders
@@ -941,15 +931,14 @@ def _output_lines(project) -> list[str]:
                 else "made from results not recorded")
         if every or folder.resolve() in analysed:
             text += f" {writes('hxex analyse')}"
-        lines.append(f"{folder.name}: {text}")
+        lines.append(f"{folder.name}: {text}{_edited_note(folder)}")
     if not lines:
         return [f"none yet: hxex run writes {bundle.name}"]
-    # said once for the block: each command refuses by itself, before doing any work
-    lines.append("[output] overwrite = true: each command replaces its folder" if out.overwrite
-                 else "[output] keep_previous = true: each command moves its folder to NAME.N "
-                      "first" if out.keep_previous
-                 else "to write one again, give its command --overwrite (replace) or "
-                      "--keep-previous (keep the earlier one as NAME.N)")
+    # said once for the block
+    lines.append("each command writes its folder again (hxex run brings the bundle up to date); "
+                 "--keep-previous keeps the earlier one as NAME.N"
+                 + ("; [output] keep_previous = true moves the bundle with its folders first "
+                    "when hxex run --fresh starts again" if out.keep_previous else ""))
     return lines
 
 
@@ -1003,26 +992,6 @@ def _check_exclusions(project, index, reader: str) -> list[str]:
     return problems
 
 
-def _choices_not_fitted(chosen, bundle: Path) -> str | None:
-    """Why ``hxex resume`` cannot bootstrap review-table choices (``chosen``) of a K the bundle
-    was not fitted with (the project file may try it now; only ``hxex run`` fits it), or
-    None."""
-    from .fit import FitConfig
-    from .io.bundle import bundle_manifest
-    from .review_table import choices_outside
-
-    held = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("fit")
-    if not chosen or held is None:
-        return None
-    fitted = FitConfig.from_dict(held).k_values
-    if not (outside := choices_outside(chosen, fitted)):
-        return None
-    return (f"the review table chooses a K that {bundle} was not fitted with for "
-            f"{len(outside)} spectra ({', '.join(outside[:3])}); the bundle was fitted with "
-            f"K = {', '.join(map(str, fitted))} and resume fits no new K: run again with "
-            "hxex run --overwrite (the review table is applied to the new fits)")
-
-
 def _check_review_ids(project, lines: dict) -> list[str]:
     """A problem when the project's review table names spectra the results in its bundle do not
     have (``hxex report`` and the analysis would skip those rows), and the ``review table`` line
@@ -1033,13 +1002,13 @@ def _check_review_ids(project, lines: dict) -> list[str]:
     from .io import open_bundle
     from .io.bundle import bundle_manifest
     from .io.mzml import kinetics_spectra
-    from .review_table import move_entries, moved_sheet, read_review_table, table_choices
+    from .review_table import move_entries, moved_sheet, read_review_table
 
     review, bundle = project.review, project.output.bundle
     if (review is None or not review.table or bundle is None or not bundle.exists()
             or bundle_manifest(bundle) is None):
         return []
-    problems = [p for p in [_choices_not_fitted(table_choices(review), bundle)] if p]
+    problems: list[str] = []
     sheet = read_review_table(review.table)
     with open_bundle(bundle) as b:
         ids = b.spectrum_ids()
@@ -1483,6 +1452,10 @@ def cmd_run(args) -> int:
     if bundle is None:
         log.error("no bundle: set output.bundle or give --bundle")
         return EXIT_ERROR
+    if project.input is None:
+        log.error("%s has no [input]: hxex run needs the project file the results are made "
+                  "from (a file with only [analysis] is for hxex analyse)", args.project_file)
+        return EXIT_ERROR
     stored = project.input.spectra
     if stored is not None and bundle.resolve() == stored.resolve():
         log.error("%s holds the spectra this run takes: write the results to another bundle",
@@ -1492,20 +1465,36 @@ def cmd_run(args) -> int:
         from .config import stored_spectra_source
 
         stored_spectra_source(stored)  # a path that cannot be read: refused before anything
-    overwrite = args.overwrite or out.overwrite
-    keep_previous = args.keep_previous or out.keep_previous
+    fresh = bool(args.fresh or args.refit or args.reread)
+    if args.overwrite:
+        log.warning("--overwrite is no longer needed: hxex run brings existing results up to "
+                    "date (--fresh starts again)")
+    if args.refit or args.reread:
+        log.warning("--%s is replaced by --fresh (starts again: reads, picks and fits "
+                    "everything)", "refit" if args.refit else "reread")
     from .io.bundle import bundle_manifest
 
     if bundle.exists() and bundle_manifest(bundle) is None:  # refused before the read
         log.error("%s exists but is not a results bundle; it is never replaced or moved: "
                   "write to another output.bundle", bundle)
         return EXIT_ERROR
-    if bundle.exists() and not (overwrite or keep_previous):
-        log.error("%s exists: --overwrite replaces it (and its tables, carrying its review "
-                  "over), --keep-previous moves it to the next generation first "
-                  "(%s.N), or write to another output.bundle (the bundle and the folders "
-                  "named after it are hxex's)", bundle, bundle.name)
-        return EXIT_ERROR
+    chosen_k = table_choices(project.review)  # before anything is read
+    check_table_choices(chosen_k, project.run.fit.k_values)
+    exists = bundle.exists()
+    # an update, or a fresh start replacing the results there; [output] keep_previous moves
+    # them first only when starting again, --keep-previous before an update too
+    keep_previous = exists and bool(args.keep_previous or (fresh and out.keep_previous))
+    overwrite = exists
+    if exists and not fresh:
+        from .stages import lines, standing
+
+        st = standing(dataclasses.replace(project, output=dataclasses.replace(
+            out, bundle=bundle)), bundle)
+        for key, text in lines(st, run=False):
+            log.info("%-14s %s", key, text)
+        if st.up_to_date and not keep_previous:
+            return _up_to_date(project, bundle, args)
+        log.info("hxex run: %s", st.run)
     from .io import check_output, holds_output, prepare_output
     from .report.tables import TABLE_NAMES
 
@@ -1519,14 +1508,12 @@ def cmd_run(args) -> int:
     moves_along = (keep_previous and bundle.exists() and tables is not None
                    and tables == bundle.with_name(bundle.name + "_tables"))
     if tables is not None and not moves_along:
-        prepare_output(tables, overwrite=overwrite, keep_previous=keep_previous, move=False,
+        prepare_output(tables, overwrite=True, keep_previous=keep_previous, move=False,
                        what="tables of earlier results",
                        elsewhere="another output.bundle (or output.tables)")
         if not (keep_previous and holds_output(tables)):  # stays: its files must be hxex's
             check_output(tables, TABLE_NAMES)
     config = project.run
-    chosen_k = table_choices(project.review)  # before anything is read
-    check_table_choices(chosen_k, config.fit.k_values)
     if args.device:
         b = config.fit.backend
         config = dataclasses.replace(config, fit=dataclasses.replace(
@@ -1535,8 +1522,7 @@ def cmd_run(args) -> int:
     threads = args.threads if args.threads is not None else project.threads
     with stop.installed(), _threads(threads):
         spectra = None
-        if (stored is None and not getattr(args, "reread", False) and (overwrite or keep_previous)
-                and bundle.exists()):
+        if stored is None and not fresh and exists:
             # the spectra of the bundle being replaced, when a read would give them again
             # (hxex.stored_read; owner, 2026-11-16)
             from .stored_read import stored_spectra_for
@@ -1553,10 +1539,11 @@ def cmd_run(args) -> int:
                 spectra, config, out=bundle, project=project.project, notes=out.notes,
                 overwrite=overwrite, keep_previous=keep_previous, keep_spectra=out.keep_spectra,
                 exclude=project.input.exclude, view_exclude=_view_exclude(project),
-                chosen_k=chosen_k, reuse=not args.refit, analysis=project.analysis,
+                chosen_k=chosen_k, reuse=not fresh, analysis=project.analysis,
+                review_table=project.review.table if project.review else None,
                 project_file=project_record(dataclasses.replace(
                     project, threads=threads, output=dataclasses.replace(
-                        out, bundle=bundle, overwrite=overwrite, keep_previous=keep_previous))),
+                        out, bundle=bundle))),
                 progress=progress, cancel=stop,
             )
     if tables is not None:
@@ -1570,20 +1557,63 @@ def cmd_run(args) -> int:
                      created=(bundle_manifest(bundle) or {}).get("created", ""),
                      analysis=project.analysis)
     _summary(result.fit, bundle, tables=tables)
-    _warn_stale_outputs(bundle, args.project_file, out.overwrite)
+    _warn_stale_outputs(bundle, args.project_file)
     return 0
 
 
-def _warn_stale_outputs(bundle: Path, project_file, overwrite: bool = False) -> None:
+def _up_to_date(project, bundle: Path, args) -> int:
+    """``hxex run`` on results that are up to date: nothing is fitted or written; their tables
+    are written when they are missing or of other results (as ``hxex report`` writes them)."""
+    from .io import holds_output, made_from
+    from .io.bundle import bundle_manifest
+
+    _say(f"{bundle}: the results are up to date, nothing to do (hxex run --fresh starts "
+         "again)")
+    out = project.output
+    tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
+    created = (bundle_manifest(bundle) or {}).get("created", "")
+    if tables is not None and (not holds_output(tables)
+                               or (made_from(tables) or {}).get("") != created):
+        from .io import open_bundle
+        from .report import Results, write_tables
+        from .review_table import apply_view
+
+        log.info("writing the tables of the results to %s", tables)
+        with open_bundle(bundle) as b:
+            write_tables(apply_view(Results.from_bundle(b), project.review), tables,
+                         created=created, analysis=project.analysis)
+        _say(f"tables: {tables}")
+    _warn_stale_outputs(bundle, args.project_file)
+    return 0
+
+
+def _warn_not_up_to_date(project, bundle: Path, project_file) -> None:
+    """Warn when the results in ``bundle`` are not up to date with ``project`` (a command that
+    reads them as they are: report, analyse), naming what is out of date and ``hxex run``."""
+    from .stages import standing
+
+    try:
+        st = standing(project, bundle)
+    except Exception as exc:  # noqa: BLE001 - a warning only; hxex check reports problems
+        log.debug("where the results stand not worked out: %s", exc)
+        return
+    if st.up_to_date or not st.stages:
+        return
+    late = [s.text() for s in st.stages if s.state not in ("done", "off")]
+    log.warning("the results in %s are not up to date with %s (%s): they are used as they are; "
+                "'hxex run %s' brings them up to date (hxex check shows what it would do)",
+                bundle, project_file, "; ".join(late), project_file)
+
+
+def _warn_stale_outputs(bundle: Path, project_file) -> None:
     """Warn about the bundle's figures and analysis folders made from other results than the
-    ones there now (after a run, however the earlier bundle went, or a resume), naming the
-    command that brings each up to date (without ``--overwrite`` when the project file's
-    ``[output] overwrite`` is on)."""
+    ones there now (after a run, however the earlier bundle went), naming the command that
+    brings each up to date."""
     from .io import holds_output, made_from
     from .io.bundle import analysis_states, bundle_manifest
 
     created = (bundle_manifest(bundle) or {}).get("created", "")
-    flag = "" if overwrite else " --overwrite"
+    flag = ""
     figures = bundle.with_name(bundle.name + "_figures")
     if holds_output(figures) and (made_from(figures) or {}).get("") != created:
         log.warning("%s holds figures of other results than the ones in %s now: 'hxex report "
@@ -1609,334 +1639,20 @@ def _summary(fit, bundle: Path, *, tables: Path | None = None) -> None:
         _say(f"tables: {tables}")
 
 
-def _changed_controls(project, bundle):
-    """``(controls, choice)``: the project's control settings for the bundle when they differ
-    from those its controls were worked out with (``hxex resume`` works them out again; no
-    refit), with how they were chosen (:class:`hxex.controls.ControlsChoice`), else ``(None,
-    None)``. ``[run] controls`` left out (``"auto"``) is decided from the bundle's picked
-    spectra as a run decides from those it reads, so a bundle made without a correction takes
-    one when its spectra hold the controls (owner, 2026-11-09). A bundle without controls takes
-    them only when the settings promote no time point to a control (``undeut_at``,
-    ``fulldeut_at``: the roles, and so the fits, would differ: run again); ``controls = false``
-    never takes a bundle's away (run again)."""
-    from .controls import AUTO, ControlConfig
-    from .io.bundle import BundleError, bundle_manifest
-    from .pipeline import bundle_controls
-
-    manifest = bundle_manifest(bundle) if bundle is not None else None
-    if project.run.controls is None or manifest is None:
-        return None, None
-    if project.run.controls == AUTO and project.input is None:
-        return None, None  # a file for the analysis: the run's choice stays
-    stored = ((manifest.get("configs") or {}).get("run") or {}).get("controls")
-    try:
-        wanted, choice = bundle_controls(bundle, project.run.controls)
-    except (BundleError, ValueError) as exc:  # no picked spectra to decide from
-        log.warning("%s", exc)
-        return None, None
-    if wanted is None:
-        return None, None
-    if not stored:
-        if (wanted.undeut_at is not None or wanted.fulldeut_at is not None
-                or not (wanted.undeut_marked and wanted.fulldeut_marked)):
-            return None, None  # other roles, other fits: run again to have them
-        return wanted, choice
-    return (None, None) if ControlConfig.from_dict(stored) == wanted else (wanted, choice)
+RESUME_RETIRED = ("hxex resume is retired: hxex run continues a stage that stopped partway and "
+                  "brings the results up to date, doing again only what changed (hxex check "
+                  "hxex.toml shows what it would do)")
 
 
 def cmd_resume(args) -> int:
-    from .io.bundle import bundle_manifest
-    from .pipeline import NothingToResume, resume_bootstrap
-
-    bundle, extra = Path(args.bundle), {}
-    tables_arg, threads = args.tables, args.threads
-    review = project = None
-    if problem := _bundle_problem(bundle, "resume"):
-        log.error("%s", problem)
-        return EXIT_ERROR
-    # a project file: add or redo a bootstrap or the population test
-    if bundle.suffix == ".toml" and bundle.is_file():
-        import dataclasses
-
-        from .config import check_table_choices, load_project, project_record
-        from .review_table import table_choices
-
-        project = load_project(bundle, analysis_only=True)
-        _preset_warning(project)
-        if project.output.bundle is None:
-            log.error("%s names no [output] bundle", bundle)
-            return EXIT_ERROR
-        # a change resume does not apply is refused, never recorded as if applied (PLAN Next
-        # steps 40, owner 2026-11-20)
-        if unapplied := _unapplied_changes(project, project.output.bundle):
-            log.error("%s: the project differs from the results in %s in what hxex resume does "
-                      "not apply (it keeps the bundle's reading, picking, fits, and control "
-                      "roles):\n%s\nRun 'hxex run %s --overwrite' (or --keep-previous) to "
-                      "apply them (the fits of unchanged series are kept), or set them back to "
-                      "resume", args.bundle, project.output.bundle,
-                      "\n".join(f"  {line}" for line in unapplied), args.bundle)
-            return EXIT_ERROR
-        chosen = table_choices(project.review)
-        check_table_choices(chosen, project.run.fit.k_values)
-        if problem := _choices_not_fitted(chosen, project.output.bundle):
-            log.error("%s", problem)
-            return EXIT_ERROR
-        changed, choice = _changed_controls(project, project.output.bundle)
-        if (project.run.bootstrap is None and project.run.population_test is None
-                and not chosen and changed is None
-                and _k_max_to_resume(project, project.output.bundle) is None):
-            log.error("%s has no [run.bootstrap] or [run.population_test] table, and its "
-                      "back-exchange correction is the bundle's: add one with its settings",
-                      bundle)
-            return EXIT_ERROR
-        bundle, review = project.output.bundle, project.review
-        threads = threads if threads is not None else project.threads
-        test = _test_to_resume(project, bundle)
-        if isinstance(test, int):
-            return test
-        fit_settings = _k_max_to_resume(project, bundle)
-        if fit_settings is not None:
-            extra["fit_settings"] = fit_settings
-        if test is not None or changed is not None or fit_settings is not None:
-            record = project_record(dataclasses.replace(project, threads=threads))
-            if project.input is None:  # a file for the analysis: the bundle's input stays
-                held_file = ((bundle_manifest(bundle) or {}).get("configs") or {}).get(
-                    "project_file") or {}
-                if held_file.get("input"):
-                    record["input"] = held_file["input"]
-            extra.update(project_file=record)
-        if test is not None:
-            extra["population_test"] = test
-        if changed is not None:
-            extra["run_controls"] = changed
-            extra["controls_choice"] = choice.to_dict()
-        held = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("bootstrap")
-        # the bootstrap there is kept when it has the project's settings: only what the
-        # review's chosen K lacks is added. Compared as the manifest stores them (JSON:
-        # a tuple such as ks = (1, 2) comes back a list, and never equalled the project's)
-        # A key the stored settings lack (one added to hxex after that bootstrap) takes its
-        # default, so only a real change of settings redoes the bootstrap
-        from .bootstrap import BootstrapConfig
-
-        if isinstance(held, dict):
-            defaults = json.loads(json.dumps(BootstrapConfig().to_dict()))
-            if filled := sorted(set(defaults) - set(held)):
-                log.info("%s: the stored bootstrap settings lack %s; taken as the defaults",
-                         bundle, ", ".join(filled))
-                held = {**{k: defaults[k] for k in filled}, **held}
-        # without [run.bootstrap] (a review table's K to fit) the bundle's bootstrap is kept;
-        # settings that only add to it (other ks or set_k) keep it too and add what is missing
-        from .bootstrap import added_settings
-
-        redo = (project.run.bootstrap is not None
-                and held != json.loads(json.dumps(project.run.bootstrap.to_dict()))
-                and (not isinstance(held, dict) or added_settings(
-                    BootstrapConfig.from_dict(held), project.run.bootstrap) is None))
-        extra.update(bootstrap=project.run.bootstrap, add=redo,
-                     view_exclude=_view_exclude(project), chosen_k=chosen,
-                     analysis=project.analysis)
-        out = project.output
-        tables_arg = tables_arg if tables_arg is not None else (out.tables or None)
-    from .io import check_output, holds_output, made_from, prepare_output
-    from .report.tables import TABLE_NAMES
-
-    created = (bundle_manifest(bundle) or {}).get("created", "")
-    if project is None and tables_arg is None:
-        # the bundle's own tables beside it are brought up to date (audit 2026-11-01 Medium
-        # 21); a folder there made from other results is left as it is, with a warning
-        own = Path(bundle).with_name(Path(bundle).name + "_tables")
-        if holds_output(own) and (made_from(own) or {}).get("") != created:
-            log.warning("%s holds tables of other results: not written (hxex report %s "
-                        "--overwrite writes them)", own, bundle)
-        else:
-            tables_arg = True
-    tables = _beside(bundle, tables_arg, "_tables")
-    # a tables folder holding other results' tables follows the bundle's rule (refused before
-    # anything is fitted)
-    others = (tables is not None and holds_output(tables)
-              and (made_from(tables) or {}).get("") != created)
-    flags = {} if project is None else {"overwrite": project.output.overwrite,
-                                        "keep_previous": project.output.keep_previous}
-    if others:
-        prepare_output(tables, move=False, what="tables of other results",
-                       elsewhere="another folder with --tables DIR", **flags)
-    if tables is not None and not (others and flags.get("keep_previous")):
-        check_output(tables, TABLE_NAMES)  # a file of your own there: refused before the fit
-    stop = _Stop()
-    with stop.installed(), _threads(threads), \
-            _progress(args) as progress:
-        try:
-            result = resume_bootstrap(bundle, device=args.device, progress=progress,
-                                      cancel=stop, **extra)
-        except NothingToResume:
-            if not extra:  # the bundle alone: say how to add or redo a bootstrap
-                raise
-            _say(f"{bundle}: the bootstrap and the population test have the project's "
-                 "settings and every K chosen in the review has a bootstrap: nothing to add")
-            return 0
-    if others:
-        prepare_output(tables, what="tables of other results", **flags)
-    if tables is not None:
-        from .report import Results, write_tables
-        from .review_table import apply_view
-
-        write_tables(apply_view(Results.from_run(result), review), tables,
-                     created=(bundle_manifest(bundle) or {}).get("created", ""),
-                     analysis=project.analysis if project is not None else None)
-        log.info("tables in %s", tables)
-    _summary(result.fit, bundle)
-    _warn_stale_outputs(Path(bundle), args.bundle, bool(flags.get("overwrite")))
-    return 0
-
-
-def _k_max_to_resume(project, bundle):
-    """The project's ``[run.fit]`` when its ``k_max`` differs from the bundle's (resume fits the
-    K the bundle lacks, or drops those above: moving between presets), else None."""
-    from .io.bundle import bundle_manifest
-
-    stored = (((bundle_manifest(bundle) or {}).get("configs") or {}).get("run") or {}).get("fit")
-    if not stored or stored.get("k_max") == project.run.fit.k_max:
-        return None
-    given = _run_tables_given(project)
-    if given is not None and "fit" not in given:  # a file for the analysis without [run.fit]
-        return None
-    return project.run.fit
-
-
-def _test_to_resume(project, bundle):
-    """The population test settings ``hxex resume`` gives the bundle of ``project``: the
-    project's ``[run.population_test]`` when the bundle has no test or one with other settings
-    (None: nothing to do), or an exit code when the bundle cannot take it (its test was made
-    with simulations and the project's takes the chi-square reference). The other ``[run]``
-    settings that differ from the bundle's were refused before (:func:`_unapplied_changes`)."""
-    from .io.bundle import bundle_manifest
-    from .pipeline import RunConfig
-
-    stored = ((bundle_manifest(bundle) or {}).get("configs") or {}).get("run")
-    if stored is None:
-        return None  # resume itself refuses a bundle without its run settings
-    normal = lambda c: json.loads(json.dumps(c.to_dict()))  # noqa: E731 - as the manifest
-    held = normal(RunConfig.from_dict(stored))  # a key added since takes its default
-    wanted = normal(project.run)
-    test = project.run.population_test
-    if test is None:
-        if held.get("population_test") is not None:
-            log.info("%s: the project has no [run.population_test]; the bundle's population test "
-                     "stays", bundle)
-    elif held.get("population_test") == wanted["population_test"]:
-        test = None
+    """``hxex resume``, retired (docs/PLAN.md Next steps 40): refused, naming ``hxex run``."""
+    target = Path(args.bundle)
+    if target.suffix == ".toml":
+        log.error("%s: hxex run %s", RESUME_RETIRED, args.bundle)
     else:
-        stored_test = held.get("population_test") or {}
-        if test.null == "chi_square" and stored_test.get("null") == "simulated":
-            log.error("%s: the bundle's population test was made with simulations, and the "
-                      "project's uses the chi-square reference (preset = \"quick\", or [run."
-                      "population_test] null): the results already hold more than that. Keep "
-                      "them (set the project back), or run again with 'hxex run --overwrite' "
-                      "(or --keep-previous)", bundle)
-            return EXIT_ERROR
-    # any other change of the [run] settings was refused before (_unapplied_changes)
-    return test
-
-
-# the [run] settings hxex resume applies itself (the bootstrap, the population test, k_max:
-# moving between presets), and those that say where and how a computation runs, not what it
-# gives (the device and precision, as hxex.reuse leaves them out; the chunks of the fit)
-_RESUME_APPLIES = ("bootstrap", "population_test", "fit.k_max")
-_NOT_RESULTS = ("fit.backend", "memory_budget_bytes", "max_chunk")
-# the control settings that decide which spectra are controls (hxex.stages.ROLE_KEYS), and so
-# their fits (at K = 1) and the sets of the population test: resume keeps the stored roles
-
-
-def _unapplied_changes(project, bundle) -> list[str]:
-    """The changes of ``project`` since the results in ``bundle`` were made that ``hxex
-    resume`` does not apply, one line each (empty when none; PLAN Next steps 40): ``[run]``
-    settings other than the bootstrap, the population test, and ``k_max`` (the control
-    settings count only for the roles, :data:`_ROLE_KEYS`, and for turning the correction
-    off; the device, precision, and chunks are left out); and, for a project with an
-    ``[input]`` table, what decides the read (:func:`hxex.stored_read.read_plan`, recorded
-    with the spectra), ``[[input.exclude]]``, and ``time_scale``. A project file without
-    ``[input]`` (for the analysis) is compared only in the ``[run]`` tables it writes."""
-    from .controls import ControlConfig
-    from .io.bundle import bundle_manifest, settings_changed
-    from .pipeline import RunConfig
-
-    manifest = bundle_manifest(bundle) if bundle is not None else None
-    stored = ((manifest or {}).get("configs") or {}).get("run")
-    if stored is None:
-        return []  # resume itself refuses a bundle without its run settings
-    normal = lambda c: json.loads(json.dumps(c, default=str))  # noqa: E731 - as the manifest
-    held = normal(RunConfig.from_dict(stored).to_dict())  # a key added since: its default
-    wanted = normal(project.run.to_dict())
-    given = _run_tables_given(project)
-    out = []
-    for path in settings_changed({"run": held}, {"run": wanted}):
-        if (_under(path, _RESUME_APPLIES) or _under(path, _NOT_RESULTS)
-                or _under(path, ("controls",))):
-            continue
-        if given is not None and path.split(".")[0] not in given:
-            continue
-        out.append(f"{_setting_name(path)}: {_value_text(_at(wanted, path))}, was "
-                   f"{_value_text(_at(held, path))}")
-    # the controls: resume works the correction out again (HISTORY 288), with the stored roles
-    if given is None or "controls" in given:
-        mine, theirs = project.run.controls, held.get("controls")
-        if mine is None and isinstance(theirs, Mapping):
-            out.append("[run] controls: false, was a back-exchange correction (resume never "
-                       "takes the bundle's correction away)")
-        defaults = ControlConfig()
-        for key in _ROLE_KEYS:
-            now = getattr(mine, key) if isinstance(mine, ControlConfig) else getattr(
-                defaults, key)
-            was = (theirs.get(key, getattr(defaults, key)) if isinstance(theirs, Mapping)
-                   else getattr(defaults, key))
-            if normal(now) != normal(was):
-                out.append(f"[run.controls] {key}: {_role_text(key, now)}, was "
-                           f"{_role_text(key, was)} (which spectra are controls)")
-    if project.input is not None:
-        out += _input_changes(project, bundle, manifest)
-    return out
-
-
-def _input_changes(project, bundle, manifest) -> list[str]:
-    """The ``[input]`` changes of ``project`` since ``bundle`` was read (see
-    :func:`_unapplied_changes`): the read plan without the reading code's fingerprint (another
-    hxex reads the same) and the picker (a ``[run]`` setting, named there), then
-    ``[[input.exclude]]`` and ``time_scale`` against the project file the bundle records."""
-    from .io import BundleError, open_bundle
-    from .stored_read import PLAN_KEY, plan_differences, read_plan
-
-    out = []
-    inp = project.input
-    if inp.spectra is None:  # a project reading stored spectra has no read plan of its own
-        try:
-            with open_bundle(bundle) as b:
-                source = b.spectra_source() or {}
-        except (BundleError, OSError, ValueError):
-            source = {}
-        stored = source.get(PLAN_KEY) if isinstance(source, Mapping) else None
-        if stored is None:
-            log.info("%s does not record what its read depended on (made before 2026-11-16, or "
-                     "from Python): changes of [input] are not checked", bundle)
-        else:
-            now = read_plan(project)
-            if now is None:
-                out.append("[input]: what the read depends on could not be worked out from the "
-                           "settings")
-            else:
-                trim = lambda plan: {k: v for k, v in plan.items()  # noqa: E731
-                                     if k not in ("reader", "picker")}
-                out += plan_differences(trim(stored), trim(now))
-    record = ((manifest.get("configs") or {}).get("project_file") or {}).get("input")
-    if isinstance(record, Mapping):
-        normal = lambda v: json.loads(json.dumps(v, default=str))  # noqa: E731
-        rules = normal([r.to_dict() for r in inp.exclude])
-        if rules != normal(record.get("exclude") or []):
-            out.append(f"[[input.exclude]]: {len(rules)} rule(s), was "
-                       f"{len(record.get('exclude') or [])}")
-        if "time_scale" in record and normal(inp.time_scale) != normal(record["time_scale"]):
-            out.append(f"[input] time_scale: {_value_text(inp.time_scale)}, was "
-                       f"{_value_text(record['time_scale'])}")
-    return out
+        log.error("%s: give the project file the results were made from to hxex run",
+                  RESUME_RETIRED)
+    return EXIT_ERROR
 
 
 def cmd_report(args) -> int:
@@ -1945,6 +1661,7 @@ def cmd_report(args) -> int:
     import dataclasses
 
     from .io import (
+        OutputError,
         check_output,
         edited_outputs,
         holds_output,
@@ -1953,13 +1670,19 @@ def cmd_report(args) -> int:
         prepare_output,
     )
     from .io.bundle import bundle_manifest
+    from .io.outputs import edited_refusal
     from .report import Results, write_tables
     from .report.figures import PlotConfig, write_figures
     from .report.tables import TABLE_NAMES
 
     bundle, review, plots = Path(args.bundle), None, PlotConfig()
     analysis = None  # the [analysis] settings that decide spectra.csv's set_K (defaults)
-    overwrite, keep_previous = args.overwrite, args.keep_previous
+    # the tables and figures folders are hxex's: written again (made from the bundle);
+    # --keep-previous moves them to NAME.N first
+    overwrite, keep_previous = True, args.keep_previous
+    if args.overwrite:
+        log.warning("--overwrite is no longer needed: report writes its tables and figures "
+                    "folders again")
     own_tables: Path | bool = True  # the project's [output] tables (a bundle alone: beside it)
     if problem := _bundle_problem(bundle, "report"):
         log.error("%s", problem)
@@ -1974,18 +1697,11 @@ def cmd_report(args) -> int:
         bundle, review = project.output.bundle, project.review
         analysis = project.analysis
         plots = project.figures or plots
-        overwrite = overwrite or project.output.overwrite
-        keep_previous = keep_previous or project.output.keep_previous
         own_tables = project.output.tables
         if problem := _bundle_problem(bundle, "report"):  # the bundle itself, before its folders
             log.error("%s", problem)
             return EXIT_ERROR
-        if _changed_controls(project, bundle)[0] is not None:
-            log.warning("%s: the project's back-exchange correction ([run.controls], or the "
-                        "automatic choice without it) differs from the one the bundle's "
-                        "controls were worked out with, so the corrected values follow the "
-                        "bundle's; 'hxex resume %s' works them out again with the project's "
-                        "(no refit)", args.bundle, args.bundle)
+        _warn_not_up_to_date(project, bundle, args.bundle)
     figures = _beside(bundle, args.figures, "_figures")
     tables = _beside(bundle, args.tables if args.tables is not None
                      else None if own_tables is False else own_tables, "_tables")
@@ -2003,24 +1719,16 @@ def cmd_report(args) -> int:
             return EXIT_ERROR
     # tables made from these same results (hxex run wrote them, or an earlier report) hold
     # nothing the bundle and the project file do not: written again in place, so that
-    # 'hxex report hxex.toml --figures' after a run needs no --overwrite for them
+    # 'hxex report hxex.toml --figures' after a run writes them again
     created = (bundle_manifest(bundle) or {}).get("created", "")
     same = (tables is not None and bool(created) and holds_output(tables)
             and (made_from(tables) or {}).get("") == created)
     # ... unless one was changed after hxex wrote it (opened and saved in a spreadsheet, say):
-    # then the rule applies after all, and the refusal names the files (owner, 2026-11-02)
+    # then the rule applies after all: refused, naming the files, or moved with --keep-previous
+    # (owner, 2026-11-02, 2026-11-20)
     edited = edited_outputs(tables) if same else []
-    if edited and not (overwrite or keep_previous):
-        log.error("%s: %s changed after hxex wrote %s, and writing the tables again would "
-                  "replace %s. To go on:\n"
-                  "  copy what you changed out of the folder first (a review table belongs "
-                  "next to hxex.toml), then report again;\n"
-                  "  or --overwrite replaces %s;\n"
-                  "  or --keep-previous moves the folder to %s.N first",
-                  tables, ", ".join(edited[:5]) + (", ..." if len(edited) > 5 else ""),
-                  "it" if len(edited) == 1 else "them", "it" if len(edited) == 1 else "them",
-                  "it" if len(edited) == 1 else "them", tables.name)
-        return EXIT_ERROR
+    if edited and not keep_previous:
+        raise OutputError(edited_refusal(tables))
     same = same and not edited
     ruled = [(folder, what, option) for folder, what, option in outputs
              if not (what == "tables" and same)]
@@ -2032,7 +1740,7 @@ def cmd_report(args) -> int:
     stop = _Stop()
     with open_bundle(bundle) as b, stop.installed(), _threads(args.threads):
         if b.pending:
-            log.warning("%s is waiting for its %s ('hxex resume' adds it)", bundle,
+            log.warning("%s is waiting for its %s ('hxex run' continues it)", bundle,
                         ", ".join(b.pending))
         from .review_table import apply_view, missing_bootstraps
 
@@ -2041,7 +1749,7 @@ def cmd_report(args) -> int:
         if missing:
             log.error("%d spectra are shown at a K chosen in the review that has no bootstrap "
                       "or was not fitted for them (the screen skipped it; for example %s), so "
-                      "their values or errors would not compare with the others': hxex resume "
+                      "their values or errors would not compare with the others': hxex run "
                       "%s fits and bootstraps them (only those), then report again",
                       len(missing), ", ".join(f"{s} at K = {k}"
                                               for s, k in list(missing.items())[:2]),
@@ -2174,6 +1882,9 @@ def _noise_curve_text(fit) -> str:
         return text
     onset = ("" if not np.isfinite(curve.onset)
              else f", controls with tops of {curve.onset:,.0f} or more left out")
+    if curve.left_out:
+        n = len(curve.left_out)
+        onset += f", {n} the review rejects left out"
     of = "the fit" if curve.model_error_at == "prediction" else "I"
     text = (f"per bin, z x b1 x I + ({100 * curve.model_error:g} % of {of})^2 with b1 = "
             f"{curve.b1:.3g} +- {curve.b1_se:.2g} (from {curve.n_controls} undeuterated "
@@ -2353,7 +2064,7 @@ def cmd_info(args) -> int:
               if _find_peak_info((source or {}).get("find_peak")) else []),
             ("quality flags", ("no" if not b.has("quality") else
                                "assessed by an earlier version of hxex, before checks added "
-                               "since: hxex resume assesses them again" if b.quality().outdated
+                               "since: hxex run assesses them again" if b.quality().outdated
                                else "yes")),
             *([("injection brightness", _injection_text(b.quality()))]
               if b.has("quality") and _injection_text(b.quality()) else []),
@@ -2525,7 +2236,7 @@ def _output_rows(bundle: Path) -> list[tuple[str, str]]:
         text = (f"{folder.name}: up to date" if stamp == created else
                 f"{folder.name}: not known (written before hxex recorded it)" if not stamp else
                 f"{folder.name}: made from earlier results (created {stamp}); hxex {command} "
-                "--overwrite writes it again")
+                "writes it again")
         rows.append(("" if rows else "outputs", text))
     return rows
 
@@ -2561,12 +2272,16 @@ def _provenance_rows(prov) -> list[tuple[str, str]]:
     """The ``hxex info`` lines of a manifest's provenance block (none without one)."""
     if not prov:
         return []
-    rows = []
+    rows = [("earlier", _update_line(entry)) for entry in prov.get("history") or ()]
     if prov.get("replaced"):
         created = prov.get("replaced_created")
         where = prov.get("moved_to")
-        rows.append(("replaced", f"{prov.get('replaced')} (created {created or 'unknown'}) on "
-                                 f"{prov.get('at', '')}" + (f", kept as {where}" if where else "")))
+        how = ("started again" if prov.get("fresh") else "updated" if "redone" in prov
+               else "replaced")
+        rows.append((how, f"{prov.get('replaced')} (created {created or 'unknown'}) on "
+                          f"{prov.get('at', '')}" + (f", kept as {where}" if where else "")))
+        if prov.get("redone"):
+            rows.append(("redone", ", ".join(prov["redone"])))
         changed = prov.get("settings_changed") or []
         rows.append(("changed", "nothing" if not changed else
                      f"{len(changed)} setting(s): " + ", ".join(changed[:8])
@@ -2591,6 +2306,24 @@ def _provenance_rows(prov) -> list[tuple[str, str]]:
                      + (", with the project file's settings" if entry.get("project_file_replaced")
                         else "")))
     return rows
+
+
+def _update_line(entry: Mapping) -> str:
+    """One earlier update of the results (a provenance block kept in ``history``), in words."""
+    how = ("started again" if entry.get("fresh") else "updated" if "redone" in entry
+           else "replaced")
+    text = f"{how} on {entry.get('at', 'an unknown date')}"
+    changed = entry.get("settings_changed") or []
+    if changed:
+        text += f"; {len(changed)} setting(s) changed: " + ", ".join(changed[:4]) + (
+            ", ..." if len(changed) > 4 else "")
+    if entry.get("redone"):
+        text += "; redone: " + ", ".join(entry["redone"])
+    if "fits_reused" in entry:
+        text += f"; {entry['fits_reused']} of {entry.get('spectra', '?')} fits kept"
+    for resumed in entry.get("resumed") or ():
+        text += f"; {resumed.get('added')} added by hxex resume on {resumed.get('at', '')}"
+    return text
 
 
 def _is_bundle(path: Path) -> bool:
@@ -2623,7 +2356,11 @@ def cmd_analyse(args) -> int:
     threads = args.threads
     record_paths = "path"  # the analysis settings file records its paths as the input does
     review = None  # the project's [review] decisions
-    overwrite, keep_previous = args.overwrite, args.keep_previous
+    # the analysis folders are hxex's: made again from the results; --keep-previous moves one
+    # to NAME.N first
+    overwrite, keep_previous = True, args.keep_previous
+    if args.overwrite:
+        log.warning("--overwrite is no longer needed: analyse makes its folders again")
     first = Path(_run_source(args.source[0])[1])
     if len(args.source) == 1 and first.suffix != ".toml" and (
             problem := _bundle_problem(first, "analyse")):
@@ -2653,8 +2390,6 @@ def cmd_analyse(args) -> int:
         if project.input is not None:
             record_paths = project.input.record_paths
         review = project.review
-        overwrite = overwrite or project.output.overwrite
-        keep_previous = keep_previous or project.output.keep_previous
         if config.runs and not args.bundle:
             runs = {name: Path(path) for name, path in config.runs.items()}
         else:
@@ -2663,6 +2398,8 @@ def cmd_analyse(args) -> int:
                 log.error("no bundle: set output.bundle, [analysis.runs] or give --bundle")
                 return EXIT_ERROR
             runs = {"": bundle}
+            if bundle.exists():
+                _warn_not_up_to_date(project, bundle, first)
     changes = {}
     if config.groups and args.reference:
         log.error("--reference: with [analysis.groups] each group names its reference; "

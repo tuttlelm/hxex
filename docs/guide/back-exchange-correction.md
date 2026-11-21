@@ -234,29 +234,29 @@ existing bundle.
 
 **Changing a control setting after the run.** If you correct a `[run.controls]` setting after
 `hxex run`, for example the D₂O fraction, the results keep the controls they were made with
-until you tell *hxex* to work them out again. `hxex report` says so. Then run
+until you run again. `hxex report` says so, and `hxex check` lists the stage `correction and
+flags` as out of date, naming the setting. Then run
 
 ```bash
-hxex resume hxex.toml
+hxex run hxex.toml
 ```
 
-This works the controls out again from the fits already made, with the new settings, and writes
-the tables again; nothing is refitted, so it takes seconds, not the time of a run. The D₂O
-fraction changes the corrected values only of peptides without a measured fully deuterated
-control (and the `narrow_component` flag of the [population test (self)](population-test.md),
-the test of each spectrum alone; add `[run.population_test]` to the resume to make the test
-again).
+This brings the results up to date: it works the controls out again from the fits already
+made, with the new settings, and writes the tables again; no spectrum is fitted again, so it
+takes far less than the time of the first run. The D₂O fraction changes the corrected values
+only of peptides without a measured fully deuterated control (and the `narrow_component` flag
+of the [population test (self)](population-test.md), the test of each spectrum alone: with the
+test switched on, `hxex run` makes it again too).
 
-Results made without a correction take one the same way: `hxex resume hxex.toml` works the
+Results made without a correction take one the same way: `hxex run hxex.toml` works the
 controls out when the project now asks for them, either with a `[run.controls]` table or, without
 one, because the results' spectra hold both kinds of control. This is how results made before
 *hxex* chose the correction by itself get it.
 
-`hxex resume` keeps which spectra are controls. A change of `undeut_at`, `fulldeut_at`,
-`undeut_marked`, or `fulldeut_marked` decides that (a control is fitted at one population, and
-the population test groups the spectra by it), so `hxex resume` refuses it, naming the setting,
-and `hxex run hxex.toml --overwrite` applies it. So does `[run] controls = false`: `resume`
-never takes a correction away from existing results.
+Which spectra are controls is decided by `undeut_at`, `fulldeut_at`, `undeut_marked`, and
+`fulldeut_marked` (a control is fitted at one population, and the population test groups the
+spectra by it). `hxex run` applies a change of these too, and so does `[run] controls = false`;
+its first lines (and `hxex check`) say which stages it does again.
 
 ## Deamidated fully deuterated controls
 

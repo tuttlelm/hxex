@@ -1610,8 +1610,9 @@ class ResultsWorkspace(QWidget):
         self.pending_label.setText(text)
         self.pending_label.setToolTip(tip(
             "Windows saved in the elution-window table since the run differ from the ones the "
-            "run read these spectra with. To use them, run the project again with overwrite "
-            "enabled; Back to the run's window in the elution tab puts one back.") if n else "")
+            "run read these spectra with. To use them, bring the results up to date (Run on "
+            "the Run tab); Back to the run's window in the elution tab puts one back.") if n
+            else "")
         self.pending_label.setVisible(bool(text))
         self.list.set_red(pending.by_id)
         self._mark_pending()

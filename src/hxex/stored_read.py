@@ -2,8 +2,8 @@
 """Taking the stored spectra of the bundle a run replaces in place of reading the input again
 (owner, 2026-11-16).
 
-A run that replaces a bundle (``hxex run --overwrite`` or ``--keep-previous``; the window's Run
-when it asks to replace) after a change that does not touch the read, such as a new preset,
+A run that updates a bundle (``hxex run`` on a project with results, or ``--keep-previous``; the
+window's Run, Bring up to date) after a change that does not touch the read, such as a new preset,
 would read every file again to get the spectra the bundle already holds. A fresh read records
 its *read plan* (:func:`read_plan`) with the spectra: the fingerprint of the readers' code, the
 ``[input]`` settings that decide the read, what they give before any file is opened (the
@@ -12,7 +12,7 @@ scan readers use), and the identities of the small files the read takes beside t
 later run computes the plan again; when it is the same and every data file still matches the
 identity the read recorded (:mod:`hxex.io.identity`: size and checksum), the stored spectra are
 taken (:func:`stored_spectra_for`). Anything else, a bundle written before plans were recorded
-included, reads the input as before, and the log names what differs. ``hxex run --reread``
+included, reads the input as before, and the log names what differs. ``hxex run --fresh``
 always reads.
 """
 
@@ -184,7 +184,7 @@ def stored_spectra_for(project, bundle):
                  _listed(changed), bundle)
         return None
     log.info("taking the raw spectra stored in %s: the input settings and files are those "
-             "they were read from (hxex run --reread reads the input again)", bundle)
+             "they were read from (hxex run --fresh reads the input again)", bundle)
     return after_read(load_stored_spectra(bundle), project.input, stored=True)
 
 

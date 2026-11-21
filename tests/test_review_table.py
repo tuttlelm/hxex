@@ -105,7 +105,7 @@ def _edit(spectra_csv, out, changes):
 
 def test_a_review_table_from_spectra_csv_end_to_end(tmp_path, capsys):
     """Copy spectra.csv, choose a K and reject a spectrum: hxex report refuses the chosen K until
-    hxex resume bootstraps it (only it); then the tables show the choices with errors; a new run
+    hxex run bootstraps it (only it); then the tables show the choices with errors; a fresh run
     bootstraps the chosen K itself; the analysis honours the rejection."""
     path = mzml_project(tmp_path)
     path.write_text(path.read_text().replace("k_max = 1", "k_max = 2"))
@@ -124,11 +124,11 @@ def test_a_review_table_from_spectra_csv_end_to_end(tmp_path, capsys):
     cli.main(["check", str(path)])  # (a problem: the bundle exists, for hxex run)
     assert "2 spectra: 1 rejected, 0 accepted, 1 with a chosen K" in capsys.readouterr().out
     # the chosen K has no bootstrap yet: refused, with the way to add it
-    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 1
-    assert "hxex resume" in capsys.readouterr().err
+    assert cli.main(["-q", "report", str(path)]) == 1
+    assert "hxex run" in capsys.readouterr().err
     with open_bundle(tmp_path / "out") as b:
         boot_before = b.bootstrap().mean_se.copy()
-    assert cli.main(["-q", "resume", str(path)]) == 0
+    assert cli.main(["-q", "run", str(path)]) == 0
     with open_bundle(tmp_path / "out") as b:
         fit = b.fit()
         i = list(map(str, fit.spectrum_id)).index(chosen)
@@ -137,7 +137,7 @@ def test_a_review_table_from_spectra_csv_end_to_end(tmp_path, capsys):
         import numpy as np
 
         assert np.array_equal(b.bootstrap().mean_se, boot_before, equal_nan=True)  # kept
-    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 0
+    assert cli.main(["-q", "report", str(path)]) == 0
     with open(tables / "spectra.csv", newline="") as f:
         out = {r["spectrum_id"]: r for r in csv.DictReader(f)}
     assert out[chosen]["review_K"] == "2" and out[chosen]["K"] == "2"
@@ -150,23 +150,23 @@ def test_a_review_table_from_spectra_csv_end_to_end(tmp_path, capsys):
         comp = [r for r in csv.DictReader(f) if r["spectrum_id"] == chosen]
     assert len(comp) == 2 and all(r["mean_se"] not in ("", "nan") for r in comp)
     # nothing more to add: said, not an error
-    assert cli.main(["resume", str(path)]) == 0
-    assert "nothing to add" in capsys.readouterr().out
-    # a new run bootstraps the chosen K itself
-    assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
+    assert cli.main(["run", str(path)]) == 0
+    assert "the results are up to date" in capsys.readouterr().out
+    # a fresh run bootstraps the chosen K itself
+    assert cli.main(["-q", "run", str(path), "--fresh"]) == 0
     with open_bundle(tmp_path / "out") as b:
         assert b.bootstrap(2).covers(list(map(str, b.fit().spectrum_id)).index(chosen))
-    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 0
+    assert cli.main(["-q", "report", str(path)]) == 0
     # the analysis leaves the rejected spectrum out (and has no use for a chosen K)
     capsys.readouterr()
     assert cli.main(["analyse", str(path)]) == 0
     assert "user_review_table.csv: 2 spectra: 1 rejected" in capsys.readouterr().err
-    # a K the run does not try is refused, naming the spectrum: by report, and by check, run
-    # and resume before anything is read
+    # a K the run does not try is refused, naming the spectrum: by report, and by check and run
+    # before anything is read
     _edit(tables / "spectra.csv", tmp_path / "user_review_table.csv", {one: {"review_K": "5"}})
-    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 1
+    assert cli.main(["-q", "report", str(path)]) == 1
     assert "K the run did not try" in capsys.readouterr().err
-    for command in (["check"], ["run", "--overwrite"], ["resume"]):
+    for command in (["check"], ["run"]):
         assert cli.main(["-q", *command, str(path)]) == 1
         assert "chooses a K the run does not try" in capsys.readouterr().err
 

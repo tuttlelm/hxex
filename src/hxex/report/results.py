@@ -172,8 +172,8 @@ class Results:
 
             logging.getLogger(__name__).warning(
                 "%s: the quality flags were assessed by an earlier version of hxex, before "
-                "checks added since (such as overlapping_ion), which are empty; hxex resume "
-                "(hxex resume hxex.toml) assesses them again", bundle.path)
+                "checks added since (such as overlapping_ion), which are empty; hxex run "
+                "hxex.toml assesses them again", bundle.path)
         return cls(
             measurements=bundle.measurements(), fit=bundle.fit(), bootstrap=bundle.bootstrap(),
             bootstrap_by_k={k: bundle.bootstrap(k) for k in bundle.bootstrap_ks()},
@@ -312,14 +312,14 @@ class Results:
         new one)."""
         if self.review is None:
             return self.fit.selected_K.copy()
-        # a K chosen that the screen skipped stays the fit's K until hxex resume fits it
+        # a K chosen that the screen skipped stays the fit's K until hxex run fits it
         # (:attr:`unfitted_choices`): the window keeps working; report and analyse refuse
         return self.review.effective_K(self.fit, unfitted="keep")
 
     @cached_property
     def unfitted_choices(self) -> dict[str, int]:
         """The review's choices of a K the screen skipped for that spectrum (spectrum id ->
-        K), shown at the fit's K until ``hxex resume`` fits them."""
+        K), shown at the fit's K until ``hxex run`` fits them."""
         return {} if self.review is None else self.review.unfitted(self.fit)
 
     @cached_property

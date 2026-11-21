@@ -42,9 +42,10 @@ def _typed(view, old: str, new: str) -> None:
 def test_write_text_keeps_the_byte_order_mark_and_line_endings(project):
     project.write_bytes(b"\xef\xbb\xbf" + project.read_bytes().replace(b"\n", b"\r\n"))
     text = project.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
-    assert write_text(project, text.replace("overwrite = false ", "overwrite = true  ")) is None
+    changed = text.replace("keep_previous = false ", "keep_previous = true  ")
+    assert write_text(project, changed) is None
     raw = project.read_bytes()
-    assert raw.startswith(b"\xef\xbb\xbf") and b"overwrite = true" in raw
+    assert raw.startswith(b"\xef\xbb\xbf") and b"keep_previous = true" in raw
     assert raw.count(b"\r\n") == raw.count(b"\n")
 
 
@@ -78,18 +79,18 @@ def test_find_marks_every_match_and_steps_round_the_end(window):
 def test_an_edit_is_written_only_on_save_and_undone_as_one_step(window, project):
     view = window.project_page.text
     views = window.project_page.views
-    _typed(view, "overwrite = false ", "overwrite = true  ")
+    _typed(view, "keep_previous = false ", "keep_previous = true  ")
     assert view.modified and views.tabText(views.indexOf(view)) == "File (unsaved)"
-    assert "overwrite = true" not in project.read_text()
+    assert "keep_previous = true" not in project.read_text()
     assert view.save()
-    assert "overwrite = true" in project.read_text() and not view.modified
+    assert "keep_previous = true" in project.read_text() and not view.modified
     assert views.tabText(views.indexOf(view)) == "File"
     editor = window.project_page.editor
-    assert editor.values.get("output.overwrite") is True  # the Settings form shows it
+    assert editor.values.get("output.keep_previous") is True  # the Settings form shows it
     assert "edited as text" in editor.last_change.text()
     assert editor.undo()
-    assert "overwrite = true" not in project.read_text()
-    assert "overwrite = true" not in view.toPlainText()
+    assert "keep_previous = true" not in project.read_text()
+    assert "keep_previous = true" not in view.toPlainText()
 
 
 def test_text_that_is_not_toml_is_kept_and_the_line_shown(window, project):
@@ -112,15 +113,15 @@ def test_a_settings_problem_is_saved_and_shown(window, project):
 
 def test_edits_survive_a_change_made_outside_and_say_so(window, project):
     view = window.project_page.text
-    _typed(view, "overwrite = false ", "overwrite = true  ")
+    _typed(view, "keep_previous = false ", "keep_previous = true  ")
     project.write_text(project.read_text() + "\n# from a text editor\n", encoding="utf-8")
     window.project_page.editor._file_changed(str(project))  # as the watcher reports it
-    assert view.modified and "overwrite = true" in view.toPlainText()
+    assert view.modified and "keep_previous = true" in view.toPlainText()
     assert view.outside_row.isVisibleTo(view)
     asked = []
     view.ask_overwrite = lambda: asked.append(1) or False
     assert not view.save() and asked == [1]  # Cancel: nothing written
-    assert "overwrite = true" not in project.read_text()
+    assert "keep_previous = true" not in project.read_text()
     view.discard()  # Load the file
     assert not view.modified and view.toPlainText().endswith("# from a text editor\n")
     assert not view.outside_row.isVisibleTo(view)
@@ -128,15 +129,15 @@ def test_edits_survive_a_change_made_outside_and_say_so(window, project):
 
 def test_leaving_the_project_asks_about_unsaved_text(window, project, tmp_path):
     view = window.project_page.text
-    _typed(view, "overwrite = false ", "overwrite = true  ")
+    _typed(view, "keep_previous = false ", "keep_previous = true  ")
     view.ask_unsaved = lambda: QMessageBox.StandardButton.Cancel
     assert not window._may_replace()
     view.ask_unsaved = lambda: QMessageBox.StandardButton.Save
-    assert window._may_replace() and "overwrite = true" in project.read_text()
-    _typed(view, "overwrite = true  ", "overwrite = false ")
+    assert window._may_replace() and "keep_previous = true" in project.read_text()
+    _typed(view, "keep_previous = true  ", "keep_previous = false ")
     view.ask_unsaved = lambda: QMessageBox.StandardButton.Discard
     assert window._may_replace() and not view.modified
-    assert "overwrite = true" in project.read_text()
+    assert "keep_previous = true" in project.read_text()
 
 
 def test_no_project_means_nothing_to_edit(qtbot, tmp_path):

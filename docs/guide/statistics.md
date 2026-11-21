@@ -111,8 +111,9 @@ average is the part the spectrum pins down best. Without a bootstrap the error i
 of the replicates, as for any value. A bundle whose bootstrap was made before this (before
 *hxex* stored that error) gets an error built from the two positions' errors as if they were
 independent, which is too large: small real differences in such peptides are then missed more
-often (on simulated data 7 to 16 percentage points fewer); run its bootstrap again (`hxex
-resume`) to use the right error. On simulated data with the right error, these peptides' small
+often (on simulated data 7 to 16 percentage points fewer); run the project again (`hxex run
+hxex.toml`: results that old were made by other fitting code, so it fits and bootstraps them
+again) to use the right error. On simulated data with the right error, these peptides' small
 differences were found as often as before the switch, with no more false ones.
 
 Where the population test (set) finds three populations or more in a peptide's spectra at a
@@ -137,7 +138,7 @@ apart. `hxex run` makes these bootstraps on its own (`set_k` in `[run.bootstrap]
 switch it off; the log says how many spectra it bootstrapped, and `hxex info` lists them under
 `bootstrap`). They are few: most spectra chose the number their set has, and their own bootstrap
 already serves. So every average, and every one-population comparison built on the averages, has
-a bootstrap error. `hxex resume hxex.toml` adds these bootstraps to results made without them.
+a bootstrap error. `hxex run hxex.toml` adds these bootstraps to results made without them.
 
 The two-population comparisons between samples (the populations' positions and shares, at
 the peptides and the residues) need more: a bootstrap of every spectrum at two populations,
@@ -145,7 +146,7 @@ the peptides and the residues) need more: a bootstrap of every spectrum at two p
 covering it, including peptides whose spectra read one population, and a residue whose
 peptides only partly have an error would take too small an error from the rest. Without that
 bootstrap, `hxex analyse` leaves those tests out and says so. Adding `ks = [2]` later and
-running `hxex resume hxex.toml` bootstraps only that number: the bootstrap already there is
+running `hxex run hxex.toml` bootstraps only that number: the bootstrap already there is
 kept.
 
 ## Same states, different shares
@@ -194,7 +195,7 @@ more when the 95 % intervals themselves matter, for a published figure, say.
 | the bootstrap, on a GPU | about 6 minutes (an RTX A4500) |
 
 You do not have to decide at the start. Run without the bootstrap, look at the results, and
-add it later with `hxex resume hxex.toml` after adding the `[run.bootstrap]` table: the fits
+add it later with `hxex run hxex.toml` after adding the `[run.bootstrap]` table: the fits
 are kept, and only the bootstrap is computed
 ([The project file and the commands](project-file.md#run-report-and-analyse-what-each-one-does)).
 
@@ -283,8 +284,10 @@ A typical project (the [presets](presets.md) give the first two steps in one lin
    `hxex analyse`. Use it to check the controls, review suspect spectra, and see which peptides
    have two populations and where the samples differ. Treat its error bars, residue
    comparisons, and population comparisons as provisional.
-2. **The full analysis:** add `[run.bootstrap]` with `ks = [1, 2]`, run `hxex resume hxex.toml`,
-   and run `hxex report --figures --overwrite` and `hxex analyse --overwrite` again.
-3. **For publication:** raise `n_boot` to 100 or more, and run `hxex resume hxex.toml` again.
+2. **The full analysis:** add `[run.bootstrap]` with `ks = [1, 2]`, run `hxex run hxex.toml`
+   (it keeps the fits and adds the bootstrap), and run `hxex report --figures` and `hxex
+   analyse` again.
+3. **For publication:** raise `n_boot` to 100 or more, and run `hxex run hxex.toml` again (it
+   makes the bootstrap again with the new number).
 
 [Analysis methods](../ANALYSIS.md) gives the formulas behind each step.

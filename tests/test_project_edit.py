@@ -40,12 +40,12 @@ def test_a_switched_off_setting_is_switched_on_with_its_heading(project):
 
 
 def test_a_live_setting_is_replaced_and_its_comment_kept(project):
-    old = _line(project, "overwrite = ")
-    change = set_setting(project, "output.overwrite", "true")
-    new = _line(project, "overwrite = ")
+    old = _line(project, "keep_previous = ")
+    change = set_setting(project, "output.keep_previous", "true")
+    new = _line(project, "keep_previous = ")
     assert (change.before, change.after) == ("false", "true")
     assert new.split("#", 1)[1] == old.split("#", 1)[1]
-    assert load_project(project).output.overwrite is True
+    assert load_project(project).output.keep_previous is True
 
 
 def test_setting_the_same_value_again_changes_nothing(project):

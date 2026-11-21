@@ -13,12 +13,9 @@ import pytest
 
 from hxex import cli
 from hxex.config import FORMATS, ProjectError, load_project, project_from, template
-from hxex.hooks import Cancelled
 from hxex.io import ReadError, open_bundle
-from hxex.pipeline import RunConfig, run
+from hxex.pipeline import RunConfig
 from test_mzml import PEPTIDE, time_course, write_mzml  # noqa: I001
-from test_run import config as run_config  # noqa: I001
-from test_run import raw_spectra
 
 FAST_RUN = """
 [run.picker]
@@ -107,7 +104,7 @@ def test_toml_values_are_type_checked(tmp_path, capsys):
         ('[analysis]\nalpha = "x"\n', '[analysis] alpha = "x": expected a number'),
         ('[analysis.filters]\nmin_population = "a"\n',
          '[analysis.filters] min_population = "a": expected a number'),
-        ('[output]\noverwrite = "false"\n', '[output] overwrite = "false": expected true or'),
+        ('[output]\noverwrite = true\n', '[output] overwrite = true: no longer a setting'),
         ('[output]\nkeep_spectra = "no"\n', '[output] keep_spectra = "no": expected true or'),
         ('[output]\ntables = "true"\n', 'write true or false without quotes'),
         # a config class's own refusal in words for people (audit of 2026-11-15, B-30)
@@ -435,17 +432,16 @@ def test_check_shows_what_would_be_read(tmp_path, capsys):
     assert "outputs        out exists (hxex run writes it)" in out
     assert "out_tables: up to date (hxex run and hxex report write it)" in out
     assert "out_analysis: up to date (hxex analyse writes it)" in out
-    # the way to write them again is said once for the block (audit 2026-11-01, Part 2)
-    assert out.split("\nstages")[0].count("--overwrite") == 1 and (
-        "to write one again, give its command --overwrite (replace) or --keep-previous") in out
+    # how they are written again is said once for the block (audit 2026-11-01, Part 2)
+    assert "each command writes its folder again (hxex run brings the bundle up to date)" in out
+    assert "--overwrite" not in out
     assert out.strip().endswith("ok")
     path = mzml_project(tmp_path, output="keep_previous = true")
     assert cli.main(["check", str(path)]) == 0
     out = capsys.readouterr().out
-    assert "[output] keep_previous = true: each command moves its folder to NAME.N first" in out
-    assert "--overwrite" not in out.split("\nstages")[0]
-    assert "hxex run       with [output] keep_previous = true (the results now kept as out.N): " \
-        in out
+    assert "[output] keep_previous = true moves the bundle with its folders first when hxex run " \
+        "--fresh starts again" in out
+    assert "\nhxex run       " in out  # what it would do (the read differs: no filter_excludes)
 
 
 def test_check_names_every_problem_after_the_summary(tmp_path, capsys):
@@ -514,9 +510,8 @@ def test_run_info_and_report(tmp_path, capsys):
         assert b.spectra_source()["reader"] == "mzml" and b.manifest["notes"] == "first try"
     assert {p.name for p in (tmp_path / "out_tables").iterdir()} == {
         "series.csv", "spectra.csv", "components.csv", "uptake.csv", "hxex_listing.json"}
-    assert cli.main(["run", str(path)]) == 1  # the bundle exists
-    err = capsys.readouterr().err
-    assert "--overwrite" in err and "--keep-previous" in err and "output.bundle" in err
+    assert cli.main(["run", str(path)]) == 0  # the bundle exists, up to date: nothing done
+    assert "the results are up to date, nothing to do" in capsys.readouterr().out
     assert cli.main(["info", "--verify", str(tmp_path / "out")]) == 0
     info = capsys.readouterr().out
     for line in ("project        cli", "input          mzml", "measurements   6",
@@ -542,16 +537,15 @@ def test_run_info_and_report(tmp_path, capsys):
     assert cli.main(["-q", "report", str(path), "--figures", "--k", "1"]) == 0
     assert {p.suffix for p in (tmp_path / "out_figures").iterdir()} == {".svg", ".json"}
     capsys.readouterr()
-    # drawing again into a folder with figures is refused, as a run into a bundle is
-    assert cli.main(["-q", "report", str(path), "--figures"]) == 1
-    assert "out_figures holds the figures written before" in capsys.readouterr().err
-    assert cli.main(["-q", "report", str(path), "--figures", "--overwrite", "--k", "4"]) == 1
+    # drawing again into a folder with figures writes them again (they are hxex's)
+    assert cli.main(["-q", "report", str(path), "--figures"]) == 0
+    assert cli.main(["-q", "report", str(path), "--figures", "--k", "4"]) == 1
     assert "K = 4 was not fitted" in capsys.readouterr().err
-    assert cli.main(["run", "--overwrite", "--device", "cpu", str(path)]) == 0
+    assert cli.main(["run", "--fresh", "--device", "cpu", str(path)]) == 0
     assert "out_figures holds figures of other results" in capsys.readouterr().err
     assert cli.main(["info", str(tmp_path / "out")]) == 0
     info = capsys.readouterr().out
-    assert "replaced       " + str(tmp_path / "out") in info and "changed        nothing" in info
+    assert "started again  " + str(tmp_path / "out") in info and "changed        nothing" in info
     # --keep-previous moves the bundle and its tables to generation 1 and writes afresh
     (tmp_path / "out_tables" / "mine.txt").write_text("keep")
     assert cli.main(["-q", "run", "--keep-previous", str(path)]) == 0
@@ -567,7 +561,7 @@ def test_run_info_and_report(tmp_path, capsys):
     (tmp_path / "out_tables" / "hxex_listing.json").unlink()
     with open_bundle(tmp_path / "out") as b:
         created = b.manifest["created"]
-    assert cli.main(["-q", "run", "--overwrite", str(path)]) == 1
+    assert cli.main(["-q", "run", "--fresh", str(path)]) == 1
     assert "series.csv" in capsys.readouterr().err
     with open_bundle(tmp_path / "out") as b:
         assert b.manifest["created"] == created
@@ -629,10 +623,10 @@ def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys, caplog):
     # a spectra file works as well
     save_spectra(spectra, tmp_path / "s.parquet")
     project_file.write_text(project_file.read_text().replace('"out"', '"s.parquet"'))
-    assert cli.main(["-q", "run", str(project_file), "--overwrite"]) == 0
-    same_results(tmp_path / "out4", "s.parquet")
+    assert cli.main(["-q", "run", str(project_file), "--fresh"]) == 0  # the same spectra:
+    same_results(tmp_path / "out4", "s.parquet")  # up to date without --fresh
     # refused: the bundle it reads from, a missing path, a bundle without raw spectra
-    assert cli.main(["run", str(path), "--spectra", str(tmp_path / "out"), "--overwrite"]) == 1
+    assert cli.main(["run", str(path), "--spectra", str(tmp_path / "out")]) == 1
     capsys.readouterr()
     assert cli.main(["run", str(path), "--spectra", str(tmp_path / "nothing")]) == 1
     assert "does not exist" in capsys.readouterr().err
@@ -681,52 +675,36 @@ def test_a_run_from_the_spectra_of_a_bundle(tmp_path, capsys, caplog):
     assert "outside the window the stored spectra were cut to" in capsys.readouterr().err
 
 
-def test_resume_completes_a_stopped_bootstrap(tmp_path, capsys):
-    raw = raw_spectra(n_series=1)
-    stages = []
+def test_run_completes_a_stopped_bootstrap_and_resume_is_retired(tmp_path, capsys):
+    import json
 
-    class Hook:
-        def start_stage(self, name, start, end):
-            stages.append(name)
-
-        def __call__(self, done, total):
-            pass
-
-    with pytest.raises(Cancelled):
-        run(raw, run_config(), out=tmp_path / "b", progress=Hook(),
-            cancel=lambda: stages[-1:] == ["bootstrap"])
-    assert cli.main(["info", str(tmp_path / "b")]) == 0
+    path = mzml_project(tmp_path)
+    assert cli.main(["-q", "run", str(path)]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        boot = b.bootstrap()
+    manifest = tmp_path / "out" / "manifest.json"  # as a run stopped during its bootstrap
+    data = json.loads(manifest.read_text())
+    data["pending"] = ["bootstrap"]
+    manifest.write_text(json.dumps(data))
+    assert cli.main(["info", str(tmp_path / "out")]) == 0
     assert "pending        bootstrap" in capsys.readouterr().out
-    # a tables folder holding other results' tables is refused before the bootstrap runs
-    from hxex.io.outputs import replace_outputs
-
-    (tmp_path / "b_tables").mkdir()
-    with replace_outputs(tmp_path / "b_tables", ["uptake.csv"], made={"": "other"}) as written:
-        (tmp_path / "b_tables" / "uptake.csv").write_text("x\n")
-        written.append(tmp_path / "b_tables" / "uptake.csv")
-    assert cli.main(["-q", "resume", str(tmp_path / "b"), "--tables"]) == 1
-    assert "tables of other results" in capsys.readouterr().err
-    with open_bundle(tmp_path / "b") as b:
-        assert b.pending == ["bootstrap"]
-    # without --tables, the folder of other results' tables is left alone, and said so
-    assert cli.main(["resume", str(tmp_path / "b")]) == 0
-    assert "holds tables of other results: not written" in capsys.readouterr().err
-    assert (tmp_path / "b_tables" / "uptake.csv").read_text() == "x\n"
-    with open_bundle(tmp_path / "b") as b:
-        assert b.pending == [] and b.bootstrap() is not None
-    # the bundle's own tables are written by default (audit 2026-11-01 Medium 21)
-    stages.clear()
-    with pytest.raises(Cancelled):
-        run(raw, run_config(), out=tmp_path / "c", progress=Hook(),
-            cancel=lambda: stages[-1:] == ["bootstrap"])
-    assert cli.main(["-q", "resume", str(tmp_path / "c")]) == 0
+    assert cli.main(["check", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "bootstrap: not done (stopped partway: hxex run continues it)" in out
+    assert "keeps the fits, makes the bootstrap (it stopped partway)" in out
+    # resume is retired: refused, naming hxex run
+    assert cli.main(["resume", str(path)]) == 1
+    assert "hxex resume is retired" in capsys.readouterr().err
+    assert cli.main(["resume", str(tmp_path / "out")]) == 1
+    assert "give the project file" in capsys.readouterr().err
+    assert cli.main(["run", str(path)]) == 0
+    assert "6 of 6 spectra keep their fit" in capsys.readouterr().err
     from hxex.io import made_from
 
-    with open_bundle(tmp_path / "c") as b:
-        assert made_from(tmp_path / "c_tables") == {"": b.manifest["created"]}
-    assert (tmp_path / "c_tables" / "uptake.csv").is_file()
-    assert not (tmp_path / "b_figures").exists()  # figures come from hxex report
-    assert cli.main(["resume", str(tmp_path / "b")]) == 1  # nothing pending any more
+    with open_bundle(tmp_path / "out") as b:
+        assert b.pending == []
+        np.testing.assert_allclose(b.bootstrap().mean_se, boot.mean_se)
+        assert made_from(tmp_path / "out_tables") == {"": b.manifest["created"]}
 
 
 def test_errors_are_messages_not_tracebacks(tmp_path, capsys):
@@ -758,9 +736,9 @@ def test_threads_are_set_for_the_command_only(tmp_path, capsys):
     assert cli.main(["run", str(path)]) == 0
     assert "using 3 CPU thread(s)" in capsys.readouterr().err
     assert torch.get_num_threads() == before  # restored
-    assert cli.main(["run", "--overwrite", "--threads", "2", str(path)]) == 0  # the flag wins
+    assert cli.main(["run", "--fresh", "--threads", "2", str(path)]) == 0  # the flag wins
     assert "using 2 CPU thread(s)" in capsys.readouterr().err
-    assert cli.main(["report", "--threads", "1", "--overwrite", str(tmp_path / "out")]) == 0
+    assert cli.main(["report", "--threads", "1", str(tmp_path / "out")]) == 0
     assert torch.get_num_threads() == before
     with pytest.raises(SystemExit) as exc:
         cli.main(["run", "--threads", "0", str(path)])
@@ -1069,23 +1047,25 @@ def test_the_data_decide_the_correction_in_a_run_and_a_resume(tmp_path, capsys):
     assert cli.main(["-q", "set", str(path), "run.controls", "--default"]) == 0
     assert "controls" not in tomllib.loads(path.read_text())["run"]
     capsys.readouterr()
-    assert cli.main(["report", str(path), "--overwrite"]) == 0
-    assert "automatic choice" in capsys.readouterr().err
-    assert cli.main(["resume", str(path)]) == 0
+    assert cli.main(["report", str(path)]) == 0
+    err = capsys.readouterr().err
+    assert "are not up to date with" in err and "correction and flags: out of date" in err
+    assert cli.main(["run", str(path)]) == 0
+    err = capsys.readouterr().err
     assert ("back-exchange correction: on, automatically: fully deuterated controls found for "
-            "1 of 1 peptides") in capsys.readouterr().err
+            "1 of 1 peptides") in err and "8 of 8 spectra keep their fit" in err
     with open_bundle(tmp_path / "out") as b:
         assert b.has("controls") and b.controls().config.d2o_fraction == 0.9
         assert b.manifest["controls_choice"]["setting"] == "auto"
-        assert [r["added"] for r in b.manifest["provenance"]["resumed"]] == ["controls"]
+        assert b.manifest["provenance"]["redone"] == []  # the correction is always worked out
         np.testing.assert_array_equal(b.fit().fits[1].n, fit.fits[1].n)  # no refit
         assert "the spectra decided the" in (tmp_path / "out" / "run_settings_used.toml"
                                              ).read_text()
     assert cli.main(["info", str(tmp_path / "out")]) == 0
     assert "the correction on, automatically" in capsys.readouterr().out
     # nothing left to do: the bundle's correction is the project's
-    assert cli.main(["resume", str(path)]) == 0
-    assert "nothing to add" in capsys.readouterr().out
+    assert cli.main(["run", str(path)]) == 0
+    assert "the results are up to date" in capsys.readouterr().out
 
 
 def test_record_paths_are_checked_for_the_format(tmp_path):
@@ -1241,11 +1221,10 @@ def test_the_analysis_folder_is_replaced_and_moved_as_the_tables_are(tmp_path, c
     data = json.loads((folder / "hxex_listing.json").read_text())
     data["files"].append("woods_old.pdf")
     (folder / "hxex_listing.json").write_text(json.dumps(data))
-    assert cli.main(["-q", "analyse", str(path)]) == 1  # the folder holds an analysis
-    assert cli.main(["-q", "analyse", str(path), "--overwrite"]) == 0
+    assert cli.main(["-q", "analyse", str(path)]) == 0  # made again
     assert not (folder / "woods_old.pdf").exists() and (folder / "my_notes.txt").exists()
     capsys.readouterr()
-    assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
+    assert cli.main(["-q", "run", str(path), "--fresh"]) == 0
     assert "out_analysis holds an analysis of other results" in capsys.readouterr().err
     # the analysis keeps the settings of the results it was made from
     assert (folder / "run_settings_used.toml").read_text() == run_copy
@@ -1257,10 +1236,11 @@ def test_the_analysis_folder_is_replaced_and_moved_as_the_tables_are(tmp_path, c
     assert (tmp_path / "out.1_tables").is_dir() and not folder.exists()
 
 
-def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsys):
-    """hxex resume PROJECT adds a bootstrap with the project's [run.bootstrap] to a complete
-    bundle that has none, or replaces the one there; the fits are kept. Given the bundle alone,
-    a complete bundle is refused with the way to do it."""
+def test_run_adds_or_redoes_a_bootstrap(tmp_path, capsys):
+    """hxex run on a project with results adds the project's [run.bootstrap] to results without
+    one, or makes it again with other settings, keeping the fits; a K added to ks is
+    bootstrapped alone; the same settings again are nothing to do (docs/PLAN.md Next steps
+    40)."""
     path = mzml_project(tmp_path)
     with_boot = path.read_text()
     start = with_boot.index("[run.bootstrap]")
@@ -1269,62 +1249,48 @@ def test_resume_adds_or_redoes_a_bootstrap_from_the_project_file(tmp_path, capsy
     with open_bundle(tmp_path / "out") as b:
         assert b.bootstrap() is None
         ids, ks = list(b.fit().spectrum_id), list(b.fit().selected_K)
-    assert cli.main(["resume", str(tmp_path / "out")]) == 1
-    assert "hxex resume hxex.toml" in capsys.readouterr().err
-    assert cli.main(["resume", str(path)]) == 1  # the project has no [run.bootstrap]
-    assert "no [run.bootstrap]" in capsys.readouterr().err
     path.write_text(with_boot)
-    assert cli.main(["-q", "resume", str(path)]) == 0
+    assert cli.main(["-q", "run", str(path)]) == 0
     with open_bundle(tmp_path / "out") as b:
         assert b.bootstrap() is not None and b.manifest["configs"]["bootstrap"]["n_boot"] == 3
-        # the provenance says the bootstrap was added (audit 2026-11-01 Low 39)
-        assert [r["added"] for r in b.manifest["provenance"]["resumed"]] == ["bootstrap"]
+        assert b.manifest["provenance"]["redone"] == ["bootstrap"]
         assert list(b.fit().spectrum_id) == ids and list(b.fit().selected_K) == ks
     assert (tmp_path / "out_tables" / "spectra.csv").is_file()
     path.write_text(with_boot.replace("n_boot = 3", "n_boot = 4"))
-    assert cli.main(["-q", "resume", str(path)]) == 0
+    assert cli.main(["-q", "run", str(path)]) == 0
     with open_bundle(tmp_path / "out") as b:
-        assert b.manifest["configs"]["bootstrap"]["n_boot"] == 4
         assert b.manifest["configs"]["run"]["bootstrap"]["n_boot"] == 4
-    with open_bundle(tmp_path / "out") as b:
+        assert b.manifest["provenance"]["redone"] == ["bootstrap"]
         chosen_se = b.bootstrap().mean_se.copy()
     path.write_text(with_boot.replace("n_boot = 3", "n_boot = 4\nks = [1]"))
-    assert cli.main(["-q", "resume", str(path)]) == 0
+    assert cli.main(["-q", "run", str(path)]) == 0
     capsys.readouterr()
-    # a K added to ks is bootstrapped alone: the bootstrap there is kept (owner, 2026-11-10:
-    # a multimodal run moved to the bimodal analysis needs only K = 2 added)
+    # a K added to ks is bootstrapped alone: the bootstrap there is kept (owner, 2026-11-10)
     with open_bundle(tmp_path / "out") as b:
-        assert b.manifest["provenance"]["resumed"][-1]["added"] == "bootstrap at K = 1"
+        assert b.manifest["provenance"]["redone"] == ["bootstrap at K = 1"]
         np.testing.assert_array_equal(b.bootstrap().mean_se, chosen_se)
-        assert b.manifest["configs"]["bootstrap"]["ks"] == [1]
-    # the same settings again, a list among them (ks): kept, not redone (a list came back from
-    # the manifest's JSON and never equalled the project's tuple, so every resume redid it)
-    assert cli.main(["resume", str(path)]) == 0
-    assert "nothing to add" in capsys.readouterr().out
-    # back to no fixed K: the K = 1 bootstrap stays (a fixed-K bootstrap is never dropped)
-    path.write_text(with_boot.replace("n_boot = 3", "n_boot = 4"))
-    assert cli.main(["resume", str(path)]) == 0
-    assert "nothing to add" in capsys.readouterr().out
-    with open_bundle(tmp_path / "out") as b:
-        assert b.bootstrap_ks() == [1] and b.manifest["configs"]["bootstrap"]["ks"] == [1]
-    path.write_text(with_boot.replace("n_boot = 3", "n_boot = 4\nks = [1]"))
-    # a key the stored settings lack (added to hxex later) takes its default: not redone
+        assert b.bootstrap_ks() == [1]
+    # the same settings again, a list among them (ks): nothing to do (a list came back from
+    # the manifest's JSON and never equalled the project's tuple)
+    assert cli.main(["run", str(path)]) == 0
+    assert "the results are up to date" in capsys.readouterr().out
+    # a key the stored settings lack (added to hxex later) takes its default: nothing to do
     manifest = tmp_path / "out" / "manifest.json"
     stored = json.loads(manifest.read_text())
+    del stored["configs"]["run"]["bootstrap"]["curve_band"]
     del stored["configs"]["bootstrap"]["curve_band"]
     manifest.write_text(json.dumps(stored))
-    assert cli.main(["resume", str(path)]) == 0
-    assert "nothing to add" in capsys.readouterr().out
+    assert cli.main(["run", str(path)]) == 0
+    assert "the results are up to date" in capsys.readouterr().out
     # the bundle's settings file follows: the new bootstrap, the project file's input kept
     used = load_project(tmp_path / "out" / "run_settings_used.toml")
     assert used.run.bootstrap.n_boot == 4 and used.input == load_project(path).input
 
 
-def test_resume_works_the_controls_out_again_when_only_run_controls_changed(tmp_path, capsys):
+def test_run_works_the_controls_out_again_when_only_run_controls_changed(tmp_path, capsys):
     """A [run.controls] setting changed after the run (a D2O fraction corrected, owner,
-    2026-11-05): hxex report says the corrected values follow the bundle's controls, and
-    hxex resume works them out again from the stored K = 1 fits (no refit), records the new
-    settings and the resume, and rewrites the tables."""
+    2026-11-05): hxex report says the results are not up to date, and hxex run works the
+    controls out again from the kept K = 1 fits (no refit) and records the new settings."""
     path = mzml_project(tmp_path, output="[run.controls]\nd2o_fraction = 0.9")
     assert cli.main(["-q", "run", str(path)]) == 0
     with open_bundle(tmp_path / "out") as b:
@@ -1332,16 +1298,15 @@ def test_resume_works_the_controls_out_again_when_only_run_controls_changed(tmp_
     assert before.config.d2o_fraction == 0.9
     assert cli.main(["-q", "set", str(path), "run.controls.d2o_fraction", "0.8"]) == 0
     capsys.readouterr()
-    assert cli.main(["report", str(path), "--overwrite"]) == 0
+    assert cli.main(["report", str(path)]) == 0
     err = capsys.readouterr().err
-    assert "hxex resume" in err and "[run.controls]" in err
-    assert cli.main(["resume", str(path)]) == 0
-    assert "not applied" not in capsys.readouterr().err  # resume applies [run.controls]
+    assert "not up to date" in err and "[run.controls] d2o_fraction: 0.8, was 0.9" in err
+    assert cli.main(["run", str(path)]) == 0
+    assert "6 of 6 spectra keep their fit" in capsys.readouterr().err
     with open_bundle(tmp_path / "out") as b:
         after = b.controls()
         assert after.config.d2o_fraction == 0.8
         assert b.manifest["configs"]["run"]["controls"]["d2o_fraction"] == 0.8
-        assert [r["added"] for r in b.manifest["provenance"]["resumed"]] == ["controls"]
         np.testing.assert_array_equal(b.fit().fits[1].n, fit.fits[1].n)  # no refit
     # the fully deuterated level this run has no control for follows the D2O fraction
     stand_in = ~np.asarray(after.fd_measured, dtype=bool)
@@ -1350,64 +1315,51 @@ def test_resume_works_the_controls_out_again_when_only_run_controls_changed(tmp_
                                (before.mfd[stand_in] - before.m0[stand_in]) * 0.8 / 0.9)
 
 
-def test_resume_refuses_what_it_does_not_apply(tmp_path, capsys):
-    """hxex resume refuses a project change it does not apply, naming each change and hxex
-    run (PLAN Next steps 40): the control roles (a time point made the fully deuterated
-    control: resume would have worked the controls out again with the stored roles), and
-    [input] (a run's sample renamed, an exclusion rule added: resume never reads); the
-    bundle is left as it was."""
+def test_run_applies_what_resume_refused(tmp_path, capsys):
+    """Changes resume refused (PLAN Next steps 40, HISTORY 428): the control roles, [input] (a
+    run's sample renamed, an exclusion rule added) and controls = false are applied by hxex run,
+    which says first which stages it does again; a file without [input] cannot be run."""
     path = mzml_project(tmp_path, output="[run.controls]\nd2o_fraction = 0.9")
     assert cli.main(["-q", "run", str(path)]) == 0
-    with open_bundle(tmp_path / "out") as b:
-        made = b.manifest["created"]
     plain = path.read_text()
     capsys.readouterr()
 
-    def refused(text, *expected):
+    def applied(text, *expected):
         path.write_text(text)
-        assert cli.main(["resume", str(path)]) == 1
+        assert cli.main(["run", str(path)]) == 0
         err = capsys.readouterr().err
-        assert "hxex run" in err and "--overwrite" in err, err
         for words in expected:
             assert words in err, err
-        with open_bundle(tmp_path / "out") as b:
-            assert b.manifest["created"] == made and not (b.manifest.get("provenance") or {}).get(
-                "resumed")
+        return err
 
-    refused(plain.replace("d2o_fraction = 0.9", "d2o_fraction = 0.8\nfulldeut_at = 60"),
+    applied(plain.replace("d2o_fraction = 0.9", "d2o_fraction = 0.9\nfulldeut_at = 60"),
             "[run.controls] fulldeut_at: 1 min, was unset (which spectra are controls)")
-    refused(plain.replace("d2o_fraction = 0.9",
-                          "d2o_fraction = 0.9\nfulldeut_at = 60\nfulldeut_marked = false"),
-            "[run.controls] fulldeut_marked: false, was true")
-    refused(plain.replace('sample = "WT"', 'sample = "WT2"'), "[input] runs")
-    refused(plain.replace("[[input.runs]]", "[[input.exclude]]\ntime = 60\n\n[[input.runs]]"),
+    with open_bundle(tmp_path / "out") as b:
+        assert b.manifest["configs"]["run"]["controls"]["fulldeut_at"] == 60.0
+    applied(plain.replace('sample = "WT"', 'sample = "WT2"'), "read: out of date")
+    with open_bundle(tmp_path / "out") as b:
+        assert set(b.binned().sample) == {"WT2"}
+    applied(plain.replace("[[input.runs]]", "[[input.exclude]]\ntime = 60\n\n[[input.runs]]"),
             "[[input.exclude]]: 1 rule(s), was 0")
-    refused(plain.replace("[run.controls]\nd2o_fraction = 0.9", "[run]\ncontrols = false"),
+    applied(plain.replace("[run.controls]\nd2o_fraction = 0.9", "[run]\ncontrols = false"),
             "[run] controls: false")
-    # what it applies goes through: the correction itself, on another device
-    path.write_text(plain.replace("d2o_fraction = 0.9", "d2o_fraction = 0.8")
+    with open_bundle(tmp_path / "out") as b:
+        assert not b.has("controls")
+    # another device is not a change of the results
+    path.write_text(plain.replace("[run.controls]\nd2o_fraction = 0.9", "[run]\ncontrols = false")
                     .replace('device = "cpu", dtype', 'device = "auto", dtype'))
-    assert cli.main(["-q", "resume", str(path)]) == 0
-    with open_bundle(tmp_path / "out") as b:
-        assert b.controls().config.d2o_fraction == 0.8
-    # a project file for the analysis (no [input]) is compared only in the [run] tables it
-    # writes: the defaults of the others are not changes
+    assert cli.main(["run", str(path)]) == 0
+    assert "the results are up to date" in capsys.readouterr().out
     other = tmp_path / "analysis.toml"
-    other.write_text('[output]\nbundle = "out"\n[analysis]\nreference = "WT"\n'
-                     "[run.bootstrap]\nn_boot = 4\nn_restarts = 1\nadam_steps = 30\n"
-                     "polish_steps = 0\n")
-    capsys.readouterr()
-    assert cli.main(["-q", "resume", str(other)]) == 0, capsys.readouterr().err
-    with open_bundle(tmp_path / "out") as b:
-        assert b.manifest["configs"]["bootstrap"]["n_boot"] == 4
+    other.write_text('[output]\nbundle = "out"\n[analysis]\nreference = "WT"\n')
+    assert cli.main(["run", str(other)]) == 1
+    assert "needs an [input] table" in capsys.readouterr().err
 
 
-def test_resume_adds_the_population_test_from_the_project_file(tmp_path, capsys):
-    """hxex resume PROJECT adds the project's [run.population_test] to a bundle without one (or
-    makes it again with other settings), keeping its fits; the bundle's settings file and
-    hxex info follow. Other [run.fit] settings are refused (the test is made from the bundle's
-    fits), other [run] settings are named in the log and not applied, and a project without
-    the table leaves the bundle's test in place."""
+def test_run_adds_the_population_test(tmp_path, capsys):
+    """hxex run adds the project's [run.population_test] to results without one (or makes it
+    again with other settings, or takes it away), keeping the fits; the bundle's settings file
+    and hxex info follow; another [run.fit] setting fits every spectrum again."""
     path = mzml_project(tmp_path)
     plain = path.read_text().replace("k_max = 1", "k_max = 2")
     path.write_text(plain)
@@ -1417,7 +1369,10 @@ def test_resume_adds_the_population_test_from_the_project_file(tmp_path, capsys)
         ids, nll = list(b.fit().spectrum_id), b.fit().fits[2].nll
     test = "\n[run.population_test]\nsimulations = 2\n"
     path.write_text(plain + test)
-    assert cli.main(["-q", "resume", str(path)]) == 0
+    capsys.readouterr()
+    assert cli.main(["check", str(path)]) == 0
+    assert "population test: not done (the results have none" in capsys.readouterr().out
+    assert cli.main(["-q", "run", str(path)]) == 0
     with open_bundle(tmp_path / "out") as b:
         assert b.population_test() is not None
         assert b.manifest["configs"]["run"]["population_test"]["simulations"] == 2
@@ -1426,36 +1381,26 @@ def test_resume_adds_the_population_test_from_the_project_file(tmp_path, capsys)
         np.testing.assert_array_equal(b.fit().selected_K, b.population_test().selected_K)
     assert load_project(tmp_path / "out" / "run_settings_used.toml").run.population_test \
         is not None
-    assert (tmp_path / "out_tables" / "spectra.csv").is_file()
     capsys.readouterr()
     assert cli.main(["info", str(tmp_path / "out")]) == 0
-    assert "population test added by hxex resume" in capsys.readouterr().out
-    assert cli.main(["resume", str(path)]) == 0  # the same settings: nothing to add
-    assert "nothing to add" in capsys.readouterr().out
+    assert "redone         population test" in capsys.readouterr().out
+    assert cli.main(["run", str(path)]) == 0  # the same settings: nothing to do
+    assert "the results are up to date" in capsys.readouterr().out
     path.write_text(plain + test.replace("= 2", "= 3"))  # other settings: made again
-    assert cli.main(["-q", "resume", str(path)]) == 0
+    assert cli.main(["-q", "run", str(path)]) == 0
     with open_bundle(tmp_path / "out") as b:
         assert b.population_test().config.simulations == 3
-    # any other [run] setting is refused, naming hxex run (PLAN Next steps 40; before, a change
-    # outside [run.fit] was logged and recorded as if applied); another k_max is not: it fits
-    # the K the bundle lacks (test_presets.py)
+        np.testing.assert_array_equal(b.fit().fits[2].nll, nll)
+    # another [run.fit] setting: every spectrum fitted again
     path.write_text(plain.replace("adam_steps = 60", "adam_steps = 70") + test)
-    assert cli.main(["resume", str(path)]) == 1
-    err = capsys.readouterr().err
-    assert "[run.fit] adam_steps: 70, was 60" in err and "hxex run" in err
-    path.write_text(plain.replace("zero_filling = 3", "zero_filling = 4") + test)
-    assert cli.main(["resume", str(path)]) == 1
-    err = capsys.readouterr().err
-    assert "[run.picker] zero_filling: 4, was 3" in err and "--overwrite" in err
+    assert cli.main(["run", str(path)]) == 0
+    assert "fitting every spectrum" in capsys.readouterr().err
+    # a project without [run.population_test]: the test is taken away
+    path.write_text(plain.replace("adam_steps = 60", "adam_steps = 70"))
+    assert cli.main(["-q", "run", str(path)]) == 0
     with open_bundle(tmp_path / "out") as b:
-        assert b.population_test().config.simulations == 3
-        assert b.manifest["configs"]["run"]["picker"]["zero_filling"] == 3
-    # a project without [run.population_test]: the bundle's test stays
-    path.write_text(plain.replace("n_boot = 3", "n_boot = 4"))
-    assert cli.main(["resume", str(path)]) == 0
-    assert "the bundle's population test stays" in capsys.readouterr().err
-    with open_bundle(tmp_path / "out") as b:
-        assert b.population_test() is not None
+        assert b.population_test() is None
+        assert b.manifest["provenance"]["redone"] == ["population test taken away"]
 
 
 def test_each_reference_gets_an_analysis_folder_of_its_own(tmp_path, capsys):
@@ -1489,10 +1434,10 @@ def test_each_reference_gets_an_analysis_folder_of_its_own(tmp_path, capsys):
     assert "analyses       out_analysis: up to date" in out and "out_analysis_WT: up to date" in out
     with open_bundle(tmp_path / "out") as b:
         first = b.manifest["created"]
-    assert cli.main(["-q", "run", str(path), "--overwrite"]) == 0
+    assert cli.main(["-q", "run", str(path), "--fresh"]) == 0
     out = info()
     assert f"out_analysis: made from earlier results (created {first})" in out
-    assert cli.main(["-q", "analyse", str(path), "--overwrite"]) == 0  # WT is still the old one
+    assert cli.main(["-q", "analyse", str(path)]) == 0  # WT is still the old one
     assert f"out_analysis_WT was made from earlier results (created {first})" in \
         capsys.readouterr().err
     out = info()
@@ -1678,10 +1623,10 @@ def test_check_counts_exclusions_of_scan_files(tmp_path, capsys):
 
 
 def test_every_output_folder_follows_the_bundles_rule(tmp_path, capsys):
-    """report and analyse refuse a folder that holds earlier output unless told to overwrite it
-    or keep it (moved to NAME.N); [output] overwrite or keep_previous says so for every
-    command; a run whose bundle was deleted by hand refuses its tables folder, and warns about
-    the figures and analysis folders made from the results that are gone (owner, 2026-10-21)."""
+    """report and analyse write their folders again, or move one to NAME.N first with
+    --keep-previous; [output] overwrite is refused; a run whose bundle was deleted by hand
+    makes it again and warns about the figures and analysis folders made from the results that
+    are gone (owner, 2026-10-21, 2026-11-20)."""
     path = mzml_project(tmp_path)
     path.write_text(path.read_text() + '\n[analysis]\nks = [1]\noverlay = ["avg"]\n')
     assert cli.main(["-q", "run", str(path)]) == 0
@@ -1723,20 +1668,20 @@ def test_every_output_folder_follows_the_bundles_rule(tmp_path, capsys):
     assert cli.main(["report", str(path)]) == 0
     assert "nothing to write" in capsys.readouterr().out
     path.write_text(path.read_text().replace("tables = false\n", ""))
-    # the project's [output] overwrite covers every folder
+    # every folder is written again without being asked (the [output] overwrite is gone)
     text = path.read_text()
-    path.write_text(text.replace("[output]", "[output]\noverwrite = true", 1))
     assert cli.main(["-q", "report", str(path), "--figures"]) == 0
     assert cli.main(["-q", "analyse", str(path)]) == 0
+    path.write_text(text.replace("[output]", "[output]\noverwrite = true", 1))
+    assert cli.main(["report", str(path)]) == 1
+    assert "[output] overwrite = true: no longer a setting" in capsys.readouterr().err
     path.write_text(text)
-    # the bundle deleted by hand: its tables folder is refused before anything is fitted
+    # the bundle deleted by hand: a run makes it again, writes its tables, and warns about the
+    # figures and analysis folders made from the results that are gone
     shutil.rmtree(tmp_path / "out")
-    assert cli.main(["-q", "run", str(path)]) == 1
-    assert "out_tables holds the tables of earlier results" in capsys.readouterr().err
-    assert not (tmp_path / "out").exists()
-    assert cli.main(["-q", "run", str(path), "--keep-previous"]) == 0
+    assert cli.main(["-q", "run", str(path)]) == 0
     err = capsys.readouterr().err
-    assert (tmp_path / "out_tables.1" / "series.csv").is_file()
+    assert (tmp_path / "out_tables" / "series.csv").is_file()
     assert "out_figures holds figures of other results" in err
     assert "out_analysis holds an analysis of other results" in err
     assert cli.main(["info", str(tmp_path / "out")]) == 0
@@ -1930,9 +1875,9 @@ def test_commands_name_the_right_step_and_never_show_a_traceback(tmp_path, capsy
         (["info", str(out)], f"no results yet at {out}: run 'hxex run hxex.toml' first"),
         (["report", str(out), "--figures"], "no results yet at"),
         (["analyse", str(out)], "no results yet at"),
-        (["resume", str(out)], "no results yet at"),
+        (["resume", str(out)], "hxex resume is retired"),
         (["report", str(tmp_path / "gone.toml")], "no such project file"),
-        (["resume", str(tmp_path / "gone.toml")], "no such project file"),
+        (["resume", str(tmp_path / "gone.toml")], "hxex resume is retired"),
         (["analyse", str(tmp_path / "gone.toml")], "no such project file"),
         (["report", str(path)], "no results yet at"),  # the project's bundle, not yet run
         (["init", "--project", "a:b", "-o", str(tmp_path / "x.toml")], "--project must be a name"),
@@ -1961,13 +1906,12 @@ def test_commands_name_the_right_step_and_never_show_a_traceback(tmp_path, capsy
     sid = (tmp_path / "out_tables" / "spectra.csv").read_text().splitlines()[1].split(",")[0]
     (tmp_path / "review.csv").write_text(f"spectrum_id,review_status\n{sid},rejected\n")
     path.write_text(path.read_text() + '\n[review]\ntable = "review.csv"\n')
-    assert cli.main(["-q", "report", str(path), "--overwrite"]) == 0
+    assert cli.main(["-q", "report", str(path)]) == 0
     assert f"table(s) in {tmp_path / 'out_tables'} (review: 1 rejected)" in \
         capsys.readouterr().out
     # a damaged copy of the bundle: the missing file is named, in every command
     (out / "fit.parquet").rename(out / "fit.gone")
-    for argv in (["info", str(out)], ["report", str(out), "--overwrite"],
-                 ["analyse", str(out), "--overwrite"]):
+    for argv in (["info", str(out)], ["report", str(out)], ["analyse", str(out)]):
         assert cli.main(argv) == 1
         err = capsys.readouterr().err
         assert "is not a complete bundle: fit.parquet is listed in its manifest but missing" in \
@@ -2049,29 +1993,12 @@ def test_check_names_a_sample_that_is_not_there_and_hints_at_the_format(tmp_path
             and 'sample folders with peptide folders, 1 spectra: format = "specexport"?' in err)
 
 
-def test_resume_with_an_analysis_only_file_keeps_the_bundles_input_record(tmp_path, capsys):
-    """A project file without [input] (one for hxex analyse) that adds the population test does
-    not blank the bundle's record of how its spectra were read (audit 2026-11-01, Low 18)."""
-    path = mzml_project(tmp_path)
-    path.write_text(path.read_text().replace("k_max = 1", "k_max = 2"))
-    assert cli.main(["-q", "run", str(path)]) == 0
-    only = tmp_path / "only.toml"
-    only.write_text('[analysis]\nreference = "WT"\n[output]\nbundle = "out"\n'
-                    + FAST_RUN.replace("k_max = 1", "k_max = 2")
-                    + "\n[run.population_test]\nsimulations = 2\n")
-    assert cli.main(["-q", "resume", str(only)]) == 0
-    used = (tmp_path / "out" / "run_settings_used.toml").read_text()
-    assert "[input]" in used and 'format = "mzml"' in used and "none (the run took" not in used
-    with open_bundle(tmp_path / "out") as b:
-        assert b.population_test() is not None
-
-
 def test_a_one_population_run_is_analysed_and_its_review_table_checked(tmp_path, capsys):
     """A run fitted with k_max = 1 is analysed at K = 1 when [analysis] ks is left at its
     default (and refused, naming the settings, when ks sets a K the run did not fit; hxex check
     says so first). A review table is matched against the bundle by hxex check: rows naming
     spectra the results do not have are a problem, and a K chosen that the bundle was not
-    fitted with is refused by resume with the way to fit it."""
+    fitted with makes the fit out of date (hxex run fits it)."""
     path = mzml_project(tmp_path)
     assert cli.main(["-q", "run", str(path)]) == 0
     capsys.readouterr()
@@ -2082,7 +2009,7 @@ def test_a_one_population_run_is_analysed_and_its_review_table_checked(tmp_path,
     assert cli.main(["check", str(path)]) == 1
     err = capsys.readouterr().err
     assert "[analysis] ks = [1, 2, 3]: K = [2, 3] are not tried by the run" in err
-    assert cli.main(["analyse", str(path), "--overwrite"]) == 1
+    assert cli.main(["analyse", str(path)]) == 1
     assert "K = [2, 3] were not fitted" in capsys.readouterr().err
     # the review table: one real spectrum, one that is not in the results
     with open_bundle(tmp_path / "out") as b:
@@ -2098,11 +2025,9 @@ def test_a_one_population_run_is_analysed_and_its_review_table_checked(tmp_path,
     (tmp_path / "review.csv").write_text(
         f"spectrum_id,review_status,review_K,note\n{real},,2,\n")
     path.write_text(text.replace("k_max = 1", "k_max = 2") + '\n[review]\ntable = "review.csv"\n')
-    assert cli.main(["check", str(path)]) == 1
-    assert "was not fitted with" in capsys.readouterr().err
-    assert cli.main(["resume", str(path)]) == 1
-    err = capsys.readouterr().err
-    assert "the bundle was fitted with K = 1" in err and "hxex run --overwrite" in err
+    assert cli.main(["check", str(path)]) == 0  # hxex run fits it: a stage out of date
+    out = capsys.readouterr().out
+    assert "fit: out of date" in out and "fits the K missing (k_max 2)" in out
 
 
 def test_check_finds_what_the_read_of_a_specexport_folder_would_refuse(tmp_path, capsys):

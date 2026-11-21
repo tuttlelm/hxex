@@ -415,7 +415,7 @@ insertion or a deletion, or a FASTA numbered another way, shows there.
 numbered differently. The tables of `hxex run` and `hxex report` (`series.csv`, `spectra.csv`,
 `components.csv`, and `uptake.csv`) gain the columns `identity`, `identity_level`,
 `candidates`, `classes`, and `position_offset`, after `charge`. To change the FASTA or the
-classes later, change them in the project file and run again with `--overwrite`.
+classes later, change them in the project file and run again (`hxex run hxex.toml`).
 
 `hxex analyse` compares pooled peptides only where the sequences are identical (`[analysis]
 peptide_match`, whose default does this for pooled data), so two isoforms' peptides over the
@@ -1016,8 +1016,8 @@ ion each). `hxex check` says how many windows the table holds and names any row 
 file, peptide, or ion the project does not read (a file renamed, a peptide taken out of the
 table), and the run warns about such rows and leaves them unused. Edited windows only act on
 files with a time (time points and controls), not on kinetics files. The table only acts when
-the project is run (`hxex run --overwrite`); that run fits again only the series whose spectra
-changed (see [Fits kept from the earlier results](outputs.md#running-again)). The new window gives the spectra a new
+the project is run (`hxex run hxex.toml`, which brings the results up to date); that run fits
+again only the series whose spectra changed (see [Fits kept from the earlier results](outputs.md#running-again)). The new window gives the spectra a new
 `spectrum_id` (it names the scans added up), and your review decisions follow them there (see
 [When a spectrum's id changes](project-file.md#the-user-review-table)).
 

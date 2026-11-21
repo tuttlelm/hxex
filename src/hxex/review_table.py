@@ -21,8 +21,8 @@ clears a status the bundle's review layer holds (as ``review_K = 0`` clears a K:
 
 A chosen K is drawn and tabulated with the errors of a bootstrap at that K: :func:`chosen_k`
 lists the spectra shown at a K other than the fit's choice and :func:`missing_bootstraps` those
-of them without a bootstrap at it, which ``hxex resume`` (and ``hxex run``) add. A chosen K the
-screen skipped for a spectrum is shown at the fit's K until ``hxex resume`` fits it (and
+of them without a bootstrap at it, which ``hxex run`` adds. A chosen K the
+screen skipped for a spectrum is shown at the fit's K until ``hxex run`` fits it (and
 bootstraps it); :func:`missing_bootstraps` lists it too, and :func:`refuse_unfitted` stops an
 analysis on it.
 """
@@ -309,7 +309,7 @@ def apply_review_table(results, sheet: ReviewSheet | None, *, unfitted: str = "r
     An entry naming scans the results no longer sum follows its spectrum (:func:`move_entries`;
     logged). Spectra the results do not have are skipped with a warning; a chosen K that was
     not fitted for its spectrum (one the run did not try, or one its screen skipped, which
-    ``hxex resume`` fits) raises ValueError saying which; with ``unfitted="keep"`` a K the
+    ``hxex run`` fits) raises ValueError saying which; with ``unfitted="keep"`` a K the
     screen skipped is kept in the review layer and the spectrum shown at the fit's K
     (:attr:`hxex.report.Results.unfitted_choices`; the window loads results so, the commands
     refuse: audit of 2026-11-15, D-9)."""
@@ -349,7 +349,7 @@ def apply_review_table(results, sheet: ReviewSheet | None, *, unfitted: str = "r
                if k > 0 and sid in index and not fit.fitted(k)[index[sid]]]
     if skipped and unfitted == "raise":
         raise ValueError(f"the review table {sheet.path} chooses a K the run's screen skipped "
-                         f"for {len(skipped)} spectra ({', '.join(skipped[:3])}): 'hxex resume "
+                         f"for {len(skipped)} spectra ({', '.join(skipped[:3])}): 'hxex run "
                          "hxex.toml' fits it for them (and bootstraps them), then report again")
     review = results.review if results.review is not None else ReviewTable.empty()
     stored = {str(s): j for j, s in enumerate(review.spectrum_id)}
@@ -417,7 +417,7 @@ def chosen_k(results) -> dict[str, int]:
 def missing_bootstraps(results) -> dict[str, int]:
     """The spectra of :func:`chosen_k` without a bootstrap at their chosen K, when the results
     have a bootstrap (without any, no spectrum has bootstrap errors and nothing is missing)."""
-    out = dict(results.unfitted_choices)  # not even fitted yet: resume fits and bootstraps
+    out = dict(results.unfitted_choices)  # not even fitted yet: hxex run fits and bootstraps
     if results.bootstrap is None and not results.bootstrap_by_k:
         return out
     index = {str(s): i for i, s in enumerate(results.fit.spectrum_id)}
@@ -430,11 +430,11 @@ def missing_bootstraps(results) -> dict[str, int]:
 
 def refuse_unfitted(results) -> None:
     """Raise ValueError when the review chooses a K the screen skipped for some spectra: they
-    would be analysed at the fit's K. ``hxex resume`` fits them."""
+    would be analysed at the fit's K. ``hxex run`` fits them."""
     if unfitted := results.unfitted_choices:
         shown = ", ".join(f"{s} at K = {k}" for s, k in list(unfitted.items())[:2])
         raise ValueError(f"the review chooses a K that was not fitted for {len(unfitted)} "
-                         f"spectra (the screen skipped it; for example {shown}): hxex resume "
+                         f"spectra (the screen skipped it; for example {shown}): hxex run "
                          "fits it (and bootstraps it), then analyse again")
 
 
@@ -460,6 +460,47 @@ def table_choices(review: ReviewSettings | None) -> dict[str, int]:
         return {}
     sheet = read_review_table(review.table)
     return {s: k for s, k in zip(sheet.spectrum_id, sheet.k, strict=True) if k}
+
+
+def rejected_spectra(review: ReviewSettings | None, index, *, stored=None, source=None
+                     ) -> np.ndarray:
+    """Which spectra of ``index`` (a binned or spectrum set: their ids, and what
+    ``[[review.exclude]]`` rules match on) the review rejects, as the analysis sees them: the
+    stored review layer's current statuses (``stored``, a :class:`hxex.io.bundle.ReviewTable`
+    of the bundle a run replaces), the project's review table laid over them (a status
+    replaces the stored one, ``unreviewed`` clears it; entries naming scans the spectra no
+    longer sum follow their spectrum, :func:`move_entries`), then ``[[review.exclude]]``,
+    which rejects whatever the table says. ``source``: the read record (the reader, for rules
+    naming a file; kinetics runs). The run leaves rejected undeuterated controls out of the
+    per-bin noise (owner, 2026-11-20)."""
+    from .exclusions import matches
+    from .io.mzml import kinetics_spectra
+
+    ids = np.asarray(index.spectrum_id, dtype=str)
+    status: dict[str, str] = {}
+    if stored is not None and len(stored):
+        stale = (np.zeros(len(stored), dtype=bool) if stored.stale is None
+                 else np.asarray(stored.stale, dtype=bool))
+        for sid, st, old in zip(stored.spectrum_id, stored.status, stale, strict=True):
+            if st and not old:
+                status[str(sid)] = str(st)
+    if review is not None and review.table:
+        sheet = read_review_table(review.table)
+        named = list(dict.fromkeys((*sheet.spectrum_id, *sheet.unreviewed)))
+        moves = move_entries(named, ids, kinetics_spectra(source, ids)) if named else None
+        if moves:
+            sheet = moved_sheet(sheet, moves)
+        for sid in sheet.unreviewed:
+            status.pop(sid, None)
+        for sid, st in zip(sheet.spectrum_id, sheet.status, strict=True):
+            if st:
+                status[sid] = st
+    out = np.array([status.get(s) == "rejected" for s in ids], dtype=bool)
+    if review is not None and review.exclude:
+        reader = (source or {}).get("reader")
+        for rule in review.exclude:
+            out |= matches(rule, index, reader)
+    return out
 
 
 def moved_choices(choices, spectrum_id, source=None) -> dict[str, int]:
