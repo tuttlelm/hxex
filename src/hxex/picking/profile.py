@@ -43,6 +43,15 @@ full grid stays there.
 
 Fragment ions, ion types other than ``M``, series with their own envelopes
 (``[run.envelope]``), and centroided spectra keep the pick.
+
+With ``pick = "peak"`` the same spectra get a purity too (:func:`hxex.picking.pick_spectra`):
+one fit at the spectrum's own offset (:func:`own_offset`, the injection's median where it has
+none), with no search, whose ``purity`` and ``stray_share`` are kept and whose values are not
+(the bins stay the pick's). Measured on four datasets (2026-11-22, docs/HISTORY.md, item
+436): about 3-5 ms a spectrum against 21-45 ms for the searched fit; Spearman 0.93-
+0.98 with the searched fit's purity, and the spectra it puts below 0.7 that no other check
+marks are as far from their replicates as the searched fit's. It misses some: where a
+neighbouring species' peaks are the brightest, the own offset follows them.
 """
 
 from __future__ import annotations
@@ -51,6 +60,7 @@ import logging
 import math
 import multiprocessing
 import os
+import warnings
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
@@ -338,7 +348,8 @@ def peak_shape(curves: Sequence[tuple[int, np.ndarray]], n_controls: int) -> Pea
             rows.append(gauss.rows[c])
             counts.append(0)
             continue
-        with np.errstate(all="ignore"):
+        with np.errstate(all="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # a grid point no curve reaches
             m = np.nanmedian(np.array(cs), axis=0)
         rows.append(np.where(np.isfinite(m), np.clip(m, 0.0, None), 0.0))
         counts.append(len(cs))

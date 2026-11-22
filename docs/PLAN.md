@@ -2047,8 +2047,9 @@ Planned, not built:
       no existing check marks disagree with their replicates far more (benchmark median 0.15 vs
       0.004 D per amide), at K = 1 and K >= 2; the existing screens already catch 73-83 % of the
       lowest 2 %. G on labelled spectra separates nothing at K = 1; F's clean spread moves with
-      charge and brightness and, ranked within its class, separates only its tails. P exists only
-      with `pick = "profile_fit"`, so the default `peak` pick gains nothing from this item. The
+      charge and brightness and, ranked within its class, separates only its tails. P existed only
+      with `pick = "profile_fit"` at first; since 2026-11-22 (HISTORY 436) the default `peak` pick gets it from one fit at each spectrum's own m/z offset, with
+      no search (about 3-5 ms a spectrum; the bins stay the pick's), and the same flag. The
       Orbitrap controls' heavy shift came from other species picked in the far bins of the
       undeuterated reach, not from the reduced profile (which reads weak heavy peaks low).
    Evidence (scratch, benchmark): a column-aware table (HDExaminer's per-file windows for its

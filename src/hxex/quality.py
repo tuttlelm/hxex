@@ -127,14 +127,17 @@ signal never reach the fit and are handled before it.
   ``accepted`` review keeps it there); a series whose every undeuterated spectrum is above it is
   ``m0_high``, which ``[analysis.filters] stand_in_controls`` decides. Not assessed for series
   the controls leave uncorrected (fragment ions) nor without controls.
-- ``low_purity``: a spectrum picked with ``[run.picker] pick = "profile_fit"`` whose ``purity``
-  (the share of the profile near the peptide's peaks that the peptide's fitted peaks account
-  for, :func:`hxex.picking.profile.fit_quality`) is below ``min_purity``: other species'
-  peaks sit on or beside the peptide's. Measured on four datasets (PLAN 33 step 7, docs/HISTORY.md
+- ``low_purity``: a spectrum whose ``purity`` (the share of the profile near the peptide's peaks
+  that the peptide's fitted peaks account for, :func:`hxex.picking.profile.fit_quality`; from
+  the profile fit with ``[run.picker] pick = "profile_fit"``, from one fit at the spectrum's own
+  m/z offset with ``pick = "peak"``) is below ``min_purity``: other species' peaks sit on or
+  beside the peptide's. Measured on four datasets (PLAN 33 step 7, docs/HISTORY.md
   item 434): undeuterated controls that match natural abundance sit at 0.84-0.94 or
   above (2nd percentile), and spectra below 0.7 that no other check catches disagree with their
   replicates and charge states far more than the rest, at one population and at more. Flag
-  only. Not assessed (False) for spectra picked with ``pick = "peak"``, which have no purity.
+  only. Not assessed (False) for spectra without a purity: fragments, other ion types, series
+  with their own envelopes, centroided spectra, and runs without undeuterated controls in
+  profile mode (no peak shape).
 - ``bright`` (retired, HISTORY item "bright retired"): a labelled spectrum or fully deuterated
   control whose tallest stick was at least as high as that of a control of its series flagged
   ``saturated`` or ``tails_low``. Its spectra were no further from their replicates and chose two
@@ -217,8 +220,8 @@ class QualityConfig:
     - ``spectrum_off_mz_sd``: ``spectrum_off_mz`` when a spectrum's m/z offset is further than
       this many times the run's scatter (for its brightness) from its injection's median;
       None: off.
-    - ``min_purity``: ``low_purity`` when a spectrum picked with ``pick = "profile_fit"`` has a
-      purity below this; None: off.
+    - ``min_purity``: ``low_purity`` when a spectrum's purity (either pick) is below this; None:
+      off.
     """
     # defaults set on the private pooled dataset: docs/HISTORY.md item 28
 
@@ -540,7 +543,7 @@ def assess_quality(
     ``injection``: every measurement's injection (:func:`injection_keys`; None: every
     injection taken as equally bright, and ``spectrum_off_mz`` not assessed).
     ``skip_series``: series (``data_id``) left out of ``spectrum_off_mz`` (fragment ions).
-    ``purity``: every measurement's profile-fit purity
+    ``purity``: every measurement's purity
     (:attr:`~hxex.picking.BinnedSet.purity`; None or NaN: ``low_purity`` not assessed).
     ``controls``
     (:class:`hxex.controls.ControlTable`) gives ``undeut_high`` its limit (None: not

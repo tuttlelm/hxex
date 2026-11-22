@@ -15,7 +15,7 @@ from hxex import chem
 from hxex.io import ReviewTable, open_bundle, write_bundle
 from hxex.model import Backend
 from hxex.model.mixture import MixtureBatch, PaddedBatch, shape_weights
-from hxex.picking.binned import MZ_CHECK_COLUMNS
+from hxex.picking.binned import MZ_CHECK_COLUMNS, PROFILE_COLUMNS
 from hxex.picking.screen import SCREEN_SCORES
 from hxex.pipeline import RunConfig, run
 from hxex.report import (
@@ -360,9 +360,12 @@ def test_tables_have_the_documented_columns_and_values(results):
     assert (comp["peptide"] == "RDKVQKEYAL").all() and set(comp["rep"]) == {1, 2, 3}
     k_max = int(ks.max())
     assert f"mean_{k_max}" in spec and f"population_se_{k_max}" in spec
-    # the screens, one column each, the series' m/z check, then the spectrum's own, last
-    assert list(spec)[-11:] == [*SCREEN_SCORES, *MZ_CHECK_COLUMNS, "spectrum_offset_ppm",
-                                "spectrum_offset_limit_ppm", "same_measurement_as"]
+    # the screens, one column each, the series' m/z check, the purity (profile-mode spectra:
+    # every pick), then the spectrum's own m/z check, last
+    assert list(spec)[-14:] == [*SCREEN_SCORES, *MZ_CHECK_COLUMNS, *PROFILE_COLUMNS,
+                                "spectrum_offset_ppm", "spectrum_offset_limit_ppm",
+                                "same_measurement_as"]
+    assert np.isfinite(spec["purity"]).any() and np.isnan(spec["fit_offset_ppm"]).all()
     assert set(spec["same_measurement_as"]) == {""}  # no spectrum read twice here
     # the set's K beside the spectrum's: empty without the population test
     assert list(spec)[list(spec).index("K") + 1] == "set_K" and set(spec["set_K"]) == {""}

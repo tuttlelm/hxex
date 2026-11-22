@@ -479,12 +479,17 @@ def pick_spectra(
     checked for an envelope off its m/z first (:mod:`hxex.picking.mz_check`; flagged, the
     windows stay on the prediction). With ``pick = 'profile_fit'`` (a ``measure`` of
     ``'profile_fit'``) the profile fit then reads the bins (:mod:`hxex.picking.profile`), in up
-    to ``workers`` processes (None: as many as it may use, up to eight)."""
+    to ``workers`` processes (None: as many as it may use, up to eight). Otherwise, when the
+    ``measure`` holds the run's peak shape, the profile fit gives the same spectra their
+    ``purity`` and ``stray_share`` only, fitted at each spectrum's own m/z offset (its pick's
+    bright apexes) with no search: the bins keep the pick (docs/HISTORY.md, item 436)."""
     clusters = clusters or {}
     if measure is None:
         measure = choose_measure(spectra, config, registry=registry)
         log.info("picking: bins take %s", measure.describe())
     fitted = measure.measure == "profile_fit"
+    purity_only = not fitted and measure.shape is not None
+    parts = 10 if fitted else 3  # the pick's share of the stage: a tenth or a third
     # with the profile fit the pick seeds it: with areas (the closer start where weak peaks are
     # wider than tall ones; a Gaussian's when the run's area scale is unknown)
     seed = dataclasses.replace(measure, measure="area") if fitted else measure
@@ -532,17 +537,18 @@ def pick_spectra(
                 resolving_power_mz=float(spectra.resolving_power_mz[i]), measure=seed,
             )
         )
-        if not fitted:
+        if not (fitted or purity_only):
             report(progress, i + 1, len(spectra))
         elif i % 200 == 0:
-            report(progress, i + 1, 10 * len(spectra))  # the pick: a tenth of the stage
+            report(progress, i + 1, parts * len(spectra))
     binned = _assemble(spectra, picked)
     # the screens measure the pick (as without the fit: their limits were set on it)
     off_position = off_position_scores(binned, config, spectra.resolving_power,
                                        spectra.resolving_power_mz)
-    if fitted:
+    if fitted or purity_only:
         picked = _profile_fit(spectra, picked, plans, clusters, config, registry, measure,
-                              progress=progress, cancel=cancel, workers=workers)
+                              progress=progress, cancel=cancel, workers=workers,
+                              purity_only=purity_only, parts=parts)
         binned = _assemble(spectra, picked)
     return dataclasses.replace(
         binned, screen_off_position=off_position,
@@ -552,16 +558,21 @@ def pick_spectra(
 def _profile_fit(spectra: SpectrumSet, picked: list[PickedSpectrum], plans: dict,
                  clusters: Mapping, config: PickerConfig, registry, measure: PeakMeasure, *,
                  progress=None, cancel=None, workers: int | None = None,
+                 purity_only: bool = False, parts: int = 10,
                  ) -> list[PickedSpectrum]:
     """``picked`` with the profile fit's values (:mod:`hxex.picking.profile`) for the spectra
     it reads: peptide ions (ion type M, natural clusters) in profile mode, with signal; the
-    others keep the pick."""
+    others keep the pick. ``purity_only``: each of those spectra is fitted once at its own
+    m/z offset (its injection's median where it has none) and takes only the fit's ``purity``
+    and ``stray_share``; its bins, peak m/z, and ``fit_offset_ppm`` (NaN) stay the pick's.
+    ``parts``: the progress reported so far was the pick's share, one ``parts``-th."""
     from ..controls import fragment_ids
     from ..io.mzml import SCAN_READERS, fragment_series
     from .measure import _profile
     from .mz_check import injection
     from .profile import (
         COARSE_EXPONENT,
+        OffsetSearch,
         bin_positions,
         deuterium_distribution,
         fit_all,
@@ -610,21 +621,30 @@ def _profile_fit(spectra: SpectrumSet, picked: list[PickedSpectrum], plans: dict
             str(spectra.sample[i]), str(spectra.role[i]) if spectra.role is not None else "",
             float(np.nan_to_num(spectra.time[i], nan=-1.0)), str(spectra.rep[i])))
         rows.append((i, key))
-    search = search_offsets(np.asarray(own, dtype=np.float64), injections)
+    own = np.asarray(own, dtype=np.float64)
+    search = search_offsets(own, injections)
     coarse = abs(measure.fwhm_exponent) < COARSE_EXPONENT
-    log.info("profile fit: %d spectra; m/z offsets searched %s%.1f ppm about their "
-             "injection's median (the run's scatter %.1f ppm), %s search; peak shape %s",
-             len(rows), "\u00b1", search.limit, search.scatter,
-             "coarse-then-fine" if coarse else "full-grid", shape.describe())
+    if purity_only:  # one offset per spectrum: its own
+        search = OffsetSearch(np.where(np.isfinite(own), own, search.centre), search.scatter,
+                              0.0, 1.0)
+        log.info("purity: %d spectra fitted at their own m/z offset (the bins keep the pick); "
+                 "peak shape %s", len(rows), shape.describe())
+    else:
+        log.info("profile fit: %d spectra; m/z offsets searched %s%.1f ppm about their "
+                 "injection's median (the run's scatter %.1f ppm), %s search; peak shape %s",
+                 len(rows), "\u00b1", search.limit, search.scatter,
+                 "coarse-then-fine" if coarse else "full-grid", shape.describe())
     others = ", ".join(f"{n} {what}" for what, n in kept_pick.items() if n)
     if others:
-        log.info("profile fit: spectra that keep the pick: %s", others)
+        log.info("%s: spectra that keep the pick%s: %s",
+                 "purity" if purity_only else "profile fit",
+                 " (no purity)" if purity_only else "", others)
     jobs = []
     for j, (i, key) in enumerate(rows):
         mz, y = clean_profile(*spectra.spectrum(i))
         jobs.append((i, mz, y, picked[i].intensity, plans[key], moments[key],
                      float(search.centre[j])))
-    span = None if progress is None else _Tail(progress, len(spectra))
+    span = None if progress is None else _Tail(progress, len(spectra), parts)
     fits = fit_all(jobs, measure, shape, search, coarse=coarse, workers=workers,
                    progress=span, cancel=cancel)
     out = list(picked)
@@ -632,6 +652,9 @@ def _profile_fit(spectra: SpectrumSet, picked: list[PickedSpectrum], plans: dict
         if fit is None:
             continue
         p = picked[i]
+        if purity_only:
+            out[i] = dataclasses.replace(p, purity=fit.purity, stray_share=fit.stray_share)
+            continue
         width, symm = envelope_shape(p.mz, fit.values, int(spectra.charge[i]),
                                      config.env_threshold)
         out[i] = dataclasses.replace(
@@ -644,13 +667,15 @@ def _profile_fit(spectra: SpectrumSet, picked: list[PickedSpectrum], plans: dict
 
 
 class _Tail:
-    """Progress of the profile fit as the last nine tenths of the picking stage."""
+    """Progress of the profile fit as the rest of the picking stage after the pick, which was
+    one ``parts``-th of it."""
 
-    def __init__(self, progress, n: int):
-        self.progress, self.n = progress, n
+    def __init__(self, progress, n: int, parts: int = 10):
+        self.progress, self.n, self.parts = progress, n, parts
 
     def __call__(self, done: int, total: int) -> None:
-        report(self.progress, self.n + int(9 * self.n * done / max(total, 1)), 10 * self.n)
+        rest = (self.parts - 1) * self.n
+        report(self.progress, self.n + int(rest * done / max(total, 1)), self.parts * self.n)
 
 
 def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:

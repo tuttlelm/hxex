@@ -8,7 +8,7 @@ import pytest
 
 from hxex.io import open_bundle
 from hxex.picking import PeakMeasure, PickerConfig, choose_measure, pick_spectra, plan_bins
-from hxex.picking.measure import HEIGHTS, MIN_CONTROLS, area_values, peak_fwhm
+from hxex.picking.measure import MIN_CONTROLS, area_values, peak_fwhm
 from hxex.spectra import PeptideEntry, Spectrum, SpectrumSet
 
 PEPTIDE = "RDKVQKEYAL"
@@ -107,7 +107,9 @@ def test_auto_takes_areas_when_weak_peaks_are_wider_and_heights_when_they_are_no
     assert "below" in same.reason
     few = choose_measure(control_set(MIN_CONTROLS - 5, widening=0.25), CFG)
     assert few.measure == "height" and "fewer than" in few.reason
-    assert choose_measure(control_set(3, 0.25), PickerConfig(measure="height")) is HEIGHTS
+    set_heights = choose_measure(control_set(3, 0.25), PickerConfig(measure="height"))
+    assert set_heights.measure == "height" and set_heights.reason == "set"
+    assert set_heights.shape is not None  # measured whatever the measure: it serves the purity
     forced = choose_measure(control_set(3, 0.0), PickerConfig(measure="area"))
     assert forced.measure == "area" and forced.reason == "set"
 

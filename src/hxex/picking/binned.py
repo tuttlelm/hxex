@@ -45,7 +45,9 @@ class BinnedSet:
     the bins' fitted peaks account for within a peak width of each bin, and ``stray_share``, the
     share of the fitted region the stray peaks account for
     (:func:`hxex.picking.profile.fit_quality`; all NaN for a spectrum that kept the pick);
-    ``peak_mz`` is then each bin's fitted position.
+    ``peak_mz`` is then each bin's fitted position. With ``pick = 'peak'`` and the run's peak
+    shape measured, ``purity`` and ``stray_share`` come from one fit at the spectrum's own m/z
+    offset and ``fit_offset_ppm`` stays NaN (the bins are the pick's).
     Nothing is dropped here; drop flagged spectra with :meth:`select`. The index arrays are
     copied from the :class:`~hxex.spectra.SpectrumSet` that was picked.
     """

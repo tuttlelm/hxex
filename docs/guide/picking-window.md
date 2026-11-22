@@ -177,6 +177,27 @@ same picker settings reuses the stored values, so the time is spent once.
 On the spectra page of the figures, fitted values are drawn as up-pointing triangles, and the
 legend says "fitted values: peak areas (height-equivalent)".
 
+## Purity with the usual pick
+
+With the usual pick (`pick = "peak"`), *hxex* also fits each spectrum's profile once, only to
+measure its purity, the same measure as in [fitting the profile](#fitting-the-profile-instead-opt-in):
+the whole envelope with the run's peak shape, at the shift in m/z where the spectrum's own
+tallest peaks sit. The bins keep the pick's values. The fit gives `purity` and `stray_share` in
+`spectra.csv` (`fit_offset_ppm` stays empty), and a spectrum whose purity is below 0.7 is
+flagged `low_purity` (`min_purity` in `[run.quality]`; a mark only). It adds a few milliseconds
+per spectrum.
+
+The peak shape comes from the run's undeuterated controls in profile mode, as for the profile
+fit; `hxex info` shows it at the end of its `bin values` line. Without such controls (centroided
+spectra, or no undeuterated control) there is no purity and the flag is never set. Fragment
+ions, ion types other than M, and series with their own envelopes get no purity either.
+
+On the four datasets measured, this purity agreed closely with the profile fit's, and the
+spectra it flagged that no other check marks disagreed with their replicates as much as those
+the profile fit flagged. It flags fewer: where another species' peaks are the tallest in the
+spectrum, the fit sits on them and the peptide's peaks can read pure. The picking check tab is
+drawn only for results made with `pick = "profile_fit"`.
+
 ## The default: a ppm tolerance
 
 ```toml

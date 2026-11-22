@@ -277,3 +277,59 @@ def test_the_picking_check_refuses_a_spectrum_that_kept_the_pick():
                                spectra=s)
     with pytest.raises(ValueError, match="profile fit"):
         plot_picking_check(str(s.spectrum_id[-1]), results)
+
+
+def test_with_the_peak_pick_the_spectra_get_a_purity_and_keep_their_bins():
+    """pick = "peak": one fit at each spectrum's own offset gives its purity; the bins, their
+    peak m/z and the (NaN) fit offset stay the pick's."""
+    import dataclasses
+
+    plan = plan_bins(PEPTIDE, CHARGE, config=CFG)
+    _, _, truth = envelope(3.0, 1.0)
+    top = int(np.argmax(truth))
+    beside = ((plan.pred_mz[top] * (1 + 0.7 * FWHM_PPM * 1e-6), 0.8e5),)
+    cfg = PickerConfig()
+    for extra, clean in (((), True), (beside, False)):
+        s = run_set(extra=extra)
+        m = choose_measure(s, cfg)
+        assert m.measure in ("height", "area") and m.shape is not None
+        b = pick_spectra(s, cfg, measure=m, workers=1)
+        plain = pick_spectra(s, cfg, measure=dataclasses.replace(m, shape=None), workers=1)
+        np.testing.assert_array_equal(b.intensity, plain.intensity)
+        np.testing.assert_array_equal(b.peak_mz, plain.peak_mz)
+        assert np.isnan(b.fit_offset_ppm).all() and np.isnan(plain.purity).all()
+        assert np.isfinite(b.purity).all() and np.isfinite(b.stray_share).all()
+        assert (b.purity[-1] > 0.98) if clean else (b.purity[-1] < 0.9)
+
+
+def test_the_peak_picks_purity_follows_the_spectrums_own_offset():
+    """Of five spectra in one injection, one whose peaks sit 20 ppm off the others' (beyond
+    the searched fit's reach about the injection's median, +-3 ppm here) still reads pure: its
+    own offset is where its peaks are."""
+    more = []
+    for k, shift in enumerate((0.0, 0.0, 0.0, 0.0, 20.0)):
+        mz, y, _ = envelope(3.0, 1e5, shift)
+        more.append(Spectrum(mz, y, ENTRY, 60.0, 1, data_id=0, spectrum_id=f"p:t{k}"))
+    s = run_set(labelled=(), more=more)
+    b = pick_spectra(s, PickerConfig(), workers=1)
+    assert b.purity[-1] > 0.98
+    searched = pick_spectra(s, CFG, workers=1)
+    assert abs(searched.fit_offset_ppm[-1]) < 5  # the searched fit stops short of its peaks
+
+
+def test_a_peak_run_records_the_purity_and_judges_it(tmp_path):
+    from hxex.pipeline import RunConfig, run
+    from hxex.report.notebook import load_results
+    from hxex.report.tables import spectra_table
+
+    result = run(run_set(labelled=((3.0, 0.0), (5.0, 0.0))),
+                 RunConfig(picker=PickerConfig(), bootstrap=None), out=tmp_path / "b")
+    assert not result.peak_measure.fitted and result.peak_measure.shape is not None
+    with open_bundle(tmp_path / "b") as b:
+        assert b.peak_measure().shape is not None
+        binned = b.binned()
+        assert np.isfinite(binned.purity).all() and np.isnan(binned.fit_offset_ppm).all()
+    table = spectra_table(load_results(tmp_path / "b"))
+    assert np.isfinite(table["purity"]).all() and np.isnan(table["fit_offset_ppm"]).all()
+    assert np.array_equal(result.quality.low_purity,
+                          result.binned.purity[result.kept] < result.config.quality.min_purity)

@@ -392,9 +392,10 @@ def spectra_table(results: Results, rows=None, *, analysis=None,
     (``screen_*``, :mod:`hxex.picking.screen`; empty where not assessed) and the m/z check of
     the spectrum's series (``envelope_offset_ppm``, ``envelope_offset_limit_ppm``,
     ``window_shift_ppm``, :mod:`hxex.picking.mz_check`; the first two empty where not
-    assessed, the last 0 except in bundles picked with the former ``recentre``); with ``pick =
-    "profile_fit"``, the profile fit's ``fit_offset_ppm``, ``purity`` and ``stray_share``
-    (:mod:`hxex.picking.profile`; empty for a spectrum that kept the pick); and the
+    assessed, the last 0 except in bundles picked with the former ``recentre``); when a
+    profile fit read the purity, its ``fit_offset_ppm``, ``purity`` and ``stray_share``
+    (:mod:`hxex.picking.profile`; ``fit_offset_ppm`` empty with ``pick = "peak"``, whose bins
+    are the pick's, and all three empty for a spectrum the fit does not read); and the
     spectrum's own m/z check (``spectrum_offset_ppm``, its offset against its injection's
     median, and ``spectrum_offset_limit_ppm``, :func:`hxex.quality.spectrum_mz_offsets`; empty
     where not assessed); ``same_measurement_as``, the other spectra that are the same
@@ -513,8 +514,9 @@ def _screen_columns(results: Results, picked=None) -> dict[str, np.ndarray]:
     m = len(ids)
     b = results.binned
     names = (*SCREEN_SCORES, *MZ_CHECK_COLUMNS)
-    if b is not None and np.isfinite(np.asarray(b.fit_offset_ppm, dtype=np.float64)).any():
-        names = (*names, *PROFILE_COLUMNS)  # picked with pick = "profile_fit"
+    if b is not None and b.purity is not None and np.isfinite(
+            np.asarray(b.purity, dtype=np.float64)).any():
+        names = (*names, *PROFILE_COLUMNS)  # a profile fit read the purity (any pick)
     if b is None:
         return {name: np.full(m, np.nan) for name in names}
     index = _binned_index(b, ids)

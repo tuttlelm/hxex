@@ -211,7 +211,10 @@ its peak's area over that of a Gaussian of the run's width and unit height; a bi
 profile point where its peak reaches half height reads 0. Recorded per spectrum:
 `fit_offset_ppm`, `purity` (the bins' share of the profile within `FOOTPRINT_WIDTHS` = 1 peak width of each bin whose fitted peak reaches 5 % of the tallest bin's, weighted by the bins' curve; the smaller of curve and profile), `stray_share` (the strays' share of the region). Fragments, ion types other than M, series with their own
 envelopes, and centroided spectra keep the pick; the screens and the m/z check measure the
-pick, as without the fit.
+pick, as without the fit. With `pick = "peak"` the same spectra are fitted once at their own
+offset (no search; the injection's median where a spectrum has none) for `purity` and
+`stray_share` only; the bins stay the pick's and `fit_offset_ppm` NaN. The run's peak shape is
+measured from its undeuterated controls in profile mode whatever the pick or `measure`.
 
 **Why not a tighter window.** On the Q-TOF benchmark the undeuterated peaks (M to M+2) sit within
 16 ppm of their predicted m/z within a series (99 %), but deuterated peaks scatter +/- 20 to 40 ppm

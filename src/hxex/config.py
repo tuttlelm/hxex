@@ -2154,9 +2154,9 @@ _COMMENTS: dict[str, str] = {
                                       "where its injection puts the peptides than this many "
                                       "times the run's scatter for spectra of its brightness "
                                       "(peptide ions only; false: off)",
-    "run.quality.min_purity": "low_purity: a spectrum picked with pick = \"profile_fit\" whose "
-                              "purity (the share of the profile near its peaks that the "
-                              "peptide accounts for) is below this (false: off)",
+    "run.quality.min_purity": "low_purity: a spectrum whose purity (the share of the profile "
+                              "near its peaks that the peptide accounts for) is below this "
+                              "(false: off)",
     "run.quality.min_signal_to_noise": "below_noise: a fragment spectrum fitted through the "
                                        "per-scan cut whose tallest peak, in its largest scan, is "
                                        "below this times that scan's recorded noise: too dim for "

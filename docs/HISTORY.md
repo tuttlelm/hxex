@@ -11599,3 +11599,56 @@ CSVs or mzML if wanted.
     for about two seconds, as the project file's writes were (`hxex.io._files.replace_file`,
     `remove_file`; `project_edit.replace_file` is that function). Folder moves (`--keep-previous`)
     keep their own message. Test: tests/test_bundle.py (a refused replacement written at last).
+
+436. **Purity with the usual pick** (2026-11-22; owner: "yes" to own-offset purity for peak
+    runs after the measurement below). `pick = "profile_fit"` (21-45 ms a spectrum on one core,
+    against ~1.7 ms for the pick) is too slow to be the default, so item 434's `low_purity` existed
+    only for opt-in runs. Measured on the four datasets of item 434 (stored spectra, the run's
+    peak shape measured as the profile fit does), the profile fit at ONE offset, no search: about
+    3-5 ms a spectrum. At the injection's median offset: Spearman 0.78-0.96 with the searched
+    fit's purity, flags a superset (0.3-6 % extra, between clean and bad by the replicates). At the
+    spectrum's own offset (the intensity-weighted median of its pick's bright apexes, which the
+    profile fit already computes): Spearman 0.93-0.98; the spectra it puts below 0.7 that no other
+    check marks are as far from their replicates as the searched fit's (benchmark median / q90
+    0.062/0.60 vs 0.082/0.61 D per amide at K = 1; Orbitrap 0.008/0.10 vs 0.009/0.09; pooled
+    0.140/0.47 vs 0.134/0.47; unflagged 0.004-0.005/0.013-0.026); it misses 18-30 % of the
+    searched fit's flags (benchmark 13 uncaught, pooled 156: bad; Orbitrap 90: moderate): where
+    another species' peaks are the tallest, the own offset follows them.
+    Found on the way: every one of the tutorial's 48 profile-fit `low_purity` flags (item 434) is
+    one ion, peptide 13-24 at 2+ (all three samples, every role and time). Its spectra are another
+    listed ion's: peptide 55-67 at 2+ sits 20.6 ppm lower (0.015 m/z), unresolved on the Q-TOF,
+    and the two series' centroids agree within 0.06 D at every time; the 13-24 spectra sit at
+    -20 ppm, on 55-67's position, beyond the search (+-9.4 ppm), so the fit stops at the search's
+    edge and reads low purity. The flags are right. In the benchmark's raw files the same 2+ ion
+    sits at its own m/z (-3 to +6 ppm), so it is the tutorial export that took the other ion's
+    spectrum. `off_mz` flags the series in two samples; the third (WT) escapes narrowly (-21.2
+    ppm against a limit of 22.6). Not saturation (brighter tutorial spectra drift +3 to +5 ppm,
+    not low). The own-offset purity below reads these spectra as pure: the other ion's peaks are
+    the only ones there. Measured whether the search should reach the own offset (arms: the own
+    offset tried as well, or the grid centred on it): it always fits better, but the values do
+    not improve (the spectra beyond the search are already far from their replicates on the
+    benchmark, Orbitrap and pooled data; medians equal, tails worse), and the flags it would
+    remove are real there too (benchmark 86, Orbitrap 339, pooled 405 spectra, replicate
+    deviation 0.04-0.13 vs 0.006-0.015 unflagged), even when gated on the values agreeing. The
+    search stays as built (owner, 2026-11-22).
+    BUILT: with `pick = "peak"` and the run's peak shape measured, `pick_spectra` fits every
+    spectrum the profile fit would read (peptide ions, ion type M, natural clusters, profile
+    mode) once at its own offset (the injection's median where it has none), seeded with the
+    run's pick, and keeps only `purity` and `stray_share`; the bins, peak m/z and
+    `fit_offset_ppm` (NaN) stay the pick's, and `low_purity` judges the purity as before.
+    `choose_measure` measures the peak shape from the undeuterated controls in profile mode
+    whatever the pick or `measure` (with `measure = "height"` set it no longer returns without
+    measuring: the measure stays heights, reason "set"); no shape (centroided data, no
+    undeuterated control), no purity. spectra.csv has `fit_offset_ppm`, `purity`,
+    `stray_share` whenever a purity was read. The picking check tab stays for `profile_fit`
+    results only. Built check (hxex_private/analysis_examples/purity_fixed, `*_built.txt`): bins
+    identical to a pick without the purity pass on all four datasets; purity equal to the
+    study's own-offset arm (area seed) on the three area-picked datasets, Spearman 0.994 on the
+    height-picked Orbitrap (flags 1,245 vs 1,297, 1,188 both); picking 7 -> 12 s tutorial,
+    26 -> 43 s benchmark, 27 -> 48 s Orbitrap, 25 -> 48 s pooled (8 workers). The picking code
+    changed, so every bundle picks again on its next run (item 430's fingerprint). Guide
+    picking-window.md "Purity with the usual pick", outputs.md; flags.md, settings.md
+    regenerated; BUNDLE.md, PEAK_PICKING.md, PLAN 33 step 7. Tests: test_profile_fit.py (bins
+    kept, purity read, own offset, a peak run records and judges it), test_measure.py,
+    test_report.py. Private records: hxex_private/analysis_examples/purity_fixed and
+    profile_search (READMEs).

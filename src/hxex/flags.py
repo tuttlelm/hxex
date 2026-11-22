@@ -166,16 +166,19 @@ _add("spectrum_off_mz", "quality", "spectrum", SPECTRA_FLAGS,
      "Look at the spectrum and its elution trace; compare it with its replicates.",
      "picking-window.md#one-spectrum-off-its-injections-mz")
 _add("low_purity", "quality", "spectrum", SPECTRA_FLAGS,
-     "Other species' peaks sit on or beside this peptide's: the profile fit's purity is low.",
+     "Other species' peaks sit on or beside this peptide's: the spectrum's purity is low.",
      FLAG_ONLY,
-     "Set when a spectrum picked with `pick = \"profile_fit\"` has a purity below "
-     "{run.quality.min_purity} (the share of the profile within one peak width of the "
-     "peptide's peaks that its fitted peaks account for). Clean undeuterated controls read "
-     "0.85 or more; spectra below 0.7 that no other check marks were far from their "
-     "replicates and charge states. Never set with `pick = \"peak\"` (no purity).",
-     "Open the spectrum's picking check tab: the orange dashed peaks are the other species'. "
-     "Compare the value with its replicates and other charge states.",
-     "picking-window.md#fitting-the-profile-instead-opt-in")
+     "Set when a spectrum's purity is below {run.quality.min_purity} (the share of the profile "
+     "within one peak width of the peptide's peaks that its fitted peaks account for; with the "
+     "usual pick from one fit at the spectrum's own m/z shift, with `pick = \"profile_fit\"` "
+     "from the profile fit). Clean undeuterated controls read 0.85 or more; spectra below 0.7 "
+     "that no other check marks were far from their replicates and charge states. Never set "
+     "without a purity: fragments, other ion types, centroided spectra, or a run without "
+     "undeuterated controls in profile mode.",
+     "Compare the value with its replicates and other charge states. With `pick = "
+     "\"profile_fit\"`, open the spectrum's picking check tab: the orange dashed peaks are the "
+     "other species'.",
+     "picking-window.md#purity-with-the-usual-pick")
 _add("rt_found", "quality", "series, on each of its spectra", SPECTRA_FLAGS,
      "The series was read at the retention time found for its exact m/z, not the peptide "
      "table's.",
