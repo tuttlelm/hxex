@@ -142,7 +142,7 @@ stages         read: done
                population test: out of date (after the fit)
                correction and flags: out of date ([run.controls] fulldeut_at: 20 h, was unset (which spectra are controls))
                bootstrap: not done (stopped partway: hxex run continues it)
-hxex run       takes the stored spectra, keeps the picking, measures the per-bin noise again, keeps the fits, fits the K missing (k_max 3), makes the population test again, makes the bootstrap (it stopped partway), works out the correction and the quality flags again
+hxex run       reads spectra stored in results, keeps peak picking, estimates noise, keeps fits, fits missing K (k_max 3), runs population test, finishes bootstrap (it stopped partway), applies back-exchange correction and updates quality flags
 ```
 
 Each stage is `done`, `out of date` (with what changed: a setting with its value now and

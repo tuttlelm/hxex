@@ -860,13 +860,15 @@ def _format_hint(project) -> str:
 EDITED_NOTE = "changed since hxex wrote"  # in output_lines: a folder the commands now refuse
 
 
-def _edited_note(folder: Path) -> str:
+def _edited_note(folder: Path, edited: list[str] | None = None) -> str:
     """``; 2 files changed since hxex wrote them (spectra.csv, uptake.csv): ...`` for a folder
-    holding files hxex wrote that were changed since (the commands refuse to write it again:
-    :func:`hxex.io.outputs.edited_refusal`); "" when none was."""
-    from .io import edited_outputs
+    holding files hxex wrote that were changed since (``edited``, default looked up; the
+    commands refuse to write it again: :func:`hxex.io.outputs.edited_refusal`); "" when none
+    was."""
+    if edited is None:
+        from .io import edited_outputs
 
-    edited = edited_outputs(folder)
+        edited = edited_outputs(folder)
     if not edited:
         return ""
     one = len(edited) == 1
@@ -877,12 +879,11 @@ def _edited_note(folder: Path) -> str:
 
 
 def output_lines(project) -> list[str]:
-    """What ``hxex check`` says of the project's output folders: which exist, which command
-    writes each again, whether each was made from the results in the bundle now, and the files
-    hxex wrote there that were changed since (:data:`EDITED_NOTE`; the window's Run question
-    shows those lines too)."""
-    from .io import holds_output, made_from
-    from .io.bundle import analysis_folder_name, analysis_states, bundle_manifest
+    """What ``hxex check`` says of the project's output folders (:func:`hxex.stages.
+    output_states`): which exist, which command writes each again, whether each was made from
+    the results in the bundle now, and the files hxex wrote there that were changed since
+    (:data:`EDITED_NOTE`)."""
+    from .stages import NOT_DONE, output_states
 
     out = project.output
     bundle = out.bundle
@@ -892,50 +893,15 @@ def output_lines(project) -> list[str]:
     def writes(command: str) -> str:
         return f"({command} {'write' if ' and ' in command else 'writes'} it)"
 
-    created = (bundle_manifest(bundle) or {}).get("created", "") if bundle.exists() else ""
     lines = []
     if bundle.exists():
         lines.append(f"{bundle.name} exists {writes('hxex run')}")
-    tables = _beside(bundle, out.tables, "_tables") if out.tables is not False else None
-    for folder, command in ((tables, "hxex run and hxex report"),
-                            (bundle.with_name(bundle.name + "_figures"),
-                             "hxex report --figures")):
-        if folder is None or not holds_output(folder):
+    for state in output_states(project):
+        if state.state == NOT_DONE:
             continue
-        stamp = (made_from(folder) or {}).get("")
-        state = ("left from a bundle that is gone" if not bundle.exists()
-                 else "made from results not recorded" if not stamp
-                 else "up to date" if stamp == created else "made from earlier results")
-        lines.append(f"{folder.name}: {state} {writes(command)}{_edited_note(folder)}")
-    analysis = project.analysis  # none: hxex analyse uses the default settings
-    refs = [r for r in (analysis.analysis_names if analysis is not None else ()) or ("",)]
-    every = "all" in refs  # every sample in turn: each of the bundle's analysis folders
-    if analysis is not None and analysis.out:
-        wanted = [Path(analysis.out)]
-    elif analysis is not None and analysis.runs:  # as hxex analyse names it: beside the first
-        first = Path(next(iter(analysis.runs.values())))
-        wanted = [first.with_name(analysis_folder_name("runs", r)) for r in refs if r != "all"]
-    else:
-        wanted = [bundle.with_name(analysis_folder_name(bundle.name, r))
-                  for r in refs if r != "all"]
-    folders = dict(analysis_states(bundle))
-    for one in wanted:
-        if analysis is not None and analysis.runs and not analysis.out and holds_output(one):
-            # an analysis of several runs records each run's results by its name
-            made = made_from(one) or {}
-            stamps = {name: (bundle_manifest(Path(p)) or {}).get("created", "")
-                      for name, p in analysis.runs.items()}
-            folders[one] = ("" if any(not made.get(n) for n in stamps) else None
-                            if all(made[n] == c for n, c in stamps.items()) else "earlier")
-        elif one not in folders and holds_output(one):
-            folders[one] = ""
-    analysed = {w.resolve() for w in wanted}
-    for folder, state in sorted(folders.items()):
-        text = ("up to date" if state is None else "made from earlier results" if state
-                else "made from results not recorded")
-        if every or folder.resolve() in analysed:
-            text += f" {writes('hxex analyse')}"
-        lines.append(f"{folder.name}: {text}{_edited_note(folder)}")
+        command = f" {writes(state.command)}" if state.command else ""
+        lines.append(f"{state.folder.name}: {state.text}{command}"
+                     f"{_edited_note(state.folder, state.edited)}")
     if not lines:
         return [f"none yet: hxex run writes {bundle.name}"]
     # said once for the block

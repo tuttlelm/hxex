@@ -3,7 +3,7 @@
 (owner, 2026-11-16).
 
 A run that updates a bundle (``hxex run`` on a project with results, or ``--keep-previous``; the
-window's Run, Bring up to date) after a change that does not touch the read, such as a new preset,
+window's Run (update)) after a change that does not touch the read, such as a new preset,
 would read every file again to get the spectra the bundle already holds. A fresh read records
 its *read plan* (:func:`read_plan`) with the spectra: the fingerprint of the readers' code, the
 ``[input]`` settings that decide the read, what they give before any file is opened (the

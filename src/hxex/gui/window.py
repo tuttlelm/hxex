@@ -273,6 +273,13 @@ class MainWindow(QMainWindow):
         self.run_page.show_setting.connect(self.show_setting)
         self.project_page.file_changed.connect(self.run_page.show_device)
         self.project_page.file_changed.connect(self._project_file_changed)
+        # where the results stand follows every change of what it is worked out from (owner,
+        # 2026-11-21): the project file, the review table, a review decision (below), the Run
+        # tab opened (a data file changed outside the window)
+        self.project_page.file_changed.connect(lambda: self.run_page.stage_row.refresh())
+        from ..io.identity import keep_checksums
+
+        keep_checksums(True)  # checked again after every edit: a file's checksum once
         self._view_settings: dict | None = None  # the [figures] and [review] the results have
         self._analysis_text: dict | None = None  # the [analysis] the tree's 'left out' follows
         # the review table as the results shown read it (gui.review.table_stamp)
@@ -292,6 +299,7 @@ class MainWindow(QMainWindow):
         # the sequence view's coverage follows the review (a rejected spectrum's peptide may
         # leave a residue uncovered)
         self.results_page.review.decided.connect(lambda _rows: self._show_coverage())
+        self.results_page.review.decided.connect(lambda _rows: self.run_page.stage_row.refresh())
         # settings that list samples offer the samples of the results open
         self.project_page.editor.sample_names = self.sample_names
         self.tabs = QTabWidget()
@@ -312,6 +320,12 @@ class MainWindow(QMainWindow):
         self.handler = MessagesHandler()
         self.handler.signal.line.connect(self._message)
         logging.getLogger("hxex").addHandler(self.handler)
+        # the stage row's checks read the bundle again and again: their log lines (an old
+        # bundle's notes) stay out of the pane and the terminal
+        from .stage_row import keep_quiet
+
+        for handler in (self.handler, *logging.getLogger().handlers):
+            keep_quiet(handler)
         # the pane shows INFO lines: the hxex logger's level is lowered for the window's life
         # and given back when it closes (a Python session that opened a window kept the level
         # afterwards: audit of 2026-11-15, A-7)
@@ -336,6 +350,16 @@ class MainWindow(QMainWindow):
                                       "ends"))
         self.replacing.hide()
         self.statusBar().addPermanentWidget(self.replacing)
+        # the results out of date, seen from every tab (owner, 2026-11-21): opens the Run tab
+        self.out_of_date = QToolButton()
+        self.out_of_date.setAutoRaise(True)
+        self.out_of_date.setToolTip(tip("the results are not up to date with the project file: "
+                                        "click to see where they stand in the Run tab"))
+        self.out_of_date.clicked.connect(
+            lambda: self.tabs.setCurrentIndex(WORKSPACES.index("run")))
+        self.out_of_date.hide()
+        self.statusBar().addPermanentWidget(self.out_of_date)
+        self.run_page.stage_row.changed.connect(self._show_out_of_date)
         self.run_page.activity.connect(self._run_activity)
         self.run_page.ended.connect(self._run_ended)
         self.tabs.currentChanged.connect(self._tab_opened)
@@ -357,6 +381,16 @@ class MainWindow(QMainWindow):
             self.running.setText(f"running: {text}")
         self.running.setVisible(bool(text))
         self._run_notice()
+        self._show_out_of_date()
+
+    def _show_out_of_date(self) -> None:
+        """The status bar's line while the results are out of date (none while a command
+        runs, or with the Run tab open: the row is in view)."""
+        text = self.run_page.stage_row.summary()
+        show = (bool(text) and not self.run_page.runner.running
+                and self.tabs.currentIndex() != WORKSPACES.index("run"))
+        self.out_of_date.setText(f"{text}: Run tab" if text else "")
+        self.out_of_date.setVisible(show)
 
     def _run_notice(self) -> None:
         """While a run of the project shown runs, the Results panel and the status
@@ -385,6 +419,8 @@ class MainWindow(QMainWindow):
     def _tab_opened(self, index: int) -> None:
         if index == WORKSPACES.index("run") and not self.run_page.runner.running:
             self._run_tab()
+            self.run_page.stage_row.refresh(now=True)  # a data file changed outside, say
+        self._show_out_of_date()
 
     # --- menus -----------------------------------------------------------------------------
 
@@ -850,6 +886,10 @@ class MainWindow(QMainWindow):
         MB, in a process that makes several windows, such as a test session (audit of
         2026-11-15, M-5). The ``hxex gui`` process makes one window and ends with it."""
         self._loading.drop()  # its done/failed closures held the window
+        self.run_page.stage_row.show_project(None)
+        from ..io.identity import keep_checksums
+
+        keep_checksums(False)
         self._pending_selection = {}
         self.results_page.release()
         self.analysis_page.release()
@@ -1019,6 +1059,7 @@ class MainWindow(QMainWindow):
         stamp = table_stamp(self.project)
         if stamp and stamp[1] is not None and stamp[0] not in self.review_watcher.files():
             self._watch(stamp[0])  # a file replaced is no longer watched
+        self.run_page.stage_row.refresh()
         if not self.project_results or self.loading or stamp == self.results_review_stamp:
             return
         log.info("the review table changed: the results are read again with it")

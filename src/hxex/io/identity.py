@@ -17,7 +17,31 @@ log = logging.getLogger(__name__)
 CHANGE_ACTIONS = ("warn", "error")
 
 
+# the checksums worked out, by file and its size, modification time and inode: kept only where
+# :func:`keep_checksums` turned it on (the window, which asks where the results stand again
+# after every edit; a Thermo .raw file takes about 4 s per GB); None: not kept
+_KEPT: dict[tuple, str] | None = None
+
+
+def keep_checksums(on: bool = True) -> None:
+    """Keep each file's checksum for the process's life (``on``), worked out again only when
+    the file's size, modification time, or inode changes; off: forget them."""
+    global _KEPT
+    _KEPT = {} if on else None
+
+
 def _sha256(path: Path) -> str:
+    kept = _KEPT
+    if kept is not None:
+        stat = path.stat()
+        key = (str(path.resolve()), stat.st_size, stat.st_mtime_ns, stat.st_ino)
+        if key not in kept:
+            kept[key] = _sha256_of(path)
+        return kept[key]
+    return _sha256_of(path)
+
+
+def _sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fh:
         while chunk := fh.read(1 << 24):

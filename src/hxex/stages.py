@@ -207,7 +207,7 @@ class Stage:
 
     @property
     def label(self) -> str:
-        return LABELS[self.name]
+        return LABELS.get(self.name) or OUTPUT_LABELS.get(self.name, self.name)
 
     def text(self) -> str:
         return f"{self.label}: {self.state}" + (f" ({'; '.join(self.causes)})"
@@ -217,12 +217,17 @@ class Stage:
 @dataclass
 class Standing:
     """Where a bundle stands against a project: the ``stages`` in order, ``notes`` (what could
-    not be compared, said once), and ``run``: what ``hxex run`` would do now, in words (empty
-    when there is no project to run)."""
+    not be compared, said once), ``run``: what ``hxex run`` would do now, in words (empty when
+    there is no project to run), and ``plan``, the same by stage."""
 
     stages: list[Stage]
     notes: list[str] = field(default_factory=list)
     run: str = ""
+    # what ``hxex run`` does, part by part: ``(stage, text)``, ``run`` joined (empty as ``run``)
+    plan: list[tuple[str, str]] = field(default_factory=list)
+    # False: worked out without the slow check of the bootstrap at each set's K (the window's
+    # first pass, :func:`standing` with ``slow=False``)
+    complete: bool = True
 
     @property
     def up_to_date(self) -> bool:
@@ -232,6 +237,10 @@ class Standing:
 
     def __getitem__(self, name: str) -> Stage:
         return next(s for s in self.stages if s.name == name)
+
+    def plan_of(self, name: str) -> list[str]:
+        """What ``hxex run`` does for the stage ``name``, in words (none: nothing said)."""
+        return [text for stage, text in self.plan if stage == name]
 
 
 def _wanted(project) -> dict[str, bool]:
@@ -244,10 +253,12 @@ def _wanted(project) -> dict[str, bool]:
             "bootstrap": run.bootstrap is not None}
 
 
-def standing(project, bundle: str | Path | None) -> Standing:
+def standing(project, bundle: str | Path | None, *, slow: bool = True) -> Standing:
     """Where the bundle of ``project`` (``bundle``, default its ``[output] bundle``; ``project``
     None: the bundle alone, judged only on the code that made it) stands, stage by stage (see
-    the module)."""
+    the module). ``slow`` False leaves out the one slow check, of the spectra of the population
+    test's sets without a bootstrap at their set's K (it works out the species uptake: 5 to 18 s
+    on real projects; the window shows the rest first): ``complete`` is then False."""
     from .io.bundle import BundleError, bundle_manifest
 
     if bundle is None and project is not None:
@@ -263,7 +274,7 @@ def standing(project, bundle: str | Path | None) -> Standing:
         return Standing([Stage(s, NOT_DONE if wanted[s] else OFF,
                                ["no results yet"] if wanted[s] else [])
                          for s in STAGES], run="does every stage" if project is not None
-                        else "")
+                        else "", plan=[("", "does every stage")] if project is not None else [])
     rec = record(manifest)
     causes: dict[str, list[str]] = {s: [] for s in STAGES}
     notes: list[str] = []
@@ -287,7 +298,7 @@ def standing(project, bundle: str | Path | None) -> Standing:
             _input_causes(project, Path(bundle), manifest, causes, notes, facts)
         _review_causes(project, Path(bundle), causes)
         if rec["bootstrap"]["state"] == "done" and wanted["bootstrap"]:
-            _bootstrap_causes(project, Path(bundle), causes)
+            _bootstrap_causes(project, Path(bundle), causes, slow=slow)
     stages = []
     for s in STAGES:
         state = rec[s]["state"]
@@ -319,9 +330,10 @@ def standing(project, bundle: str | Path | None) -> Standing:
                 st.state, st.causes = OUT_OF_DATE, [f"after the {up.label}"]
                 break
             before = AFTER[before]
-    out = Standing(stages, notes)
+    out = Standing(stages, notes, complete=slow or project is None)
     if project is not None:
-        out.run = run_plan(project, manifest, out, facts)
+        out.plan = plan_parts(project, manifest, out, facts)
+        out.run = ", ".join(text for _, text in out.plan)
     return out
 
 
@@ -443,7 +455,7 @@ def _input_causes(project, bundle: Path, manifest, causes, notes, facts) -> None
     source = configs.get("spectra_source") or {}
     facts["spectra_stored"] = "spectra.parquet" in (manifest.get("files") or {})
     if inp.spectra is not None:
-        facts["read"] = f"takes the spectra stored in {Path(inp.spectra).name}"
+        facts["read"] = f"reads spectra stored in {Path(inp.spectra).name}"
     else:
         stored = source.get(PLAN_KEY) if isinstance(source, Mapping) else None
         if stored is None:
@@ -545,10 +557,11 @@ def _rejected_controls_cause(project, bundle: Path, causes) -> None:
         causes["noise"].append(" and ".join(parts))
 
 
-def _bootstrap_causes(project, bundle: Path, causes) -> None:
+def _bootstrap_causes(project, bundle: Path, causes, *, slow: bool = True) -> None:
     """Causes of the bootstrap: spectra whose K a review chooses without a bootstrap at it, and
-    spectra of the population test's sets without one at their set's K (``[run.bootstrap]
-    set_k``, with the project's ``[analysis]`` filters): the run adds both."""
+    (``slow``) spectra of the population test's sets without one at their set's K
+    (``[run.bootstrap] set_k``, with the project's ``[analysis]`` filters): the run adds
+    both."""
     from .io.bundle import BundleError, open_bundle
     from .pipeline import _bundle_set_k_missing, _missing_choices, _review_choices
     from .review_table import merge_choices, table_choices
@@ -568,7 +581,7 @@ def _bootstrap_causes(project, bundle: Path, causes) -> None:
             if n:
                 causes["bootstrap"].append(f"{n} spectr{'a' if n > 1 else 'um'} shown at a K "
                                            "chosen in the review without a bootstrap there")
-            if project.run.bootstrap is not None and _bundle_set_k_missing(
+            if slow and project.run.bootstrap is not None and _bundle_set_k_missing(
                     b, project.run.bootstrap, held, project.analysis):
                 causes["bootstrap"].append("spectra of the population test's sets without a "
                                            "bootstrap at their set's K ([run.bootstrap] set_k)")
@@ -576,77 +589,89 @@ def _bootstrap_causes(project, bundle: Path, causes) -> None:
         log.debug("bootstrap causes not worked out: %s", exc)
 
 def run_plan(project, manifest: Mapping, standing_: Standing, facts: Mapping) -> str:
-    """What ``hxex run`` does now to bring the results up to date, stage by stage, as it
-    decides: the stored spectra are taken when the read is unchanged (HISTORY 397), the stored
-    picking when the spectra are taken and the picking, its settings, and the control roles are
-    unchanged, the fits of the spectra whose input is unchanged when the fitting code and the
-    ``[run.fit]`` settings but ``k_max`` are (:mod:`hxex.reuse`; the per-bin noise must not
-    move either), with the K missing fitted, the population test made again when its settings
-    or the fits changed, and the bootstrap made again or completed; the noise and the
+    """What ``hxex run`` does now, in words (:func:`plan_parts` joined)."""
+    return ", ".join(text for _, text in plan_parts(project, manifest, standing_, facts))
+
+
+def plan_parts(project, manifest: Mapping, standing_: Standing,
+               facts: Mapping) -> list[tuple[str, str]]:
+    """``(stage, text)``: what ``hxex run`` does now to bring the results up to date, stage by
+    stage, as it decides: the stored spectra are taken when the read is unchanged (HISTORY 397),
+    the stored picking when the spectra are taken and the picking, its settings, and the control
+    roles are unchanged, the fits of the spectra whose input is unchanged when the fitting code
+    and the ``[run.fit]`` settings but ``k_max`` are (:mod:`hxex.reuse`; the per-bin noise must
+    not move either), with the K missing fitted, the population test made again when its
+    settings or the fits changed, and the bootstrap made again or completed; the noise and the
     correction are always worked out again."""
     if project.input is None:
-        return ""
-    parts = []
+        return []
+    parts: list[tuple[str, str]] = []
+
+    def say(stage: str, text: str) -> None:
+        parts.append((stage, text))
+
     read = standing_["read"]
     if "read" in facts:
-        parts.append(facts["read"])
+        say("read", facts["read"])
         taken = True
     elif (read.state == DONE and facts.get("spectra_stored")
           and not facts.get("read_unknown")):
-        parts.append("takes the stored spectra")
+        say("read", f"reads spectra stored in {Path(project.output.bundle).name}")
         taken = True
     else:
-        parts.append("reads the input again")
+        say("read", "reads the data files")
         taken = False
     pick = standing_["pick"]
     if (taken and pick.state == DONE and not facts.get("roles_changed")
             and recorded_code(manifest, "pick") is not None):
-        parts.append("keeps the picking")
+        say("pick", "keeps peak picking")
     else:
-        parts.append("picks again")
+        say("pick", "peak picks")
     if standing_["noise"].state != OFF:
-        parts.append("measures the per-bin noise again")
+        say("noise", "estimates noise")
     changed = set(facts.get("settings_changed") or ())
     engine_cause = bool(facts.get("engine_differs"))
     stopped = {st.name for st in standing_.stages
                if st.state == NOT_DONE and "stopped partway" in " ".join(st.causes)}
     testing = standing_["population_test"].state != OFF
     if facts.get("refit") or engine_cause:
-        why = ("other fitting code" if engine_cause else "[run.fit] changed")
-        parts.append(f"fits every spectrum again ({why})")
+        say("fit", "fits all spectra")  # why: in the stages' causes
+        if testing:
+            say("population_test", "runs population test")
+        if standing_["bootstrap"].state != OFF:
+            say("bootstrap", "runs bootstrap")
     else:
         own = [c for c in standing_["fit"].causes
                if not c.startswith(("[run.", "after the"))]  # exclusions, a review K
         refit = (standing_["read"].state != DONE or standing_["pick"].state != DONE
                  or bool(own))
-        parts.append("fits the spectra whose input changed, keeps the others' fits" if refit
-                     else "keeps the fits")
+        text = "fits changed spectra, keeps other fits" if refit else "keeps fits"
         if standing_["noise"].state != OFF and standing_["noise"].state != DONE:
             from .reuse import CURVE_SHARE
 
-            parts[-1] += (f" (if the per-bin noise's b1 moves by less than "
-                          f"{100 * CURVE_SHARE:g} %)")
+            text += f" (if the noise's b1 moves by less than {100 * CURVE_SHARE:g} %)"
+        say("fit", text)
         if "fit" in changed:
-            parts.append(f"fits the K missing (k_max {project.run.fit.k_max})")
+            say("fit", f"fits missing K (k_max {project.run.fit.k_max})")
         if testing and (standing_["population_test"].state != DONE or "fit" in changed):
-            parts.append("makes the population test again")
+            say("population_test", "runs population test")
         elif testing:
-            parts.append("keeps the population test")
+            say("population_test", "keeps population test")
         if standing_["bootstrap"].state != OFF:
             if "bootstrap" in stopped:
-                parts.append("makes the bootstrap (it stopped partway)")
+                say("bootstrap", "finishes bootstrap (it stopped partway)")
             elif facts.get("rebootstrap") or standing_["bootstrap"].causes == [
                     "the results have none"]:
-                parts.append("makes the bootstrap again")
+                say("bootstrap", "runs bootstrap")
             elif standing_["bootstrap"].causes == ["after the fit"]:
-                parts.append("bootstraps the spectra whose fits or K changed, keeps the rest")
+                say("bootstrap", "runs bootstrap for changed spectra, keeps the rest")
             elif standing_["bootstrap"].state != DONE:
-                parts.append("adds what the bootstrap lacks and keeps the rest")
+                say("bootstrap", "adds missing bootstrap, keeps the rest")
             else:
-                parts.append("keeps the bootstrap")
+                say("bootstrap", "keeps bootstrap")
     if standing_["correction"].state != OFF:
-        parts.append("works out the correction and the quality flags again")
-    return ", ".join(parts)
+        say("correction", "applies back-exchange correction and updates quality flags")
+    return parts
 
 
 def lines(st: Standing, *, run: bool = True) -> list[tuple[str, str]]:
@@ -658,3 +683,118 @@ def lines(st: Standing, *, run: bool = True) -> list[tuple[str, str]]:
         rows.append(("hxex run", "nothing to do: the results are up to date"
                      if st.up_to_date else st.run))
     return rows
+
+
+# --- the outputs made from the results ---------------------------------------------------------
+
+OUTPUT_KINDS = ("tables", "figures", "analysis")
+OUTPUT_LABELS = {"tables": "tables", "figures": "figures", "analysis": "analysis folders"}
+
+
+@dataclass
+class OutputState:
+    """One output folder made from the results: its ``kind`` (``tables``, ``figures``,
+    ``analysis``), ``folder``, ``state`` (:data:`DONE`: made from the results there now;
+    :data:`OUT_OF_DATE`; :data:`NOT_DONE`: not written yet), ``text`` (the state in ``hxex
+    check``'s words), ``command`` (the command that writes it again; None for an analysis folder
+    the project's ``[analysis]`` does not name), and ``edited``: the files hxex wrote there that
+    were changed since (the commands refuse to write the folder again)."""
+
+    kind: str
+    folder: Path
+    state: str
+    text: str
+    command: str | None
+    edited: list[str] = field(default_factory=list)
+
+
+def output_states(project) -> list[OutputState]:
+    """The output folders of ``project`` made from its results: the tables (unless ``[output]
+    tables = false``), the figures (when there are some), and the analysis folders (each one the
+    bundle has, and those its ``[analysis]`` names, written or not), with whether each was made
+    from the results in the bundle now. ``hxex check``'s ``outputs`` block and the window's stage
+    row show them."""
+    from .io import edited_outputs, holds_output, made_from
+    from .io.bundle import analysis_folder_name, analysis_states, bundle_manifest
+
+    out = project.output
+    bundle = out.bundle
+    if bundle is None:
+        return []
+    exists = bundle.exists()
+    created = (bundle_manifest(bundle) or {}).get("created", "") if exists else ""
+    states = []
+    tables = out.tables_dir() if out.tables is not False else None
+    for kind, folder, command in (("tables", tables, "hxex run and hxex report"),
+                                  ("figures", bundle.with_name(bundle.name + "_figures"),
+                                   "hxex report --figures")):
+        if folder is None:
+            continue
+        if not holds_output(folder):
+            if kind == "tables":
+                states.append(OutputState(kind, folder, NOT_DONE, "none yet", command))
+            continue
+        stamp = (made_from(folder) or {}).get("")
+        text = ("left from a bundle that is gone" if not exists
+                else "made from results not recorded" if not stamp
+                else "up to date" if stamp == created else "made from earlier results")
+        states.append(OutputState(kind, folder, DONE if text == "up to date" else OUT_OF_DATE,
+                                  text, command, edited_outputs(folder)))
+    analysis = project.analysis  # none: hxex analyse uses the default settings
+    refs = [r for r in (analysis.analysis_names if analysis is not None else ()) or ("",)]
+    every = "all" in refs  # every sample in turn: each of the bundle's analysis folders
+    if analysis is not None and analysis.out:
+        wanted = [Path(analysis.out)]
+    elif analysis is not None and analysis.runs:  # as hxex analyse names it: beside the first
+        first = Path(next(iter(analysis.runs.values())))
+        wanted = [first.with_name(analysis_folder_name("runs", r)) for r in refs if r != "all"]
+    else:
+        wanted = [bundle.with_name(analysis_folder_name(bundle.name, r))
+                  for r in refs if r != "all"]
+    folders: dict[Path, str | None] = dict(analysis_states(bundle))
+    for one in wanted:
+        if analysis is not None and analysis.runs and not analysis.out and holds_output(one):
+            # an analysis of several runs records each run's results by its name
+            made = made_from(one) or {}
+            stamps = {name: (bundle_manifest(Path(p)) or {}).get("created", "")
+                      for name, p in analysis.runs.items()}
+            folders[one] = ("" if any(not made.get(n) for n in stamps) else None
+                            if all(made[n] == c for n, c in stamps.items()) else "earlier")
+        elif one not in folders and holds_output(one):
+            folders[one] = ""
+    analysed = {w.resolve() for w in wanted}
+    for folder, state in sorted(folders.items()):
+        text = ("up to date" if state is None else "made from earlier results" if state
+                else "made from results not recorded")
+        named = every or folder.resolve() in analysed
+        states.append(OutputState("analysis", folder, DONE if state is None else OUT_OF_DATE,
+                                  text, "hxex analyse" if named else None,
+                                  edited_outputs(folder)))
+    if analysis is not None and not every:  # named by [analysis], not written yet
+        held = {f.resolve() for f in folders}
+        states += [OutputState("analysis", w, NOT_DONE, "none yet", "hxex analyse")
+                   for w in wanted if w.resolve() not in held]
+    return states
+
+
+def output_marks(states: list[OutputState]) -> list[Stage]:
+    """One :class:`Stage` per kind of output (the window's stage row): the worst state of its
+    folders (out of date before not done before done), with one cause per folder."""
+    order = {OUT_OF_DATE: 0, NOT_DONE: 1, DONE: 2}
+    marks = []
+    for kind in OUTPUT_KINDS:
+        mine = [s for s in states if s.kind == kind]
+        if not mine:
+            continue
+        worst = min(mine, key=lambda s: order[s.state]).state
+        causes = []
+        for s in mine:
+            cause = f"{s.folder.name}: {s.text}"
+            if s.state != DONE and s.command:
+                cause += f" ({s.command} {'write' if ' and ' in s.command else 'writes'} it)"
+            if s.edited:
+                cause += f"; {len(s.edited)} file(s) changed since hxex wrote them: writing the " \
+                         "folder again is refused until they are moved out"
+            causes.append(cause)
+        marks.append(Stage(kind, worst, causes))
+    return marks

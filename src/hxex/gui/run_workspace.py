@@ -3,9 +3,10 @@
 stages"). Each button runs one command on the project file as a child process
 (:class:`hxex.gui.runner.CommandRun`), shows the command as it would be typed in a terminal,
 its output in a console, and a progress bar; Stop stops it after the current step, and a second
-press aborts. One command runs at a time. Run on a project with results first shows where they
-stand, stage by stage, and what ``hxex run`` would do, and asks: Bring up to date (``hxex
-run``), Start again (``--fresh``), or Cancel (docs/PLAN.md Next steps 40). A run, report or
+press aborts. One command runs at a time. Above them, the stage row (:mod:`hxex.gui.stage_row`)
+shows where the results stand, stage by stage, and what ``hxex run`` would do, with the run
+buttons: Run (or Run (update) when the results are out of date; nothing asked first) and Start
+again… (``--fresh``, after a question; docs/PLAN.md Next steps 40, step 4). A run, report or
 analyse refusing to write over files of an output folder edited by hand offers to keep the
 folder as ``NAME.N`` (``--keep-previous``) and run the command again;
 when a run or report has finished, the window shows the new results.
@@ -46,17 +47,14 @@ from ..hooks import format_duration, format_percent
 from .fonts import fixed_font
 from .logs import LOG_FOLDER, CommandLog, log_name, log_text, project_logs
 from .runner import CommandRun, shown_command
+from .stage_row import StageRow
 from .tips import tip
 
 log = logging.getLogger(__name__)
 
 # (button, command, what it does): the commands a project runs, in the order of a project's life
+# (Run and Start again are on the stage row, :mod:`hxex.gui.stage_row`)
 COMMANDS = (("Check", "check", "check the project file and show what would be read"),
-            ("Run", "run",
-             "read, pick, fit, and bootstrap: the results bundle; with results already there, "
-             "it shows where they stand and brings them up to date: only what your changes "
-             "touch is done again (a stopped bootstrap is finished), and your review decisions "
-             "are kept; or Start again"),
             ("Report", "report", "write the tables again (with the review applied)"),
             ("Analyse", "analyse", "compare the samples: the analysis tables and figures"),
             ("Info", "info", "what the results hold"))
@@ -115,6 +113,19 @@ class RunWorkspace(QWidget):
             row.addWidget(button)
             self.buttons[command] = button
         row.addStretch()
+        # Start again: rarely wanted, so apart at the right end, behind a warning (owner,
+        # 2026-11-21)
+        self.fresh_button = QPushButton("Start again…")
+        self.fresh_button.setToolTip(tip(
+            "hxex run --fresh: read, pick, and fit everything anew, as long as the first run, "
+            "replacing the results (asks first); Run (update) is what you want after a change"))
+        self.fresh_button.clicked.connect(lambda checked=False: self.start_again())
+        row.addWidget(self.fresh_button)
+        # where the results stand, with Run (owner, 2026-11-21)
+        self.stage_row = StageRow(self)
+        self.buttons["run"] = self.stage_row.run_button
+        self.stage_row.run_button.clicked.connect(lambda checked=False: self.run_command("run"))
+        self.stage_row.changed.connect(self._enable)
         self.device = QComboBox()
         self.device.addItems([DEVICE_SETTING, "cpu", "cuda"])
         self.device.setToolTip(tip("where the fits run (Run): the project file's "
@@ -190,6 +201,7 @@ class RunWorkspace(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(self.where)
         layout.addLayout(row)
+        layout.addWidget(self.stage_row)
         layout.addLayout(options)
         layout.addLayout(line)
         layout.addLayout(progress)
@@ -216,28 +228,35 @@ class RunWorkspace(QWidget):
         box.exec()
         return "keep-previous" if box.clickedButton() is keep else None
 
-    def ask_run(self, rows: list[tuple[str, str]], up_to_date: bool) -> str | None:
-        """'update', 'fresh', or None (cancel): Run on a project whose results exist, after
-        showing where they stand (``rows``: the lines of ``hxex check``)."""
+    def ask_fresh(self) -> bool:
+        """Whether to start again, after a warning of what it costs: ``hxex run --fresh`` reads,
+        picks, and fits everything anew and replaces the results (``[output] keep_previous``
+        keeps them as ``NAME.N`` first); what Run (update) would do instead is said beside it."""
+        keep = bool(self.project_values is not None
+                    and self.project_values().get("output.keep_previous") is True)
+        state = self.stage_row.state
+        instead = ("The results are up to date: nothing needs doing." if state is not None
+                   and state.up_to_date else
+                   f"Run (update) would do only what your changes touch: {state.run}."
+                   if state is not None and state.run else
+                   "Run (update) does only what your changes touch.")
         box = QMessageBox(self)
-        box.setWindowTitle("Results already there")
-        text = "\n".join(f"{key:<10} {value}" if key else f"{'':<10} {value}"
-                         for key, value in rows)
-        box.setText("The results are up to date: nothing to do. Start again?" if up_to_date
-                    else "Where the results stand, and what Run does to bring them up to date:")
-        box.setInformativeText(text)
-        box.setStyleSheet("QLabel { font-family: monospace; }")
-        update = None if up_to_date else box.addButton("Bring up to date",
-                                                       QMessageBox.ButtonRole.AcceptRole)
-        fresh = box.addButton("Start again", QMessageBox.ButtonRole.DestructiveRole)
-        fresh.setToolTip(tip("hxex run --fresh: read, pick and fit everything anew"))
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Start again")
+        box.setText("Start again from nothing? Every spectrum is read, picked, and fitted anew, "
+                    "and the bootstrap is made again: this takes as long as the first run "
+                    "(hours on a large project), and the fits that are still up to date are "
+                    "not kept.")
+        box.setInformativeText(
+            ("The results are kept beside the new ones as NAME.N first ([output] "
+             "keep_previous)." if keep else "The results are replaced (your review table and "
+             "the files you added are kept); the tables and analysis folders are then out of "
+             "date until written again.") + "\n\n" + instead)
+        again = box.addButton("Start again", QMessageBox.ButtonRole.DestructiveRole)
         box.addButton(QMessageBox.StandardButton.Cancel)
-        if update is not None:
-            box.setDefaultButton(update)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
         box.exec()
-        clicked = box.clickedButton()
-        return ("update" if update is not None and clicked is update
-                else "fresh" if clicked is fresh else None)
+        return box.clickedButton() is again
 
     def ask_stop_to_close(self) -> bool:
         return QMessageBox.question(
@@ -263,6 +282,8 @@ class RunWorkspace(QWidget):
                            else "No project file open: open or make one in the Project "
                                 "workspace.")
         self.show_device()
+        if changed or self.stage_row.project != path:
+            self.stage_row.show_project(path)
         self._enable()
 
     def show_device(self) -> None:
@@ -314,6 +335,8 @@ class RunWorkspace(QWidget):
         idle = not self.runner.running
         for button in self.buttons.values():
             button.setEnabled(idle and self.project is not None)
+        self.buttons["run"].setEnabled(idle and self.stage_row.run_enabled())
+        self.fresh_button.setEnabled(idle and self.stage_row.fresh_enabled())
         self.history.setEnabled(idle and bool(self._logs))
         self.stop_button.setEnabled(not idle)
 
@@ -331,11 +354,6 @@ class RunWorkspace(QWidget):
     def run_command(self, command: str, extra: tuple[str, ...] = ()) -> None:
         if self.project is None or self.runner.running:
             return
-        if command == "run" and not extra:
-            chosen = self._run_choice()
-            if chosen is None:
-                return
-            extra = chosen
         self._extra = tuple(extra)  # asked again (Keep it as NAME.N) with these options
         self.args = self.arguments(command, extra)
         typed = shown_command(self.args)
@@ -353,35 +371,17 @@ class RunWorkspace(QWidget):
         self._tail: list[str] = []
         self._ran_on = self.project
         self._open_log(typed)
+        self.stage_row.pause(True)  # the results may be replaced: no check until it ends
         self.runner.start(self.args, self.project.parent)
         self._enable()
         self.stop_button.setText("Stop")
         self._tell()
 
-    def _run_choice(self) -> tuple[str, ...] | None:
-        """The options of Run: none when there are no results yet; else, after showing where
-        the results stand (:func:`hxex.stages.standing`), none to bring them up to date,
-        ``--fresh`` to start again, or None (cancelled)."""
-        from ..stages import lines, standing
-
-        try:
-            from ..config import load_project
-
-            project = load_project(self.project, analysis_only=True)
-            bundle = project.output.bundle
-            if bundle is None or not bundle.exists():
-                return ()
-            st = standing(project, bundle)
-            rows = lines(st)
-            from ..cli import EDITED_NOTE, output_lines
-
-            # an output folder with files edited by hand: the run would stop at it
-            rows += [("outputs", line) for line in output_lines(project) if EDITED_NOTE in line]
-        except Exception as exc:  # noqa: BLE001 - hxex run itself reports a project's problems
-            log.info("where the results stand not worked out: %s", exc)
-            return ()
-        choice = self.ask_run(rows, st.up_to_date)
-        return None if choice is None else ("--fresh",) if choice == "fresh" else ()
+    def start_again(self) -> None:
+        """Start again (``hxex run --fresh``), after asking."""
+        if self.project is None or self.runner.running or not self.ask_fresh():
+            return
+        self.run_command("run", ("--fresh",))
 
     def stop(self) -> None:
         sent = self.runner.stop()
@@ -514,6 +514,7 @@ class RunWorkspace(QWidget):
         self.console.appendPlainText(f"[{shown_command(self.args)}: {how}]")
         self.state.setText(f"{command}: {how}")
         self.stop_button.setText("Stop")
+        self.stage_row.pause(False)  # worked out again: the command may have changed them
         self._enable()
         self.activity.emit("")
         self.ended.emit(how)

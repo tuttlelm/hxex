@@ -555,8 +555,8 @@ match; when the table cannot be read (a row edited by hand that the project refu
 status bar says why and the boxes show the window the results hold. **Undo** puts the table (and the project file, after the first save) back as it was
 before the last save; it covers the saves made while these results are shown, and opening
 other results leaves the earlier saves as they are. Saving needs the results opened from
-their project file, and the table opens in **Tables** like the others. The saved windows are used when you bring the results up to date: **Run** on
-the Run tab, then **Bring up to date** (on the command line, `hxex run hxex.toml`). That run reads every file again but fits again only the series whose spectra
+their project file, and the table opens in **Tables** like the others. The saved windows are used when you bring the results up to date: **Run (update)** on
+the Run tab (on the command line, `hxex run hxex.toml`). That run reads every file again but fits again only the series whose spectra
 changed, so it takes a fraction of the first run's time, and your review decisions are kept; each spectrum stays in its series (see [A peptide's own window in one
 file](inputs.md#a-peptides-own-window-in-one-file)). A spectrum's id names the scans it summed,
 so a spectrum with a new window has a new id after the run; your review decisions for it follow
@@ -848,10 +848,44 @@ file), so what you see here is what the command writes.
 
 ## Running the commands
 
-**Run** has a button for each command: **Check**, **Run**, **Report**, **Analyse**, and
-**Info**. Each runs that command on the project file, in the project's folder, exactly as
-`hxex run hxex.toml` would in a terminal: the line above the messages shows the command as you
-would type it. One command runs at a time.
+**Run** has a button for each command: **Check**, **Report**, **Analyse**, and **Info**, with
+**Start again…** apart at the right end of that row and **Run** on the row below them. Each runs that command on the project file,
+in the project's folder, exactly as `hxex run hxex.toml` would in a terminal: the line above the
+messages shows the command as you would type it. One command runs at a time.
+
+Under the buttons, a row shows where the project's results stand, one mark per stage of a run
+(read, pick, noise, fit, population test, correction and flags, bootstrap) and, after a line,
+one for what is made from the results (the tables, the figures when there are some, and the
+analysis folders):
+
+- **✓** done: up to date with the project file;
+- **!** (bold, coloured) out of date: a setting, a data file, a review decision, or *hxex*
+  itself changed since, so the next **Run** does it again;
+- **○** not done: no results yet, or a run stopped part way through it;
+- **–** off: the project does not ask for it (no population test, say).
+
+Hold the mouse over a mark to see why it is out of date ("[run.controls] fulldeut_at: 27 h,
+was FD") and what **Run** will do for it. A stage after one that is out of date is out of date
+too ("after the fit"). The line beside **Run**, under the marks, says what it will do, in the
+same words as the end of `hxex check` ("Run: keeps fits, runs bootstrap"). The row is worked out again whenever the project file, the review
+table, or a review decision changes, when a command ends, and when you open the Run tab (a data
+file changed outside the window, say); on a large project that takes a few seconds, and the
+marks are greyed meanwhile. While the results are out of date, the status bar at the bottom of
+the window says so from every tab (**results out of date (3 stages): Run tab**; click it to
+open the Run tab). When the project file does not load, the row says why instead.
+
+The **Run** button follows the row:
+
+- **Run** when there are no results yet: it does every stage.
+- **Run (update)** when the results are out of date: it brings them up to date, doing again
+  only what your changes touch (`hxex run`), without asking first, since the row shows what it
+  will do. When the results are up to date, **Run** is greyed out.
+
+**Start again…** reads, picks, and fits everything anew (`hxex run --fresh`). You rarely need
+it: it takes as long as the first run and does not keep the fits that are still up to date, so
+it warns you first, saying what **Run (update)** would do instead. The results are replaced (or
+kept beside the new ones as `NAME.N` when `[output] keep_previous` is on); your review table and
+the files you added are kept.
 
 - The messages appear as the command writes them, and the bar shows how far it is, with the
   step it is on and the time left when *hxex* can tell. Beside the bar, **total** counts the
@@ -860,14 +894,9 @@ would type it. One command runs at a time.
   finished is kept, and a bootstrap stopped part way is finished by the next **Run**. Press
   it again (**Abort now**) to end the command at once; one that still does not end is ended by
   the window a few seconds later.
-- When the project already has results, **Run** first shows where they stand, stage by stage,
-  and what it would do to bring them up to date (the lines `hxex check` ends with), and asks:
-  **Bring up to date** (`hxex run`), **Start again** (`hxex run --fresh`: read, pick, and fit
-  everything anew), or **Cancel**. When the results are up to date it says so and offers only
-  **Start again** or **Cancel**.
 - Run the project again after changing anything in it: the peptide table, the elution windows
   saved in the elution tab, the picking or fit settings, the preset, the bootstrap, the
-  population test, or the controls. **Bring up to date** reads your data files again only
+  population test, or the controls. **Run (update)** reads your data files again only
   when something that decides the read changed (otherwise it takes the spectra stored in the
   results: after a change of preset or fit settings, say), and fits again only what the change
   touches, so it usually takes a fraction of the first run's time, and your review decisions
@@ -876,8 +905,8 @@ would type it. One command runs at a time.
   **Analyse** finds a file it wrote before that was changed since (opened and saved in a
   spreadsheet, say), it changes nothing, and the window names the file and asks whether to keep
   that folder under the next free name (`results_tables.1`, ...; for **Run**, the results with
-  their folders) and run the command again (its `--keep-previous`), or cancel. **Run** names
-  such files in its question beforehand too.
+  their folders) and run the command again (its `--keep-previous`), or cancel. The row's
+  marks for the tables and analysis folders name such files beforehand too.
 - The list below the buttons chooses where **Run** fits. Its first entry is the
   project file's setting, `[run.fit.backend] device`, with its value (`auto`, the default, uses
   an NVIDIA graphics card when *hxex* can see one, else the CPU); **Change…** opens that

@@ -391,8 +391,10 @@ calls the library in the GUI's own process. Details:
   input (`--stop-from-input`), which works the same on the three systems (owner, HISTORY 236);
 - machine-readable progress for the bar: `--progress-format json` beside the progress
   lines (built, HISTORY 236);
-- an existing output is a plain question (replace, keep the previous one as `NAME.N`, or
-  cancel), answered with `--overwrite` or `--keep-previous`.
+- where the results stand, stage by stage, is a row above the console, with Run (Run
+  (update) when out of date) and Start again… beside it (Next steps 40, step 4); an output
+  folder holding files hxex wrote that were edited since is a question (keep it as `NAME.N`,
+  `--keep-previous`, or cancel).
 
 ### Editing what users edit
 
@@ -2181,7 +2183,7 @@ Planned, not built:
      files and the review table kept as now). Start again: `hxex run --fresh` redoes every
      stage, replacing `--refit` and `--reread` (later, if needed, `--redo STAGE`).
      `--overwrite` is retired, accepted for a while with a note that it now means update. In
-     the window: "Bring up to date" and "Start again".
+     the window: "Run (update)" and "Start again…" (owner, 2026-11-21).
    - *Earlier versions.* An update never copies the bundle (a session of small edits would
      fill a disk with near-identical copies, each remade from its recorded settings and the
      stored spectra); the manifest's provenance gains one entry per update (date, stages
@@ -2196,7 +2198,13 @@ Planned, not built:
      out reads "not tested", not one population (built 2026-11-20, HISTORY 428). Then the
      per-stage record and the status in `hxex check`/`info` (built 2026-11-20, HISTORY 430: `hxex.stages`, the manifest's `stages` block, and a closing `hxex run` line saying what `run --overwrite` does now); then `run` as update (resume's incremental paths moved into it) and
      `--fresh` (built 2026-11-20, HISTORY 433: resume retired, `[output] overwrite` refused,
-     report and analyse write their folders again); then the window's stage row. Tests: each incremental path against a fresh run,
+     report and analyse write their folders again); then the window's stage row (built
+     2026-11-21, HISTORY 435: one mark per stage and per output, ✓ done, ! out of date,
+     ○ not done, – off, the causes and what Run does in each tooltip; Run, Run (update), and
+     Start again… apart at the right of the commands, behind a warning; no question before an
+     update; a status-bar line from every tab;
+     worked out off the window's thread in two passes, the quick one without the set-K check).
+     Tests: each incremental path against a fresh run,
      as the preset tests do (HISTORY 354).
 
 ## Risks and open decisions

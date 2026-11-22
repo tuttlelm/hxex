@@ -94,9 +94,17 @@ def workspace(qtbot, tmp_path):
     return page
 
 
-def test_the_run_workspace_runs_hxex_and_asks_how_to_run_again(qtbot, workspace,
-                                                                            tmp_path):
+def _settled(qtbot, page):
+    """The stage row's check of the project shown has arrived, the whole of it."""
+    row = page.stage_row
+    qtbot.waitUntil(lambda: row.state is not None and not row.checking, timeout=120000)
+    return row.state
+
+
+def test_the_run_workspace_runs_hxex_and_brings_it_up_to_date(qtbot, workspace, tmp_path):
     page = workspace
+    assert _settled(qtbot, page).has_results is False
+    assert page.buttons["run"].text() == "Run" and not page.fresh_button.isEnabled()
     assert all(b.isEnabled() for b in page.buttons.values()) and not page.stop_button.isEnabled()
     with qtbot.waitSignal(page.runner.finished, timeout=120000):
         page.buttons["check"].click()
@@ -115,34 +123,28 @@ def test_the_run_workspace_runs_hxex_and_asks_how_to_run_again(qtbot, workspace,
     assert "@hxex-progress" not in page.console.toPlainText()
     # the total run time beside the bar, kept when the command has ended (owner, 2026-11-05)
     assert page.elapsed.text().startswith("total ") and not page._clock.isActive()
-    # again: the window shows where the results stand and asks (docs/PLAN.md Next steps 40)
+    # up to date: Run greyed out; Start again asks first (docs/PLAN.md Next steps 40, step 4)
+    state = _settled(qtbot, page)
+    assert state.up_to_date and not page.buttons["run"].isEnabled()
+    assert page.buttons["run"].text() == "Run" and page.fresh_button.isEnabled()
     asked = []
-
-    def answer(rows, up_to_date):
-        asked.append((rows, up_to_date))
-        return "fresh"
-
-    page.ask_run = answer
+    page.ask_fresh = lambda: asked.append(1) or False
+    page.fresh_button.click()
+    assert asked and not page.runner.running  # cancelled: nothing runs
+    page.ask_fresh = lambda: True
     with qtbot.waitSignal(page.results_changed, timeout=300000):
-        page.buttons["run"].click()
-    assert asked[0][1] and ("stages", "read: done") in asked[0][0]
+        page.fresh_button.click()
     assert page.command.text() == "hxex run hxex.toml --fresh"
-    # a change: Bring up to date runs hxex run alone
+    # a change: Run (update) runs hxex run alone, without asking
     page.project.write_text(page.project.read_text().replace("n_boot = 3", "n_boot = 4"))
-    page.ask_run = lambda rows, up_to_date: asked.append((rows, up_to_date)) or "update"
+    page.stage_row.refresh(now=True)
+    state = _settled(qtbot, page)
+    assert not state.up_to_date and page.buttons["run"].text() == "Run (update)"
+    assert "bootstrap" in [s.name for s in state.late]
     with qtbot.waitSignal(page.results_changed, timeout=300000):
         page.buttons["run"].click()
-    assert not asked[-1][1] and any("bootstrap: out of date" in text for _, text in asked[-1][0])
     assert page.command.text() == "hxex run hxex.toml"
-    # Cancel: nothing runs; a table changed by hand is named in the question (the run would
-    # stop at it: owner, 2026-11-20)
-    uptake = tmp_path / "out_tables" / "uptake.csv"
-    uptake.write_text(uptake.read_text() + "a note\n")
-    page.ask_run = lambda rows, up_to_date: asked.append((rows, up_to_date)) and None
-    page.buttons["run"].click()
-    assert not page.runner.running
-    assert any(key == "outputs" and "uptake.csv" in text and "changed since hxex wrote" in text
-               for key, text in asked[-1][0])
+    assert _settled(qtbot, page).up_to_date
 
 
 def test_closing_during_a_command_asks_and_stops_it(qtbot, stand_in, tmp_path):

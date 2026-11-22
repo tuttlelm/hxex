@@ -542,7 +542,6 @@ def test_add_the_bootstrap_runs_run_in_the_run_workspace(qtbot, window_on, monke
     started = []
     monkeypatch.setattr(window.run_page.runner, "start",
                         lambda args, cwd: started.append((args, cwd)))
-    window.run_page.ask_run = lambda rows, up_to_date: "update"
     panel = page.review
     assert panel.resume.isHidden()
     qtbot.keyClick(panel.k, Qt.Key.Key_Down)  # K = 1 chosen: no bootstrap at it

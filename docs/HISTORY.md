@@ -11546,3 +11546,48 @@ CSVs or mzML if wanted.
     tests/test_profile_fit.py (a run judges every spectrum's purity). Private record:
     hxex_private/analysis_examples/envelope_verdict (README steps 1-4, scripts, out/).
 
+
+435. **The window's stage row (PLAN 40 step 4; owner, 2026-11-21).** The Run tab shows where
+    the project's results stand all the time, not only in the question Run used to ask: one mark
+    per stage (read, pick, noise, fit, population test, correction and flags, bootstrap) and,
+    after a divider, one per kind of output made from the results (tables, figures when there
+    are some, analysis folders), each ✓ done, ! out of date (bold, in the link colour; owner chose
+    ! over ✗, which reads as failed, is the figures' "not significant" cross, and looks like
+    "missing"), ○ not done, or – off; each mark's tooltip gives its causes in `hxex check`'s words
+    and what Run does for it; the line beside the Run button says what Run does ("Run: keeps
+    fits, runs bootstrap"; owner: not "Run will:"). The button follows it (owner's wording):
+    **Run** with no results yet (greyed out when up to date), **Run (update)** when out of date,
+    run without a question (the row is the plan), on the left of that line (owner). **Start
+    again…** (`--fresh`) is kept apart at the right end of the commands' row (owner: not
+    prominent), behind a warning: it takes as long as the first run, keeps no fits, replaces the
+    results (or `[output] keep_previous`), and says what Run (update) would do instead. They
+    replace the Run button and its "Results already there" question. A project file that does not load gives
+    one line with the problem and no run buttons; one without `[input]` cannot run. Outside the
+    Run tab the status bar says "results out of date (N stages): Run tab" (owner: yes), a click
+    opening the tab. Worked out again after the project file, the review table, or a review
+    decision changed (gathered over 0.5 s), when a command ends, and when the Run tab opens; never
+    while a command of the project runs. Cost measured on 779b6be: `standing()` 5.1 s on the
+    tutorial project, 18.2 s on the pooled raw project, 97 % of it the check of the bootstrap at
+    each set's K (`pipeline._bundle_set_k_missing`, which works out the species uptake); so the
+    check runs off the window's thread (`tasks.Latest`) in two passes: `standing(..., slow=False)`
+    without that check (0.16 s and 0.86 s; every stage and the run line equal to the whole on
+    both projects), then the whole; the marks stay in place, greyed. The data files' checksums are
+    kept for the window's life by file, size, modification time, and inode
+    (`io.identity.keep_checksums`; a Thermo .raw file costs about 4 s per GB each time otherwise),
+    turned off when the window closes. The check's log lines (an old bundle's notes, read again at
+    every check) are kept out of the messages pane and the terminal (`stage_row.keep_quiet`, by
+    thread). The run line in shorter words (owner's wording, 2026-11-21; the same in `hxex check`
+    and `hxex info`): "reads spectra stored in results, peak picks, estimates noise, fits all
+    spectra, runs population test, runs bootstrap, applies back-exchange correction and updates
+    quality flags" (was "takes the spectra stored in results, picks again, measures the per-bin
+    noise again, fits every spectrum again (other fitting code), works out the correction and
+    the quality flags again"); the reason for fitting everything again is left to the stages'
+    causes, and a run fitting every spectrum now says the population test and the bootstrap are
+    run again, which it did without saying. Library: `stages.plan_parts` (what `hxex run` does,
+    by stage; `run_plan` joins it), `Standing.plan`/`plan_of`/
+    `complete`, `stages.output_states`/`output_marks` (the output folders, from what was
+    `cli.output_lines`, which now formats them; `hxex check`'s words unchanged). Not marked: the
+    tables made before a review decision (the tables' listing records only the results they were
+    made from). Module `hxex.gui.stage_row`; guide gui.md "Running the commands". Tests:
+    tests/test_gui_stage_row.py, tests/test_gui_run.py (Run, Start again, Run (update) on a real
+    project), tests/test_stages.py (plan by stage, quick pass, outputs, kept checksums).

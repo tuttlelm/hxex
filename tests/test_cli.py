@@ -691,7 +691,7 @@ def test_run_completes_a_stopped_bootstrap_and_resume_is_retired(tmp_path, capsy
     assert cli.main(["check", str(path)]) == 0
     out = capsys.readouterr().out
     assert "bootstrap: not done (stopped partway: hxex run continues it)" in out
-    assert "keeps the fits, makes the bootstrap (it stopped partway)" in out
+    assert "keeps fits, finishes bootstrap (it stopped partway)" in out
     # resume is retired: refused, naming hxex run
     assert cli.main(["resume", str(path)]) == 1
     assert "hxex resume is retired" in capsys.readouterr().err
@@ -2027,7 +2027,7 @@ def test_a_one_population_run_is_analysed_and_its_review_table_checked(tmp_path,
     path.write_text(text.replace("k_max = 1", "k_max = 2") + '\n[review]\ntable = "review.csv"\n')
     assert cli.main(["check", str(path)]) == 0  # hxex run fits it: a stage out of date
     out = capsys.readouterr().out
-    assert "fit: out of date" in out and "fits the K missing (k_max 2)" in out
+    assert "fit: out of date" in out and "fits missing K (k_max 2)" in out
 
 
 def test_check_finds_what_the_read_of_a_specexport_folder_would_refuse(tmp_path, capsys):
