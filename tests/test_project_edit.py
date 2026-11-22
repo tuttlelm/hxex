@@ -315,9 +315,9 @@ def test_a_refused_replacement_is_tried_again_and_written_in_place_at_last(proje
     2026-11-03)."""
     import os
 
-    import hxex.project_edit as edit
+    import hxex.io._files as files
 
-    monkeypatch.setattr(edit, "REPLACE_TRIES", 3)
+    monkeypatch.setattr(files, "REPLACE_TRIES", 3)
     real, calls = os.replace, []
 
     def refused_twice(src, dst):

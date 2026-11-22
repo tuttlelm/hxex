@@ -440,6 +440,32 @@ def test_review_table_operations(run):
         r.update(ids[2], k_override=7).effective_K(fit)
 
 
+def test_a_review_written_while_windows_refuses_the_manifest_is_tried_again(written, run,
+                                                                           monkeypatch):
+    """Windows refuses to replace a file another program has open, such as the window's check of
+    where the results stand reading the manifest (CI, 2026-11-22: Bundle.set_review failed with
+    WinError 5): the review table and the manifest are tried again, and written at last."""
+    import os
+
+    real, refused = os.replace, []
+
+    def refused_once_each(src, dst):
+        if Path(dst).name not in refused:
+            refused.append(Path(dst).name)
+            raise PermissionError(13, "Access is denied")
+        real(src, dst)
+
+    ids = [str(s) for s in run[3].spectrum_id]
+    monkeypatch.setattr(os, "replace", refused_once_each)
+    with open_bundle(written) as b:
+        b.set_review(b.review().update(ids[0], status="rejected"))
+    monkeypatch.setattr(os, "replace", real)
+    assert refused == ["review.parquet", "manifest.json"]
+    with open_bundle(written) as b:
+        assert b.review().get(ids[0])["status"] == "rejected"
+        b.verify()
+
+
 def test_review_is_stored_with_the_bundle_and_needs_no_refit(written, run):
     fit = run[3]
     ids = [str(s) for s in fit.spectrum_id]

@@ -41,6 +41,7 @@ from pathlib import Path
 
 from . import presets
 from .config import ProjectError
+from .io._files import replace_file  # tried again while Windows refuses it (re-exported)
 
 # tables whose heading alone changes what hxex does (a stage switched on with every setting at
 # its default): the window offers to switch these on and off
@@ -425,25 +426,6 @@ def _problem(text: str, path: Path, analysis_only: bool) -> tuple[str, str] | No
     except ProjectError as exc:
         return str(exc), f"{exc}{_unknown_key_hint(text, str(exc))}"
     return None
-
-
-REPLACE_TRIES = 20  # attempts at a replacement Windows refuses, about two seconds in all
-
-
-def replace_file(src: Path, dst: Path) -> None:
-    """``os.replace(src, dst)``, tried again for a while when Windows refuses it: a file another
-    program has open briefly (a virus scanner, an indexer, a file watcher) cannot be replaced
-    there. Raises PermissionError when it is still refused."""
-    import time
-
-    for attempt in range(REPLACE_TRIES):
-        try:
-            os.replace(src, dst)
-            return
-        except PermissionError:
-            if attempt == REPLACE_TRIES - 1:
-                raise
-            time.sleep(0.1)
 
 
 def _read(path: Path) -> tuple[str, bool]:

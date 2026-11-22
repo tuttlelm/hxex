@@ -71,6 +71,7 @@ from ._arrow import (
     _str,
     _strs,
 )
+from ._files import remove_file, replace_file
 from ._json import dumps as strict_json
 
 log = logging.getLogger(__name__)
@@ -536,7 +537,7 @@ def _write_table(directory: Path, name: str, table: pa.Table, files: dict, **ext
     tmp = directory / f"{name}.parquet.tmp"
     try:
         pq.write_table(table, tmp, compression="zstd", row_group_size=ROW_GROUP)
-        os.replace(tmp, path)
+        replace_file(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -1064,8 +1065,8 @@ def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
                 zf.write(item, item.name)
         shutil.rmtree(tmp)
         if path.exists():
-            path.unlink()
-        os.replace(archive, path)
+            remove_file(path)
+        replace_file(archive, path)
         return
     if not path.exists():
         os.replace(tmp, path)
@@ -1073,8 +1074,8 @@ def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
     if path.is_file():
         if not _is_bundle_zip(path):  # checked by write_bundle; never remove what is not a bundle
             raise BundleError(f"{path} exists but is not a results bundle; not removing it")
-        path.unlink()
-        os.replace(tmp, path)
+        remove_file(path)
+        replace_file(tmp, path)
         return
     old = _old_manifest(path)
     if old is None:  # checked by write_bundle; never remove what is not a bundle
@@ -1092,14 +1093,14 @@ def _publish(tmp: Path, path: Path, overwrite: bool) -> None:
     listing = {**old, "files": {**dict.fromkeys(new), **(old.get("files") or {})}}
     staged = path / (REPLACING + ".tmp")
     staged.write_text(json.dumps(listing, indent=2) + "\n", encoding="utf-8")
-    os.replace(staged, path / REPLACING)
-    (path / MANIFEST).unlink(missing_ok=True)
+    replace_file(staged, path / REPLACING)
+    remove_file(path / MANIFEST)
     for name in owned - {MANIFEST, REPLACING}:
-        (path / name).unlink(missing_ok=True)
+        remove_file(path / name)
     for name in new:
-        os.replace(tmp / name, path / name)
-    os.replace(tmp / MANIFEST, path / MANIFEST)
-    (path / REPLACING).unlink(missing_ok=True)
+        replace_file(tmp / name, path / name)
+    replace_file(tmp / MANIFEST, path / MANIFEST)
+    remove_file(path / REPLACING)
     shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -1658,7 +1659,7 @@ class Bundle:
         self._as_read = {**self._as_read, "files": files}
         tmp = self.path / (MANIFEST + ".tmp")
         tmp.write_text(strict_json(self._as_read, indent=2) + "\n")
-        os.replace(tmp, self.path / MANIFEST)
+        replace_file(tmp, self.path / MANIFEST)  # tried again while a reader has it open
         self.manifest = {**self.manifest, "files": files}
 
 

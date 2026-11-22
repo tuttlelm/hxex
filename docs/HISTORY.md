@@ -11591,3 +11591,11 @@ CSVs or mzML if wanted.
     made from). Module `hxex.gui.stage_row`; guide gui.md "Running the commands". Tests:
     tests/test_gui_stage_row.py, tests/test_gui_run.py (Run, Start again, Run (update) on a real
     project), tests/test_stages.py (plan by stage, quick pass, outputs, kept checksums).
+    CI fix (2026-11-22; py3.11 Windows): the row's background check reads the bundle's manifest,
+    and Windows refuses to replace or delete a file another handle has open, so a review written
+    into the bundle from Python just as the window opened failed (`Bundle.set_review`, WinError 5).
+    The bundle's file replacements and removals (the review table and manifest in `set_review`,
+    every table written, the files of a bundle published over an older one) are now tried again
+    for about two seconds, as the project file's writes were (`hxex.io._files.replace_file`,
+    `remove_file`; `project_edit.replace_file` is that function). Folder moves (`--keep-previous`)
+    keep their own message. Test: tests/test_bundle.py (a refused replacement written at last).
