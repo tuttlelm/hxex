@@ -2085,6 +2085,60 @@ Planned, not built:
    column (worst-case and expected overlap share), a view in the window, the list of unexplained
    species. First test: does the expected-case overlap predict the spectra that sit off their
    replicates (item 33's lists) better than chance?
+   - *Identity: are these the expected peptide's peaks?* (owner, 2026-11-22: "valuable to know if
+     the peaks belong to the expected peptide, bonus points for suggesting other candidates if
+     not".) The map above predicts which ions could sit on a series' bins; this asks, from the
+     data, which ion the measured peaks are. The case behind it (HISTORY 436): in the tutorial
+     data, peptide 13-24 at 2+ is another listed ion's spectrum in every sample, every role and
+     time: peptide 55-67 at 2+ sits 20.6 ppm lower (0.015 m/z, unresolved on the Q-TOF), the 13-24
+     peaks sit on 55-67's position (+0.2 ppm), and the two series' centroids agree within 0.06 D;
+     in the benchmark's raw files the same 2+ ion sits at its own m/z. `off_mz` flags the series in
+     two samples and misses the third by 1.4 ppm (-21.2 against a limit of 22.6), so it enters the
+     analysis; the purity reads it as pure (one clean species, the wrong one), and
+     `same_measurement_as` cannot see it (the picked bins differ). Not purity's question (other
+     species beside the peptide's peaks), nor the m/z check's alone (how far off, not off onto
+     what).
+     Possible design (owner, 2026-11-22, from NMR peak lists: "is this peak claimed by another
+     peptide?"), to measure first. The overlap map above is the prediction side; this is the data
+     side, as assignment bookkeeping:
+     - *A peak list per undeuterated injection:* the isotope clusters the run holds (one per
+       species, not single peaks), each with its m/z, charge (from the spacing), retention apex
+       and, with ion mobility, drift. From the raw files; with exported spectra (SpecExport) there
+       is no run-wide list, only each ion's exported window, so there two ions claim the same
+       signal when their windows overlap in m/z and retention and their exported profiles match
+       (enough for the 13-24 case).
+     - *Claims:* every ion of the peptide table claims the cluster its predicted envelope lands on
+       within its retention window (and drift range), scored by position (ppm, after the run's
+       m/z calibration, against the apexes' scatter for their height) and by shape (the cluster
+       against the ion's natural pattern, which tells same-m/z ions of different composition
+       apart where the positions cannot). The undeuterated controls carry the verdict (the
+       composition fixes the envelope); labelled spectra share their series' verdict, since
+       deuterated peaks move.
+     - *What falls out:* (a) a cluster claimed by two ions: the weaker claim is flagged (a name to
+       choose, such as `other_ion`) with the other ion and both offsets named (13-24 2+ at -20.6
+       ppm against 55-67 2+ at +0.2 ppm for the cluster at m/z 739.867). Two claims are not always
+       a mistake: two co-eluting species can share one unresolved cluster, and then both series
+       hold both; whether the cluster's shape fits one composition or needs both tells "one species
+       claimed twice" from "two species summed". (b) An ion that claims nothing near its m/z: not
+       in the run at that time (a wrong window or a missing peptide). (c) Unclaimed clusters:
+       species nobody assigned, matched against every peptide of the sample's sequence (any
+       cleavage, charges 1-5, later common modifications) and listed as candidates for the peptide
+       pool (the DDA check of HISTORY 200 found such species on the Orbitrap digest).
+     Outputs: the flag with the candidates in spectra.csv / series.csv, `hxex explain` and the
+     window; the peak list with its claims (a table per run). Whether a flagged series is also
+     left out by default (as `off_mz` does) is for the measurement to decide. A labelled spectrum
+     on another ion's grid alone stays `spectrum_off_mz`'s case.
+     The list is MS1 first (full scans, peptide ions). Later steps: (i) MS2 as evidence for an
+     MS1 claim, where scans whose isolation window covers the cluster exist (identification or
+     targeted runs; the DDA check of HISTORY 200): fragments that match one claimant and not the
+     other settle what m/z and shape cannot; (ii) a peak list of fragment clusters in MS2/MS3
+     scans claimed by the fragment ions, extending `overlapping_ion` (which compares predicted
+     envelopes only, HISTORY 309, 333) to the data as the MS1 list extends `off_mz`.
+     First measurement: on the four datasets of item 33 step 7 (two Synapt projects, the
+     tutorial, the Orbitrap digest with its DDA identifications as the yardstick), how many
+     clusters two ions claim, how many series lose their claim to another ion, how many of those
+     `off_mz` already flags, whether they sit off their replicates and other charge states (the
+     yardsticks of item 33 step 7), and how many unclaimed clusters a sequence peptide explains.
 35. **A checkpoint of the fit stage** (owner, 2026-11-15, from the GUI audit's open question A 3:
    a run stopped during its fit stage leaves nothing on disk, although the stage is long now).
    The fits run in chunks of whole series with the plan recorded in the bundle (`chunk_plan`),
