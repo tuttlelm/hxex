@@ -64,7 +64,8 @@ _SUMMARY_KINDS = ("coverage", "pooled_coverage", "redundancy_resolution", "resid
                   "regions", "population_tiers", "pooled_forms", "cross_group_regions")
 _SINGLE_ORDER = ("coverage", "redundancy_resolution", "residues_all", "population_tiers",
                  "choice", "profile", "regions", "protection")
-_FRAGMENT_KINDS = ("fragment_traces", "ladder", "closure", "residue_rates")
+_FRAGMENT_KINDS = ("fragment_coverage", "fragment_traces", "ladder", "closure",
+                   "residue_rates")
 _GROUP_COMPARISONS = ("residue_significance", "region_significance", "region_composition",
                       "overlay_residues", "overlay_populations")
 _SAMPLE_COMPARISONS = ("woods", "woods_K2", "butterfly", "residue_significance_K2",

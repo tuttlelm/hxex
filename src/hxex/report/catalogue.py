@@ -403,6 +403,16 @@ KINDS: tuple[FigureKind, ...] = (
         "protection-factors.md", (_PROTECTION, _REFERENCE),
         changed_by=("[analysis.labelling]", "[analysis] alpha")),
     FigureKind(
+        "fragment_coverage", "Fragment coverage", ANALYSE, ("fragment_coverage_{parent}",),
+        "which fragment ions of a parent kept enough spectra to fit ladder rates: a panel per "
+        "condition, the precursor ion first, then a block per fragment charge with a row per "
+        "cut, the N-terminal ion left of the cut and its complementary C-terminal ion right "
+        "of it, each coloured by how many time points it kept (every one; enough to fit; too "
+        "few; none; never read) and saying how many (a share in a kinetics run). An overall "
+        "quality assessment: what was never targeted or never read shows too",
+        "fragment-residues.md", (_FRAGMENTS,),
+        changed_by=("[analysis.fragments] leave_out_flags", "[review]")),
+    FigureKind(
         "fragment_traces", "Fragment traces", ANALYSE,
         ("fragments_{parent}_{condition}_{ion}_z{charge}",),
         "every fragment of one ion series in one condition on one panel: deuterium against "

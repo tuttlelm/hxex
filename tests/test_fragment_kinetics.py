@@ -765,6 +765,7 @@ def test_write_analysis_of_a_fragment_run(tmp_path):
     names = sorted(p.name for p in written)
     assert names == sorted([
         "fragment_uptake.csv", "ladder_rates.csv", "ladder_residues.csv", "closure.csv",
+        "fragment_coverage.csv", "fragment_coverage_S_11-18_z3.png",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
         "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png",
         *(f"fragments_S_11-18_z3_{c}_{ion}_z1.png" for c in ("gentle", "harsh")
@@ -817,7 +818,7 @@ def test_intrinsic_rates_in_the_fragment_outputs(tmp_path):
     written = write_analysis(run, cfg, tmp_path)
     header = (tmp_path / "ladder_rates.csv").read_text().splitlines()[0]
     assert header.endswith("kint,protection,log10_protection,log10_protection_se,merged")
-    assert len(written) == 13  # 4 tables, 8 figures (4 of them traces), the settings
+    assert len(written) == 15  # 5 tables, 9 figures (4 of them traces), the settings
     # without the opt-in the same conditions change nothing
     off = AnalysisConfig(format="png", fragments=FragmentAnalysis(
         min_time=10.0, exchange={"S": cond}, fit_rates=True))
@@ -869,8 +870,9 @@ def test_fragment_outputs_say_why_they_are_missing(caplog):
 
     run = stub_run(conditions=("gentle",))
     cfg = FragmentAnalysis(min_time=10.0, fit_rates=True)
-    assert fragment_outputs(run, cfg)[0].keys() == {"fragment_uptake", "ladder_rates",
-                                                     "ladder_residues", "closure"}
+    assert fragment_outputs(run, cfg)[0].keys() == {"fragment_uptake", "fragment_coverage",
+                                                     "ladder_rates", "ladder_residues",
+                                                     "closure"}
     no_source = SimpleNamespace(**{**vars(run), "settings": SimpleNamespace(
         spectra_source=None, picker=run.settings.picker)})
     assert fragment_outputs(no_source, cfg) == ({}, [])
@@ -886,8 +888,9 @@ def test_fragment_outputs_say_why_they_are_missing(caplog):
         spectra_source={"reader": "specexport"}, picker=run.settings.picker)})
     both = RunSet({"ms1": folder, "frag": run})
     assert set(fragment_uptake(both).run) == {"frag"}
-    assert fragment_outputs(both, cfg)[0].keys() == {"fragment_uptake", "ladder_rates",
-                                                      "ladder_residues", "closure"}
+    assert fragment_outputs(both, cfg)[0].keys() == {"fragment_uptake", "fragment_coverage",
+                                                      "ladder_rates", "ladder_residues",
+                                                      "closure"}
     assert fragment_outputs(RunSet({"ms1": folder}), cfg) == ({}, [])
     # once there are fragment series, any other error is raised, not swallowed
     other = stub_run(conditions=("gentle",))
@@ -948,13 +951,15 @@ def test_fragment_outputs_of_several_runs(tmp_path):
     written = write_analysis(merged, cfg, tmp_path / "merged")
     assert sorted(p.name for p in written) == sorted([
         "fragment_uptake.csv", "ladder_rates.csv", "ladder_residues.csv", "closure.csv",
+        "fragment_coverage.csv", "fragment_coverage_S_11-18_z3.png",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
         "closure_S_11-18_z3_c+z.png", "residue_rates_S_11-18_z3.png",
         # a merged sample's traces: one figure per run and condition, named by both
         *(f"fragments_S_11-18_z3_{r}_gentle_{ion}_z1.png" for r in ("etd", "ethcd")
           for ion in ("c", "z")),
         "analysis_settings_used.toml"])  # the stub has no run settings to copy
-    for name in ("fragment_uptake", "ladder_rates", "ladder_residues", "closure"):
+    for name in ("fragment_uptake", "fragment_coverage", "ladder_rates", "ladder_residues",
+                 "closure"):
         head = (tmp_path / "merged" / f"{name}.csv").read_text().splitlines()[0]
         assert head.startswith("run,sample,"), head
 
@@ -1150,7 +1155,7 @@ def test_the_ladder_rate_fits_are_opt_in(tmp_path, monkeypatch):
     monkeypatch.setattr(analysis_fragments, "fit_decay", refuse)
     monkeypatch.setattr(report_fragments, "fit_decay", refuse)
     tables, jobs = fragment_outputs(run, FragmentAnalysis(min_time=10.0))
-    assert tables.keys() == {"fragment_uptake", "closure"}
+    assert tables.keys() == {"fragment_uptake", "fragment_coverage", "closure"}
     jobs = dict(jobs)
     assert not any(name.startswith("residue_rates_") for name in jobs)
     assert ladder in jobs and not fitted(jobs[ladder]())
@@ -1160,6 +1165,7 @@ def test_the_ladder_rate_fits_are_opt_in(tmp_path, monkeypatch):
     names = sorted(p.name for p in write_analysis(run, cfg, tmp_path))
     assert names == sorted([
         "fragment_uptake.csv", "closure.csv",
+        "fragment_coverage.csv", "fragment_coverage_S_11-18_z3.png",
         "ladder_S_11-18_z3_c_z1.png", "ladder_S_11-18_z3_z_z1.png",
         "closure_S_11-18_z3_c+z.png", "analysis_settings_used.toml",
         *(f"fragments_S_11-18_z3_{c}_{ion}_z1.png" for c in ("gentle", "harsh")
@@ -1343,3 +1349,102 @@ def test_the_fragment_outputs_stop_at_their_cancel_hook():
         fragment_outputs(run, cfg, cancel=later)
     assert len(asked) == 3
     assert fragment_outputs(run, cfg, cancel=lambda: False)[0]
+
+
+def _without_series(run, fragment: str):
+    """``run`` with no spectrum of the series of ``fragment`` read (its target kept in the read
+    record): a fragment targeted but never read."""
+    from hxex.io.mzml import mzml_series_targets
+
+    targets = mzml_series_targets(run.settings.spectra_source)
+    gone = {d for d, t in targets.items() if t.entry.extra.get("fragment") == fragment}
+    keep = ~np.isin(run.fit.data_id, list(gone))
+    f, b = run.fit, run.binned
+    run.fit = _Fit(f.fits[1].means[keep, 0], f.data_id[keep], f.time[keep],
+                   f.spectrum_id[keep])
+    run.binned = SimpleNamespace(spectrum_id=b.spectrum_id[keep], sample=b.sample[keep],
+                                 rep=b.rep[keep], charge=b.charge[keep])
+    return run
+
+
+def test_the_fragment_coverage_says_which_fragments_have_data_to_fit(tmp_path):
+    """fragment_coverage (owner, 2026-11-23; PLAN Next steps 41): per fragment series, the
+    time points with a spectrum the fragment analysis keeps against those it could have, and
+    a state from every point kept to never read; the figure draws a row per cut with the
+    N-terminal ion left of it and its complement right of it, and a red P on a proline."""
+    from hxex.analysis import (
+        FRAGMENT_LEAVE_OUT_FLAGS,
+        AnalysisConfig,
+        FragmentAnalysis,
+        RunSet,
+        fragment_coverage,
+    )
+    from hxex.analysis.fragments import coverage_state
+    from hxex.report import fragment_coverage_figure, write_analysis
+
+    assert [coverage_state(k, 10) for k in (10, 4, 3, 0)] == ["all", "enough", "too_few",
+                                                              "none"]
+    assert coverage_state(0, 10, read=False) == "not_read"
+    run = _without_series(stub_run(conditions=("gentle",)), "z:7")
+    u0 = fragment_uptake(run)
+    by_id = {str(s): i for i, s in enumerate(run.fit.spectrum_id)}
+    m = len(run.fit.spectrum_id)
+    below, envelope = np.zeros(m, bool), np.zeros(m, bool)
+    for s in u0.spectrum_id[u0.where(fragment="c:5")]:
+        below[by_id[str(s)]] = True  # every point of c:5 left out
+    for s in u0.spectrum_id[u0.where(fragment="z:2")][3:]:
+        envelope[by_id[str(s)]] = True  # z:2 keeps 3 points: too few to fit
+    for s in u0.spectrum_id[u0.where(fragment="z:3")][:10]:
+        envelope[by_id[str(s)]] = True  # z:3 loses 10: enough to fit
+    run.quality = SimpleNamespace(below_noise=below, poor_envelope=envelope,
+                                  mz_shift=np.zeros(m, bool), overlapping_ion=np.zeros(m, bool),
+                                  flagged=below | envelope)
+    cov = fragment_coverage(run, leave_out_flags=FRAGMENT_LEAVE_OUT_FLAGS)
+    state = dict(zip(cov.fragment.tolist(), cov.state.tolist(), strict=True))
+    kept = dict(zip(cov.fragment.tolist(), cov.kept.tolist(), strict=True))
+    n = len(TIMES)
+    assert set(cov.points.tolist()) == {n}
+    assert state["c:1"] == "all" and kept["c:1"] == n
+    assert state["c:5"] == "none" and kept["c:5"] == 0
+    assert state["z:2"] == "too_few" and kept["z:2"] == 3
+    assert state["z:3"] == "enough" and kept["z:3"] == n - 10
+    assert state["z:7"] == "not_read" and kept["z:7"] == 0
+    assert state["M:8"] == "all"
+    row = cov.fragment.tolist().index("z:3")
+    assert cov.reasons["poor_envelope"][row] == 10 and cov.reasons["below_noise"][row] == 0
+    assert cov.columns()["left_out_below_noise"][cov.fragment.tolist().index("c:5")] == n
+    # without the flags every read fragment keeps all its points
+    plain = fragment_coverage(run)
+    assert set(plain.state[plain.fragment != "z:7"].tolist()) == {"all"}
+
+    fig = fragment_coverage_figure(cov)
+    ax = fig.axes[0]
+    left = [t.get_text() for t in ax.get_yticklabels()]
+    ms = sorted(int(z) for z in cov.charge[cov.ion_type == "M"])
+    assert left == [*(f"M {z}+" for z in ms), *(f"c:{k} 1+" for k in range(1, 8))]
+    marks = [t for t in ax.texts if t.get_text() == "P"]  # GSHP: the cut before P14
+    assert len(marks) == 1 and marks[0].get_position()[0] == 4  # on the proline
+    right = next(a for a in ax.child_axes if a.get_yticklabels())
+    assert [t.get_text() for t in right.get_yticklabels()] == [
+        *([""] * len(ms)), *(f"z:{8 - k} 1+" for k in range(1, 8))]
+    assert fig.get_suptitle() == "S  GSHPLVFK (11-18), precursor 3+"
+    from hxex.gui.figures import figure_rows
+
+    columns, rows = figure_rows(fig)
+    assert {"fragment", "kept", "points", "state", "left_out_below_noise"} <= set(columns)
+    assert len(rows) == len(cov)  # every series drawn once, M and the never-read one too
+    # a kinetics run says the share of its points kept
+    run.settings.spectra_source["runs"] = [{"sample": "S", "path": "f", "time": None,
+                                            "role": None}]
+    kinetic = fragment_coverage(run, leave_out_flags=FRAGMENT_LEAVE_OUT_FLAGS)
+    assert kinetic.kinetics[kinetic.state != "not_read"].all()
+    drawn = {t.get_text() for t in fragment_coverage_figure(kinetic).axes[0].texts}
+    assert "100%" in drawn and f"{100 * 3 / n:.0f}%" in drawn
+    del run.settings.spectra_source["runs"]
+    # written by hxex analyse, and for several runs side by side
+    names = {p.name for p in write_analysis(run, AnalysisConfig(
+        format="png", fragments=FragmentAnalysis()), tmp_path / "one")}
+    assert {"fragment_coverage.csv", "fragment_coverage_S_11-18_z3.png"} <= names
+    both = fragment_coverage(RunSet({"a": run, "b": stub_run(conditions=("gentle",))}))
+    assert set(both.run) == {"a", "b"} and both.where(run="b", state="not_read").sum() == 0
+    assert fragment_coverage_figure(both, run="b").get_suptitle().startswith("b:S")

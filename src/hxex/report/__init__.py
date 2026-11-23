@@ -57,6 +57,7 @@ from .figures import (
 )
 from .fragments import (
     closure_figure,
+    fragment_coverage_figure,
     fragment_traces_figure,
     ladder_kinetics_figure,
     residue_rates_figure,
@@ -113,6 +114,7 @@ from .tiers import TIER_COLOURS, plot_population_tiers
 
 __all__ = [
     "closure_figure",
+    "fragment_coverage_figure",
     "fragment_traces_figure",
     "protection_difference_figure",
     "protection_figure",

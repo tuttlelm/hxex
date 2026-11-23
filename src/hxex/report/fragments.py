@@ -563,6 +563,193 @@ def fragment_traces_page(
     return fig
 
 
+# --- which fragments have data to fit -----------------------------------------------------------
+
+# the states of FragmentCoverage, best first: (legend text, face, edge, hatch, text colour)
+_COVERAGE_STYLE = {
+    "all": ("every point kept", "#1f4e79", "#1f4e79", None, "white"),
+    "enough": ("some left out, ≥ {n} kept", "#6fa3d2", "#1f4e79", None, "black"),
+    "too_few": ("1-{m} points kept (too few to fit rates)", "#d9e6f2", "#1f4e79", None,
+                "black"),
+    "none": ("read, every point left out", "white", "#1f4e79", None, "#444444"),
+    "not_read": ("targeted, never read", "white", "#999999", "////", "#444444"),
+}
+_COVERAGE_GAP = 0.12  # half the gap drawn at a cut, so two empty bars still show where it is
+
+
+def _coverage_pairs(ion_types: Sequence[str]) -> list[tuple[str | None, str | None]]:
+    """The N-terminal ion types of a parent with their complementary C-terminal ones, one pair
+    per row of a block (``c-1`` with ``z-dot``): in name order, each N type with the first
+    unpaired C type its partner letter allows; types without a partner alone."""
+    from ..analysis.fragments import _PARTNERS
+
+    n_types = sorted(t for t in ion_types if chem.ion_terminus(t) == "N")
+    c_types = sorted(t for t in ion_types if chem.ion_terminus(t) == "C")
+    pairs: list[tuple[str | None, str | None]] = []
+    for a in n_types:
+        b = next((t for t in c_types if _PARTNERS.get(a[0]) == t[0]), None)
+        if b is not None:
+            c_types.remove(b)
+        pairs.append((a, b))
+    return pairs + [(None, b) for b in c_types]
+
+
+def _coverage_text(table, i: int) -> str:
+    """What a bar says: the time points kept, as a share in a kinetics run."""
+    if table.state[i] == "not_read":
+        return ""
+    if table.kinetics[i]:
+        return f"{100 * int(table.kept[i]) / max(1, int(table.points[i])):.0f}%"
+    return str(int(table.kept[i]))
+
+
+def _coverage_bar(ax, table, i: int, left: float, right: float, y: float, side: str,
+                  name: str, shown: str) -> None:
+    """One fragment series' bar from ``left`` to ``right`` (data units) at row ``y``, its
+    count at the cut end (``side``: the bar's ``'left'`` or ``'right'`` of the cut; ``'M'``
+    at its right end), its hover lines and data-table row."""
+    from matplotlib.patches import Rectangle
+
+    _, face, edge, hatch, colour = _COVERAGE_STYLE[str(table.state[i])]
+    rect = Rectangle((left, y - 0.4), right - left, 0.8, facecolor=face, edgecolor=edge,
+                     hatch=hatch, linewidth=0.6)
+    ax.add_patch(rect)
+    text = _coverage_text(table, i)
+    if text:
+        at, align = ((right - 0.08, "right") if side in ("left", "M") else (left + 0.08, "left"))
+        ax.text(at, y, text, ha=align, va="center", fontsize=5, color=colour, clip_on=True)
+    label = f"{table.fragment[i]} {int(table.charge[i])}+"
+    why = {k: int(v[i]) for k, v in table.reasons.items() if int(v[i])}
+    lines = [label, name,
+             "never read" if table.state[i] == "not_read" else
+             f"{int(table.kept[i])} of {int(table.points[i])} time points kept"]
+    if why:
+        lines.append("left out: " + ", ".join(f"{k} {n}" for k, n in why.items()))
+    hover.set_hover(rect, *lines)
+    hover.set_row(rect, {
+        "sample": shown, "parent": str(table.parent[i]), "parent_charge": int(
+            table.parent_charge[i]), "condition": name, "fragment": str(table.fragment[i]),
+        "charge": int(table.charge[i]), "points": int(table.points[i]),
+        "kept": int(table.kept[i]), "state": str(table.state[i]),
+        **{f"left_out_{k}": int(v[i]) for k, v in table.reasons.items()}})
+
+
+def fragment_coverage_figure(
+    coverage,
+    *,
+    sample: str | None = None,
+    parent: str | None = None,
+    parent_charge: int | None = None,
+    run: str | None = None,
+    labels: Mapping[str, str] | None = None,
+) -> Figure:
+    """Which fragment ions of one parent at one precursor charge kept enough spectra to fit
+    (:func:`hxex.analysis.fragment_coverage`), an overall quality assessment (owner,
+    2026-11-23; PLAN Next steps 41). A panel per condition, side by side. The x axis is the
+    parent's residues: its sequence below, the protein's numbers above, marks at the residue
+    boundaries. First the precursor ion at each charge (a bar over the parent); then a block
+    per fragment charge with a row per cut: the N-terminal ion of that length left of the cut
+    and its complementary C-terminal ion (the rest of the parent, at the same fragment charge)
+    right of it, a small gap at the cut. The left axis names the N-terminal ions, the right
+    axis the C-terminal ones. Every cut has its row, so what was never targeted or never read
+    shows; a cut before a proline (never targeted) carries a red P on the proline. Each bar is
+    coloured by its state and says how many time points it kept (a share in a kinetics run).
+
+    ``sample``, ``parent``, ``parent_charge`` and ``run`` (the state's run) choose the parent
+    as in :func:`ladder_kinetics_figure`; ``labels`` names the conditions."""
+    from matplotlib.patches import Patch
+
+    from ..analysis.fragments import COVERAGE_MIN_POINTS
+
+    pick, state, sample, parent, pz = _one(coverage, sample, parent, parent_charge, run)
+    table = coverage.select(pick)
+    shown = display_labels(coverage.state_run, coverage.sample)[(state, sample)]
+    residues = chem.parse_sequence(parent)
+    n = len(residues)
+    start = int(table.parent_start[0])
+    pairs, names = _series(table, None, labels)
+    index = {(str(r), str(c), str(f), int(z)): i for i, (r, c, f, z) in enumerate(zip(
+        table.run, table.condition, table.fragment, table.charge, strict=True))}
+    m_charges = sorted({int(z) for z, ion in zip(table.charge, table.ion_type, strict=True)
+                        if chem.ion_terminus(str(ion)) == "M"})
+    ions = sorted({str(t) for t in table.ion_type if chem.ion_terminus(str(t)) != "M"})
+    blocks = [(pair, z) for pair in _coverage_pairs(ions)
+              for z in sorted({int(c) for c, t in zip(table.charge, table.ion_type, strict=True)
+                               if str(t) in pair})]
+    rows: list[tuple] = [("M", z) for z in m_charges]
+    rows += [("cut", pair, z, k) for pair, z in blocks for k in range(1, n)]
+    if len(rows) == len(m_charges):
+        raise ValueError(f"no fragment ions of {parent}")
+    height = len(rows)
+    fig = Figure(figsize=(1.6 + 3.0 * len(pairs), 1.3 + 0.15 * height), layout="constrained")
+    axes = fig.subplots(1, len(pairs), sharey=True, squeeze=False)[0]
+    edges = [x + 0.5 for x in range(n + 1)]
+    for ax, (series_run, condition) in zip(axes, pairs, strict=True):
+        name = names[(series_run, condition)]
+        for y, row in enumerate(rows):
+            if row[0] == "M":
+                i = index.get((series_run, condition, f"M:{n}", row[1]))
+                if i is not None:
+                    _coverage_bar(ax, table, i, 0.5, n + 0.5, -y, "M", name, shown)
+                continue
+            _, (n_ion, c_ion), z, k = row
+            if residues[k] == "P":  # the cut before a proline: neither ion is made
+                ax.text(k + 1, -y, "P", ha="center", va="center", fontsize=6, color="#aa0000")
+            for ion, length, left, right, side in (
+                    (n_ion, k, 0.5, k + 0.5 - _COVERAGE_GAP, "left"),
+                    (c_ion, n - k, k + 0.5 + _COVERAGE_GAP, n + 0.5, "right")):
+                i = (index.get((series_run, condition, f"{ion}:{length}", z))
+                     if ion is not None else None)
+                if i is not None:
+                    _coverage_bar(ax, table, i, left, right, -y, side, name, shown)
+            following = rows[y + 1] if y + 1 < height else None
+            if following is not None and following[1:3] != row[1:3]:
+                ax.axhline(-y - 0.5, color="#999999", linewidth=0.6)  # the next block
+        ax.set_xlim(0.5, n + 0.5)
+        ax.set_xticks(range(1, n + 1), residues, fontsize=7)
+        ax.set_xticks(edges, minor=True)
+        ax.tick_params(axis="x", which="major", length=0)
+        ax.tick_params(axis="x", which="minor", length=3, width=0.6, direction="out")
+        # every residue numbered over its letter, without a mark (a mark at a residue's
+        # centre read as a bar's end); the marks at the residue boundaries
+        top = ax.secondary_xaxis("top")
+        top.set_xticks(range(1, n + 1), [str(start + j) for j in range(n)],
+                       fontsize=5.5 if n <= 16 else 5, rotation=0 if n <= 16 else 90)
+        top.set_xticks(edges, minor=True)
+        top.tick_params(which="major", length=0, pad=2)
+        top.tick_params(which="minor", length=3, width=0.6, direction="out")
+        for x in edges[1:-1]:
+            ax.axvline(x, color="#f0f0f0", linewidth=0.5, zorder=0)
+        points = sorted({int(p) for p, kin, c, r in zip(
+            table.points, table.kinetics, table.condition, table.run, strict=True)
+            if str(c) == condition and str(r) == series_run and not kin})
+        said = (f"{points[-1]} time points" if points else "kinetics: share of scans kept")
+        ax.set_title(f"{name}  ({said})", fontsize=8)
+
+    def label(row, side: str) -> str:
+        if row[0] == "M":
+            return f"M {row[1]}+" if side == "left" else ""
+        _, (n_ion, c_ion), z, k = row
+        ion, length = (n_ion, k) if side == "left" else (c_ion, n - k)
+        return f"{ion}:{length} {z}+" if ion is not None else ""
+
+    axes[0].set_ylim(-height + 0.4, 0.6)
+    axes[0].set_yticks([-y for y in range(height)], [label(r, "left") for r in rows],
+                       fontsize=5.5)
+    right = axes[-1].secondary_yaxis("right")
+    right.set_yticks([-y for y in range(height)], [label(r, "right") for r in rows],
+                     fontsize=5.5)
+    handles = [Patch(facecolor=face, edgecolor=edge, hatch=hatch,
+                     label=text.format(n=COVERAGE_MIN_POINTS, m=COVERAGE_MIN_POINTS - 1))
+               for text, face, edge, hatch, _ in _COVERAGE_STYLE.values()]
+    handles.append(Patch(facecolor="none", edgecolor="none",
+                         label="P: no cut before a proline; numbers: time points kept"))
+    fig.legend(handles=handles, loc="outside lower center", ncols=2, fontsize=7,
+               frameon=False)
+    fig.suptitle(f"{shown}  {parent} ({_span(start, parent)}), precursor {pz}+", fontsize=9)
+    return fig
+
+
 def _kinetics_rows(results, uptake: FragmentUptake) -> np.ndarray:
     """Whether each row of ``uptake`` came from a kinetics run (every scan its own time:
     :func:`hxex.io.mzml.kinetics_spectra`)."""
@@ -849,15 +1036,17 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     """The fragment part of an analysis (:class:`hxex.analysis.FragmentAnalysis` ``config``):
     tables (name -> columns) and figures (file stem -> function drawing it), or empty ones when
     the run has no fragment series. Per parent (``<sample>_<range>_z<charge>``):
+    ``fragment_coverage_...`` (which fragments kept enough spectra to fit),
     ``ladder_..._<ion>_z<charge>``, ``fragments_..._<condition>_<ion>_z<charge>`` (every
     fragment of the series on one panel), ``closure_..._<n ion>+<c ion>`` and
     ``residue_rates_...``;
-    tables ``fragment_uptake``, ``fragment_left_out`` (the spectra ``config.leave_out_flags``
-    left out, with the flags), ``ladder_rates``, ``ladder_residues`` and ``closure``. A parent
-    read at several precursor charges has one ``residue_rates_<sample>_<range>`` (no charge)
-    for all of them. The rate fits are opt-in (``config.fit_rates``): without them there are
-    no ``ladder_rates``, ``ladder_residues`` or ``residue_rates_...``, and the ladder figures
-    draw no fitted curves (no decay is fitted at all).
+    tables ``fragment_uptake``, ``fragment_coverage``, ``fragment_left_out`` (the spectra
+    ``config.leave_out_flags`` left out, with the flags), ``ladder_rates``,
+    ``ladder_residues`` and ``closure``. A parent read at several precursor charges has one
+    ``residue_rates_<sample>_<range>`` (no charge) for all of them. The rate fits are opt-in
+    (``config.fit_rates``): without them there are no ``ladder_rates``, ``ladder_residues``
+    or ``residue_rates_...``, and the ladder figures draw no fitted curves (no decay is
+    fitted at all).
     ``results`` may be a
     :class:`hxex.analysis.RunSet` (:func:`hxex.analysis.fragment_uptake`): the tables' ``run``
     column then names each row's run, and the figures of an unmerged sample found in several
@@ -869,6 +1058,7 @@ def fragment_outputs(results, config, *, quiet: bool = False,
     from ..analysis.fragments import (
         _PARTNERS,
         closure_table,
+        fragment_coverage,
         fragment_ion_types,
         fragment_left_out,
         fragment_uptake,
@@ -916,6 +1106,8 @@ def fragment_outputs(results, config, *, quiet: bool = False,
                                       min_time=config.min_time, tolerance=config.tolerance,
                                       parents=parents))
     tables = {"fragment_uptake": uptake.columns()}
+    coverage = fragment_coverage(results, leave_out_flags=flags)
+    tables["fragment_coverage"] = coverage.columns()
     left = fragment_left_out(results, leave_out_flags=flags)
     if left and len(left["reason"]):  # the spectra left out, and why (not the rejected)
         tables["fragment_left_out"] = left
@@ -955,6 +1147,8 @@ def fragment_outputs(results, config, *, quiet: bool = False,
         name = shown[(state, sample)]
         stem = f"{name}_{start}-{start + len(chem.parse_sequence(parent)) - 1}_z{pz}"
         sel = {"run": state, "sample": sample, "parent": parent, "parent_charge": pz}
+        jobs.append((f"fragment_coverage_{stem}", lambda sel=sel: fragment_coverage_figure(
+            coverage, labels=config.labels, **sel)))  # which fragments have data to fit
         solvent = sample_setting(config.exchange, state, sample) if config.kint else None
         kint = (intrinsic_rates(parent, solvent, start=start) if solvent is not None
                 else None)

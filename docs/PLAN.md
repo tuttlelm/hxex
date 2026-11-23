@@ -2323,7 +2323,8 @@ Planned, not built:
      Tests: each incremental path against a fresh run,
      as the preset tests do (HISTORY 354).
 41. **Fragment-ion coverage: which fragments have data to fit** (owner, 2026-11-23: designed
-   from drafts, nothing built; drafts and script in the private record
+   from drafts, built the same day, HISTORY 441; drafts
+   and script in the private record
    `hxex_private/analysis_examples/fragment_coverage`). An overall quality assessment, per
    parent at one precursor charge: which fragment ions kept enough spectra after the fragment
    flag filter (HISTORY 410) to fit ladder rates, and which were never read.

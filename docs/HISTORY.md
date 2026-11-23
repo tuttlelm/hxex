@@ -11797,3 +11797,29 @@ CSVs or mzML if wanted.
     1-3 s a dataset. Tests: test_claims.py (lost, isomer, windows apart, unclaimed, labelled
     spectra, off without the m/z check, too few clusters, the charge term, flags, the filter and
     its reason, accepted), test_report.py.
+
+441. **Fragment coverage built** (2026-11-23; PLAN Next steps 41, designed from drafts the
+    owner chose among). Per parent at one precursor charge, `fragment_coverage_<parent>` shows
+    which fragment ions kept enough spectra to fit ladder rates, an overall quality assessment:
+    a panel per condition; the precursor ion (M) at each charge first; then a block per
+    fragment charge with a row for every cut, the N-terminal ion of that length left of the
+    cut and its complementary C-terminal ion (same fragment charge) right of it, a small gap
+    at the cut so two empty bars still show where it is. The owner's choices: this folded
+    layout over a row per ion (96 rows for a 22-residue 4+ parent, 66 folded), a row per cut
+    with charges as sub-rows, and a grid of cuts; blocks kept whole (what is missing shows);
+    the M rows labelled on the left; a red P on the proline of a cut never made; every
+    residue numbered over its letter with marks at the residue boundaries (a mark at a
+    residue's centre read as a bar's end); the title stops at the precursor charge (the
+    sample's name before it). Each fragment series counts the time points (the undeuterated
+    control as time 0) with a spectrum the fragment analysis keeps, against those read in its
+    sample, parent, and condition (a kinetics series: its own scans, shown as a share); five
+    states: every point kept, some left out but at least 4 kept (`fit_decay`'s fewest), 1-3
+    kept (too few to fit rates), read but every point left out, targeted but never read (a
+    series of the read record with no spectrum). `hxex.analysis.fragment_coverage` and
+    `fragment_coverage.csv` (points, kept, state, and `left_out_<reason>` per reason),
+    `hxex.report.fragment_coverage_figure`; analysis only (owner: Results has no coverage
+    figures), first among the fragment kinds of the Analysis tree. On the private targeted
+    Orbitrap dataset (18 parents, 1,550 fragment series, quality flags of an earlier
+    version): 254 every point kept, 201 enough, 16 too few, 885 every point left out, 194 never
+    read; the drawn pages match the drafts. Private record:
+    `hxex_private/analysis_examples/fragment_coverage`. Tests: test_fragment_kinetics.py.

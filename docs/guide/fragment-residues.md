@@ -9,8 +9,9 @@ also gets the residue's intrinsic rate and its protection factor with a standard
 (`log10_protection`, `log10_protection_se`).
 
 **The rate fits are opt-in.** Fitting every step takes time: several minutes on a large run.
-Without `fit_rates = true`, `hxex analyse` still writes `fragment_uptake.csv`, `closure.csv`,
-the ladder figures, the fragment traces, and the closure figures, but the ladder figures show the measured points
+Without `fit_rates = true`, `hxex analyse` still writes `fragment_uptake.csv`,
+`fragment_coverage.csv`, `closure.csv`, the fragment coverage, the ladder figures, the fragment
+traces, and the closure figures, but the ladder figures show the measured points
 and differences without fitted curves, and there is no `ladder_rates.csv`,
 `ladder_residues.csv`, or residue-rates figure. Turn the fits on when you want the rates:
 
@@ -27,6 +28,32 @@ Everything below about rates, precise steps, and fitted curves applies only with
 listed in `fragment_left_out.csv` (see [Experiments: fragments](experiments.md#fragments)).
 In the window, the Results tree's "left out" column names them as `fragment quality flag`,
 with the flags in brackets, and its "left out" filter finds them.
+
+**Which fragments have data to fit.** `fragment_coverage_<parent>` is an overall quality
+assessment of one parent at one precursor charge: for every fragment ion, how many time points
+still have a spectrum after the spectra above are left out (and those you rejected or
+excluded). There is a panel per condition. The residues of the parent run along the bottom,
+with their numbers on the protein along the top. The first rows are the precursor ion (M) at
+each charge. Below them is a block for each fragment charge, with a row for every cut of the
+parent: the N-terminal fragment of that length (c-1, say) is the bar left of the cut, and the
+C-terminal fragment that makes up the rest of the parent (z-dot) is the bar right of it, at
+the same fragment charge. The left side names the N-terminal fragments, the right side the
+C-terminal ones. Each bar says how many time points it kept (the undeuterated control counts
+as one) and is coloured by what that allows:
+
+- every point kept (dark);
+- some left out, at least 4 kept (mid): enough to fit a rate;
+- 1 to 3 points kept (pale): too few to fit rates;
+- read, every point left out (white);
+- targeted, never read (hatched grey): no spectrum of it was read at all.
+
+Every cut has its row, also when nothing of it is usable, so what is missing shows. A cut
+before a proline is never made, so its row is empty but for a red P on the proline. In a
+kinetics run, where every scan has its own time, a bar gives the share of its scans kept
+instead of a count. `fragment_coverage.csv` holds the same for every fragment ion: the time
+points it could have (`points`) and kept (`kept`), its `state` (`all`, `enough`, `too_few`,
+`none`, or `not_read`), and how many of its spectra each reason left out (`left_out_rejected`,
+`left_out_below_noise`, and so on). It needs no rate fits.
 
 **The ladder figure.** `ladder_<parent>_<ion>_z<charge>` shows the precursor in its top
 row, then a row for each step of the ladder, read top to bottom. In each step's row, the

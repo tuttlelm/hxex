@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 
 import numpy as np
 
@@ -390,6 +390,212 @@ def _runset_uptake(runs, exclude_flagged: bool,
         parts.append(cols)
     return FragmentUptake(**{key: np.concatenate([c[key] for c in parts]) for key in parts[0]},
                           nterm_subtract=first.nterm_subtract, amide_rules=first.amide_rules)
+
+
+# --- which fragments have data to fit (the coverage figure) ----------------------------------
+
+# fit_decay's fewest points: a fragment series with fewer kept time points cannot give a rate
+COVERAGE_MIN_POINTS = 4
+# the states of a fragment series, from best to worst: every time point kept; some left out
+# but enough kept to fit; too few to fit rates; read, every point left out; targeted, no
+# spectrum read
+COVERAGE_STATES = ("all", "enough", "too_few", "none", "not_read")
+
+
+@dataclass(frozen=True)
+class FragmentCoverage:
+    """Which fragment ions kept enough spectra to fit (:func:`fragment_coverage`), one row per
+    fragment series: ``sample``, ``condition``, ``parent`` (its sequence), ``parent_start``,
+    ``parent_charge``, ``fragment`` (``'c-1:4'``; ``'M:8'`` for the precursor ion),
+    ``ion_type``, ``length``, ``charge`` (of the fragment), ``data_id`` (the series; -1 when
+    no spectrum was read and the read record has none), ``kinetics`` (a kinetics run: every
+    scan its own time), ``points`` (the time points the series could have: those read in its
+    sample, parent and condition, the undeuterated control as time 0; a kinetics series' own
+    scans), ``kept`` (those with a spectrum the fragment analysis keeps), ``state`` (one of
+    :data:`COVERAGE_STATES`) and ``reasons``: per reason (``'rejected'``, ``'excluded'``, or
+    a flag of ``leave_out_flags``) the spectra of each row it left out. ``run`` and
+    ``merged`` as in :class:`FragmentUptake`."""
+
+    sample: np.ndarray
+    condition: np.ndarray
+    parent: np.ndarray
+    parent_start: np.ndarray
+    parent_charge: np.ndarray
+    fragment: np.ndarray
+    ion_type: np.ndarray
+    length: np.ndarray
+    charge: np.ndarray
+    data_id: np.ndarray
+    kinetics: np.ndarray
+    points: np.ndarray
+    kept: np.ndarray
+    state: np.ndarray
+    reasons: Mapping[str, np.ndarray] = field(default_factory=dict)
+    run: np.ndarray | None = None
+    merged: np.ndarray | None = None
+
+    def __post_init__(self):
+        _fill_runs(self)
+
+    def __len__(self) -> int:
+        return len(self.fragment)
+
+    @property
+    def state_run(self) -> np.ndarray:
+        """The run of each row's state: its ``run``, or '' for a merged sample."""
+        return _state_run(self)
+
+    def where(self, **conditions) -> np.ndarray:
+        """Rows whose columns equal the values given (as :meth:`FragmentUptake.where`)."""
+        keep = np.ones(len(self), dtype=bool)
+        for name, value in conditions.items():
+            if value is None:
+                continue
+            values = value if isinstance(value, (list, tuple, set)) else [value]
+            keep &= np.isin(getattr(self, name), list(values))
+        return keep
+
+    def select(self, mask) -> FragmentCoverage:
+        mask = np.asarray(mask)
+        cols = {f.name: getattr(self, f.name)[mask] for f in fields(self)
+                if f.name != "reasons"}
+        return FragmentCoverage(**cols, reasons={k: v[mask] for k, v in self.reasons.items()})
+
+    def columns(self) -> dict[str, np.ndarray]:
+        """The table ``fragment_coverage.csv``: identity, counts, state, then a column
+        ``left_out_<reason>`` per reason."""
+        cols = {"run": self.run}
+        for name in ("sample", "parent", "parent_start", "parent_charge", "condition",
+                     "fragment", "ion_type", "length", "charge", "data_id", "kinetics",
+                     "points", "kept", "state"):
+            cols[name] = getattr(self, name)
+        cols |= {f"left_out_{k}": v for k, v in self.reasons.items()}
+        return cols
+
+
+def coverage_state(kept: int, points: int, read: bool = True) -> str:
+    """The state of a fragment series with ``kept`` of ``points`` time points kept
+    (:data:`COVERAGE_STATES`); ``read`` False: no spectrum of it was read."""
+    if not read:
+        return "not_read"
+    if kept and kept >= points:
+        return "all"
+    return ("enough" if kept >= COVERAGE_MIN_POINTS else "too_few" if kept else "none")
+
+
+def fragment_coverage(results, *, leave_out_flags: Sequence[str] = ()) -> FragmentCoverage:
+    """Which fragment ions of ``results`` (one run read from mzML or Thermo files, or a
+    :class:`hxex.analysis.RunSet`) kept enough spectra to fit ladder rates: per fragment
+    series, its time points with at least one spectrum the fragment analysis keeps (not
+    rejected, not excluded, no flag of ``leave_out_flags``; the precursor ion is never left
+    out for its flags, as in :func:`fragment_uptake`) against the time points it could have,
+    and the series the read record targets but never read (no spectrum). The fully
+    deuterated controls are not counted (they are not a point of the kinetics); the
+    undeuterated control is time 0 (owner, 2026-11-23: an overall quality assessment, PLAN
+    Next steps 41)."""
+    from ..io.mzml import SCAN_READERS
+    from .runs import RunSet
+
+    if not isinstance(results, RunSet):
+        return _coverage(results, tuple(leave_out_flags))
+    parts = []
+    for name, r in results.runs.items():
+        source = r.settings.spectra_source if r.settings is not None else None
+        if not source or source.get("reader") not in SCAN_READERS:
+            continue
+        c = _coverage(r, tuple(leave_out_flags))
+        if not len(c):
+            continue
+        cols = {f.name: getattr(c, f.name) for f in fields(c) if f.name != "reasons"}
+        cols["merged"] = np.array([results.is_merged(name, s) for s in c.sample], bool)
+        cols["sample"] = np.array([results.state(name, s)[1] for s in c.sample], str)
+        cols["run"] = np.full(len(c), name, dtype=object)
+        parts.append((cols, c.reasons))
+    if not parts:
+        raise ValueError("fragment_coverage needs a run read from mzML or Thermo files")
+    names = list(dict.fromkeys(k for _, reasons in parts for k in reasons))
+    joined = {key: np.concatenate([c[key] for c, _ in parts]) for key in parts[0][0]}
+    reasons = {k: np.concatenate([r.get(k, np.zeros(len(c["fragment"]), dtype=np.int64))
+                                  for c, r in parts]) for k in names}
+    return FragmentCoverage(**joined, reasons=reasons)
+
+
+def _coverage(results, leave_out_flags: tuple[str, ...]) -> FragmentCoverage:
+    """:func:`fragment_coverage` of one run."""
+    from ..io.mzml import kinetics_spectra, mzml_series_targets
+
+    u, why = _uptake(results, False, True, leave_out_flags)
+    source = results.settings.spectra_source
+    kinetics = kinetics_spectra(source, [str(s) for s in u.spectrum_id])
+    # the time points of each sample, parent, precursor charge and condition (every ion of it,
+    # the precursor's too: read in every file of the run)
+    times: dict[tuple, set] = {}
+    for i in range(len(u)):
+        times.setdefault((str(u.sample[i]), str(u.parent[i]), int(u.parent_charge[i]),
+                          str(u.condition[i])), set()).add(float(u.time[i]))
+    series: dict[tuple, dict] = {}
+    for i in range(len(u)):
+        key = (str(u.sample[i]), str(u.condition[i]), str(u.parent[i]),
+               int(u.parent_charge[i]), str(u.fragment[i]), int(u.charge[i]))
+        s = series.setdefault(key, {
+            "row": i, "times": set(), "kept": set(), "kinetics": bool(kinetics[i]),
+            "reasons": {}})
+        s["times"].add(float(u.time[i]))
+        if why[i] == "":
+            s["kept"].add(float(u.time[i]))
+        else:
+            for reason in str(why[i]).split(";"):
+                s["reasons"][reason] = s["reasons"].get(reason, 0) + 1
+    rows: list[dict] = []
+    for key, s in series.items():
+        i = s["row"]
+        points = (len(s["times"]) if s["kinetics"]
+                  else len(times[(key[0], key[2], key[3], key[1])]))
+        rows.append({
+            "sample": key[0], "condition": key[1], "parent": key[2],
+            "parent_start": int(u.parent_start[i]), "parent_charge": key[3],
+            "fragment": key[4], "ion_type": str(u.ion_type[i]), "length": int(u.length[i]),
+            "charge": key[5], "data_id": int(u.data_id[i]), "kinetics": s["kinetics"],
+            "points": points, "kept": len(s["kept"]),
+            "state": coverage_state(len(s["kept"]), points), "reasons": s["reasons"]})
+    # the series the read record holds but no spectrum of which was read
+    read = {int(d) for d in results.fit.data_id}
+    targets = mzml_series_targets(source)
+    for entry in source.get("series", ()):
+        d = int(entry["data_id"])
+        target = targets.get(d)
+        extra = dict(target.entry.extra) if target is not None else {}
+        if d in read or "fragment" not in extra:
+            continue
+        label = str(extra["fragment"])
+        ion, _, length = label.rpartition(":")
+        parent = str(extra["parent_peptide"])
+        sample, condition = str(entry.get("sample", target.entry.sample)), _condition(target)
+        key = (sample, condition, parent, int(extra["parent_charge"]), label,
+               int(target.entry.charge))
+        if key in series:
+            continue
+        rows.append({
+            "sample": sample, "condition": condition, "parent": parent,
+            "parent_start": int(str(extra["parent_range"]).split("-")[0]),
+            "parent_charge": key[3], "fragment": label, "ion_type": ion,
+            "length": (int(length) if chem.ion_terminus(ion) != "M"
+                       else len(chem.parse_sequence(parent))),
+            "charge": key[5], "data_id": d, "kinetics": False,
+            "points": len(times.get((sample, parent, key[3], condition), ())), "kept": 0,
+            "state": "not_read", "reasons": {}})
+        series[key] = {}
+    kinds = {"parent_start": np.int64, "parent_charge": np.int64, "length": np.int64,
+             "charge": np.int64, "data_id": np.int64, "kinetics": bool, "points": np.int64,
+             "kept": np.int64}
+    names = [f.name for f in fields(FragmentCoverage)
+             if f.name not in ("reasons", "run", "merged")]
+    cols = {n: np.array([r[n] for r in rows], dtype=kinds.get(n, str)) for n in names}
+    order = list(dict.fromkeys(["rejected", "excluded", *leave_out_flags,
+                                *(k for r in rows for k in r["reasons"])]))
+    reasons = {k: np.array([r["reasons"].get(k, 0) for r in rows], dtype=np.int64)
+               for k in order}
+    return FragmentCoverage(**cols, reasons=reasons)
 
 
 @dataclass(frozen=True)
