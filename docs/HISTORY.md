@@ -11671,3 +11671,48 @@ CSVs or mzML if wanted.
     programs for the same reason. Not done: rendering SVG off the window's thread (a slow figure
     of another kind would still hold the window). Tests: test_analysis.py (one hatched shape,
     30 stretches each named).
+
+438. **Peak claims measured** (2026-11-23; PLAN 34 identity; owner: "show me the numbers
+    before proposing any build"). On the four datasets of item 434 (tutorial, benchmark, Orbitrap
+    digest, private pooled dataset; peak-picked runs with main 1313c24), each undeuterated
+    control's isotope cluster (the series at its ion's charge in its picking windows, found in the
+    stored raw profile) was claimed by every listed ion of the sample whose grid it sits on:
+    calibrated position within 4 x the run's own-cluster scatter at that height (about 2 ppm on
+    the tutorial and benchmark, 0.5-0.9 on the Orbitrap, 2.5-6 on the pooled data), a gross shape
+    check (a wrong monoisotopic peak), and the two ions' windows and drift ranges overlapping in
+    that injection (exports: the two profiles alike). Verdicts per control, own / isomer (same
+    composition) / shared / lost / unclaimed / wrong shape / no cluster: tutorial 477 / 30 / 0 / 8
+    / 2 / 0 / 1; benchmark 2,158 / 0 / 0 / 0 / 27 / 11 / 36; Orbitrap 904 / 28 / 1 / 21 / 64 / 2 /
+    106; pooled 5,225 / 232 / 79 / 72 / 165 / 183 / 404. Lost and isomer counts do not move
+    between 3 and 5 sd. Lost series: the tutorial's 13-24 2+ in all three samples (19-23 ppm off,
+    on 55-67 2+, the case of item 436, reproduced); 13 Orbitrap series, where the DDA
+    identifications (item 200) confirm 9 of the 10 pairs with both peptides identified (the
+    claimant identified at the window's time, the lost peptide elsewhere; the tenth unclear); 5
+    ions of the pooled dataset in all 5 samples; none on the benchmark. Caught by no existing
+    check (flags, screens, undeuterated stand-ins): the tutorial's WT series, one pooled ion in
+    all five samples, two Orbitrap series; a lost series agrees with its replicates (it is
+    consistently the other ion), so replicates cannot see it. Isomers, 12-60 series a dataset,
+    are undecidable by MS1 and named by no check. Unclaimed, empty (including controls dropped as
+    empty) and misshapen own clusters are mostly caught already (benchmark 21 of 27 series,
+    Orbitrap 80 of 87, pooled 114 of 153); the rest are ordinary by their replicates on the
+    benchmark and moderately worse on the Orbitrap and pooled data. Other clusters in the read
+    windows: listed ions co-eluting in another ion's window (benchmark 46, Orbitrap 368, pooled
+    526 at >= 10 % of the window), the data side of the overlap map; matching the unclaimed ones
+    against every 4-50 residue peptide of the sequences beats shuffled-sequence decoys on the
+    benchmark (51 vs 17 expected) and not on the pooled forms (equal); recurrence of a match over
+    injections is no evidence (the same cluster recurs). The natural-pattern leftover (NNLS of
+    the picked bins on the shifted natural pattern) follows brightness (Spearman -0.5 to -0.67)
+    and its worst 2 % are 91-100 % caught already; it cannot see a lost cluster (one clean
+    species), the claims cannot see a mixture on the ion's grid. Calibration: after the m/z
+    check's per-run line the clusters carry a charge tilt, tutorial -5.3 to +7.0 ppm from 1+ to
+    5+, benchmark +0.8 to -3.0 (opposite directions: not an instrument constant); a term per
+    charge in the m/z check's own calibration lowers the tutorial's scatter 3.2 -> 2.4 ppm and
+    flags one more series there (the lost WT 13-24 2+), changes nothing on the other three, and
+    unflags nothing. Owner's decisions (2026-11-23): a lost series is left out of the analysis
+    by default with the other ion named, review status accepted keeping it; isomers get a flag
+    naming the other, no filter; exports are judged on position alone, the reason saying so; MS2
+    evidence later; the claim tolerance is the study's (4 x the run's own-cluster scatter at the
+    cluster's height), the flags are `other_ion` (lost) and `isomer_overlap`, a shared cluster
+    gets a flag naming the other (no filter), and the charge term is built into the m/z check
+    together with the claims. Design draft in PLAN 34. Private record:
+    hxex_private/analysis_examples/peak_claims (README, scripts, out/).

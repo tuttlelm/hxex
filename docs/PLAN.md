@@ -2139,6 +2139,55 @@ Planned, not built:
      clusters two ions claim, how many series lose their claim to another ion, how many of those
      `off_mz` already flags, whether they sit off their replicates and other charge states (the
      yardsticks of item 33 step 7), and how many unclaimed clusters a sequence peptide explains.
+     *Measured (2026-11-23, HISTORY 438):* a lost claim (the
+     series' undeuterated cluster off its own grid and on another listed ion's) is found in the
+     tutorial (13-24 2+, all three samples), the Orbitrap digest (13 series; the DDA identities
+     confirm 9 of the 10 checkable pairs) and the private pooled dataset (5 ions in all 5
+     samples), not in the benchmark; some are caught by no existing check. Isomers (same
+     composition, overlapping windows) are 12-60 series a dataset. Unclaimed, empty and misshapen
+     own clusters are mostly caught already. Sequence matching of unclaimed clusters beats its
+     decoys only where candidates are sparse (benchmark 51 vs 17; pooled forms none). The
+     natural-pattern leftover follows brightness and adds little. The m/z check's calibration
+     misses a charge tilt (tutorial -5 to +7 ppm from 1+ to 5+). Owner's decisions: a lost series
+     is left out of the analysis by default (as `off_mz`; review status accepted keeps it; the
+     reason names the other ion and both offsets); isomers get a flag naming the other, no
+     filter; exports (no retention windows) are judged on position alone, the reason saying so;
+     MS2 evidence later.
+     *Design (draft, for the owner):*
+     1. *Where:* the run stage, beside the m/z check (`hxex.picking.mz_check`), on the
+        undeuterated controls' stored or read profiles; every listed ion of the sample is a
+        claimant (the peptide table's rows, also those with no spectrum in that injection).
+     2. *The cluster:* the isotope series at the ion's charge from the tallest peak in its
+        picking windows of its first natural bins (peaks >= 2 % of the profile's tallest, steps
+        of the isotope spacing over the charge). Its offset to any ion's grid: the
+        intensity-weighted median of its peaks (>= 20 % of its tallest) to that ion's nearest
+        bin; a gross shape check (the ion's natural pattern placed at its bins leaves >= half
+        the cluster unexplained: a wrong monoisotopic peak) rejects a claimant. Shape decides
+        nothing between same-mass compositions (measured).
+     3. *Calibration:* the m/z check's per-run line plus one term per charge for the dataset
+        (refitted with the line). Changes `off_mz` on the tutorial only (one series flagged, the
+        lost WT 13-24 2+; scatter 3.2 -> 2.4 ppm), none elsewhere, nothing unflagged. Decided
+        (owner, 2026-11-23): built with the claims, one calibration shared by both.
+     4. *Claim:* within the tolerance of the run's own-cluster offsets at the cluster's height,
+        and the two ions' windows (and drift ranges) overlapping in that injection where both
+        were read (exports: not known, position alone). Decided (owner, 2026-11-23): 4 x the
+        robust sd of the run's own-cluster offsets at the cluster's height (finds the three
+        Orbitrap series `off_mz` misses, 3-7 ppm off), not the m/z check's limit.
+     5. *Verdicts:* per control own / isomer / shared / lost / unclaimed; the series takes its
+        controls' most common (ties: the worse); labelled spectra share it. Decided (owner,
+        2026-11-23): lost -> flag `other_ion` with the other ion and both offsets, and
+        `[analysis.filters]` leaves it out by default with that reason (review status accepted
+        keeps it); isomer -> flag `isomer_overlap` naming the other isomer, no filter; shared (two
+        compositions, both on grid; 1 Orbitrap series, 20 pooled) -> a flag naming the other, no
+        filter (name proposed: `shared_cluster`). Columns in spectra.csv / series.csv, entries in
+        `hxex explain` / flags.md, tooltips in the window.
+     6. *Not in the first build:* the unclaimed clusters' sequence candidates (a list needs its
+        decoy rate beside it, and the pooled forms make it meaningless), the leftover, MS2.
+     7. *Cost:* the claims took seconds per dataset in scratch (the pooled dataset's 6,360
+        controls in about a minute, most of it the sequence search that is not built).
+     8. *Tests:* synthetic two ions of one charge 20 ppm apart (lost), the same composition
+        (isomer), windows apart (no claim), an export (position alone, reason says so); build
+        check against the scratch verdicts and the Orbitrap DDA pairs.
 35. **A checkpoint of the fit stage** (owner, 2026-11-15, from the GUI audit's open question A 3:
    a run stopped during its fit stage leaves nothing on disk, although the stage is long now).
    The fits run in chunks of whole series with the plan recorded in the bundle (`chunk_plan`),
