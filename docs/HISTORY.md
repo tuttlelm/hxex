@@ -11652,3 +11652,18 @@ CSVs or mzML if wanted.
     kept, purity read, own offset, a peak run records and judges it), test_measure.py,
     test_report.py. Private records: hxex_private/analysis_examples/purity_fixed and
     profile_search (READMEs).
+
+437. **Hatched stretches drawn as one shape a style** (2026-11-23; owner: "do 1"). The window
+    hung for minutes on a maximised residue significance map shown as SVG (the private
+    three-protein heterooligomer dataset, 726 stretches "not tested" on one page): Qt redraws
+    the hatch pattern for every hatched rectangle, 23 s a repaint at 2560 x 1400 (22 of them the
+    "not tested" cross-hatch), and the SVG view renders in the window's thread on every repaint.
+    The residue significance maps (fD and K = 2) and the region composition map now gather their
+    hatched rectangles by style and draw each style as one path (`significance._Hatched`); each
+    rectangle keeps an invisible outline with its `gid`, so pointing at it still names its row
+    and residues (the combined path has no `gid`: the window's marks are boxes). Same page,
+    23.1 -> 0.3 s; the K = 2 maps 0.9-1.2 -> 0.2 s. Pictures identical except the thin seams
+    where two hatched rows met, which are gone. Saved SVG and PDF files open faster in other
+    programs for the same reason. Not done: rendering SVG off the window's thread (a slow figure
+    of another kind would still hold the window). Tests: test_analysis.py (one hatched shape,
+    30 stretches each named).

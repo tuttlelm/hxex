@@ -37,7 +37,8 @@ import numpy as np
 from matplotlib.colors import ListedColormap
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch, Polygon, Rectangle
+from matplotlib.patches import Patch, PathPatch, Polygon, Rectangle
+from matplotlib.path import Path
 from matplotlib.ticker import MultipleLocator
 
 from ..analysis import ChoiceComparison, RegionComparison, ResidueComparison
@@ -276,6 +277,7 @@ def _draw(sections, n: int, legend: list, title: str, block_outline: str | None 
     ax = fig.add_subplot()
     ax.pcolormesh(np.arange(n + 1) + 0.5, edges, image, cmap=cmap, vmin=-0.5,
                   vmax=len(SIGNIFICANCE_COLOURS) - 0.5, shading="flat")
+    hatched = _Hatched()  # one shape a style (:class:`_Hatched`)
     for y, marks in enumerate(hatches):  # runs of hatched residues
         for hatch, where in marks.items():
             r = 0
@@ -296,11 +298,10 @@ def _draw(sections, n: int, legend: list, title: str, block_outline: str | None 
                                 lw=0.6, zorder=4, gid=f"{DIFFERS}:{labels[y]}:{a}-{b}"))
                         r += 1
                         continue
-                    pattern, face, edge = _hatch_style(hatch)
-                    ax.add_patch(Rectangle((start + 0.5, edges[y]), r - start, heights[y],
-                                           facecolor=face, edgecolor=edge, hatch=pattern,
-                                           lw=0.0, gid=f"{hatch}:{labels[y]}:{start + 1}-{r}"))
+                    hatched.add(ax, hatch, start + 0.5, edges[y], r - start, heights[y],
+                                gid=f"{hatch}:{labels[y]}:{start + 1}-{r}")
                 r += 1
+    hatched.draw(ax)
     if block_outline is not None:  # the resolution: the blocks the peptides can tell apart
         for y, blocks in enumerate(outlines):
             for b0, b1 in blocks:
@@ -356,6 +357,36 @@ def _hatch_style(key: str) -> tuple[str, str, str]:
     if key == UNCONFIRMED_LESS:
         return "....", SIGNIFICANCE_COLOURS[0], SIGNIFICANCE_COLOURS[2]
     return key, "white", _EDGE
+
+
+class _Hatched:
+    """Hatched rectangles gathered by style and drawn as one shape a style (:meth:`draw`):
+    hundreds of separately hatched rectangles made the SVG view of a map take tens of seconds
+    to render and the window hang (a residue map with 726 untested stretches: 23 s at a
+    maximised size; owner, 2026-11-23). The hatching looks the same (its pattern is laid on the
+    page, not on each rectangle); each rectangle keeps an invisible outline carrying its
+    ``gid``, so pointing at it still names it."""
+
+    def __init__(self):
+        self._rects: dict[str, list[tuple[float, float, float, float]]] = {}
+
+    def add(self, ax, style: str, x: float, y: float, w: float, h: float,
+            gid: str | None = None) -> None:
+        self._rects.setdefault(style, []).append((x, y, w, h))
+        if gid is not None:
+            ax.add_patch(Rectangle((x, y), w, h, fill=False, lw=0.0, gid=gid))
+
+    def draw(self, ax) -> None:
+        for style, rects in self._rects.items():
+            verts, codes = [], []
+            for x, y, w, h in rects:
+                verts += [(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)]
+                codes += [Path.MOVETO, Path.LINETO, Path.LINETO, Path.LINETO, Path.CLOSEPOLY]
+            pattern, face, edge = _hatch_style(style)
+            ax.add_patch(PathPatch(Path(verts, codes), facecolor=face, edgecolor=edge,
+                                   hatch=pattern, lw=0.0))  # no gid: the window's marks
+            # are boxes, and this shape's box is most of the map
+        self._rects = {}
 
 
 def _hatch_patch(hatch: str, label: str) -> Patch:
@@ -678,13 +709,11 @@ _QUANTITY_HEADINGS = {
 _CELL = 0.84  # of a column and a row: a cell's bar
 
 
-def _segment(ax, x, y, w, style, gid=None):
+def _segment(ax, x, y, w, style, gid=None, hatched: _Hatched | None = None):
     if style is None:
         return  # white: the page shows through
     if isinstance(style, str):
-        pattern, face, edge = _hatch_style(style)
-        ax.add_patch(Rectangle((x, y), w, _CELL, facecolor=face, edgecolor=edge,
-                               hatch=pattern, lw=0.0, gid=gid))
+        hatched.add(ax, style, x, y, w, _CELL, gid=gid)
     else:
         ax.add_patch(Rectangle((x, y), w, _CELL, facecolor=SIGNIFICANCE_COLOURS[style],
                                lw=0.0, gid=gid))
@@ -779,13 +808,15 @@ def plot_region_composition(
     height = 0.2 * y + 2.0 + legend_height
     fig = Figure(figsize=(max(6.0, min(16.0, 0.9 * n + 3.0)), height))
     ax = fig.add_subplot()
+    hatched = _Hatched()
     for top, x0, segments, label, region in cells:
         y0 = top + (1 - _CELL) / 2
         for x, w, style, name in segments:
-            _segment(ax, x, y0, w, style, gid=f"{name}:{label}:{region}")
+            _segment(ax, x, y0, w, style, gid=f"{name}:{label}:{region}", hatched=hatched)
         ax.add_patch(Rectangle((x0, y0), _CELL, _CELL, fill=False, edgecolor=BLOCK_OUTLINE,
                                lw=BLOCK_LINE_WIDTH, zorder=3, gid=f"region:{label}:{region}"))
-    labels_drawn = [(label, top) for (label, _, q, _), top in zip(rows, tops, strict=True)
+    hatched.draw(ax)
+    labels_drawn =[(label, top) for (label, _, q, _), top in zip(rows, tops, strict=True)
                     if q is not None]
     ax.set_xlim(0.0, n)
     ax.set_ylim(y, 0.0)

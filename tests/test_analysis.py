@@ -2593,13 +2593,26 @@ def test_residue_significance_map():
         reference="R", delta_crit=0.1, delta_shared=delta_shared,
         delta_shared_se=np.full(n, 0.01))
     assert list(significance_classes(rc)) == [0, 1, 2, 4, 5, 6, -1]
-    fig = plot_residue_significance(rc)
-    ax = fig.axes[0]
-    assert [p.get_gid() for p in ax.patches] == ["xxxx:V  4 s:7-7"]
-    assert len(SIGNIFICANCE_COLOURS) == 7
-    # a page of a long time course: its times only, its rows only
     import dataclasses
 
+    fig = plot_residue_significance(rc)
+    ax = fig.axes[0]
+    assert [p.get_gid() for p in ax.patches if p.get_gid()] == ["xxxx:V  4 s:7-7"]
+    assert [p.get_hatch() for p in ax.patches if p.get_hatch()] == ["xxxx"]
+    assert len(SIGNIFICANCE_COLOURS) == 7
+    # many stretches not tested: one hatched shape, each stretch still named where it is
+    # (hundreds of hatched rectangles made the window's SVG view hang; owner, 2026-11-23)
+    gaps = ResidueComparison(**{
+        f.name: np.tile(getattr(rc, f.name), 30) if isinstance(getattr(rc, f.name), np.ndarray)
+        else getattr(rc, f.name) for f in dataclasses.fields(ResidueComparison)})
+    gaps = dataclasses.replace(gaps, residue=np.arange(1, 7 * 30 + 1))
+    hatched = plot_residue_significance(gaps).axes[0].patches
+    assert [p.get_hatch() for p in hatched if p.get_hatch()] == ["xxxx"]
+    named = sorted((p.get_gid() for p in hatched if p.get_gid()), key=lambda g: int(g[-1:]))
+    assert len(named) == 30 and "xxxx:V  4 s:7-7" in named and "xxxx:V  4 s:210-210" in named
+    box = next(p for p in hatched if p.get_gid() == "xxxx:V  4 s:14-14")
+    assert (box.get_x(), box.get_width(), box.get_fill()) == (13.5, 1, False)
+    # a page of a long time course: its times only, its rows only
     from hxex.gui.figures import figure_rows
 
     two = ResidueComparison(**{
@@ -2635,7 +2648,7 @@ def test_residue_significance_map_at_k2():
         reason_reference=np.array([""] * n), reason=np.array([""] * n),
         agree=np.array([False, False, True, True, True]), reference="R")
     untested = plot_residue_significance_k2(choices)
-    gids = sorted(p.get_gid().split(":")[0] for p in untested.axes[0].patches)
+    gids = sorted(p.get_gid().split(":")[0] for p in untested.axes[0].patches if p.get_gid())
     assert gids == ["////", "\\\\\\\\"]  # sample only (residue 2), reference only (residue 1)
     assert "need a bootstrap" in untested.texts[0].get_text()
     keep = np.array([2, 3])  # residues 3 and 4: two in both
