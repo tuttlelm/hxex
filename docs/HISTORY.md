@@ -11754,3 +11754,42 @@ CSVs or mzML if wanted.
     three-protein dataset computed in 201 s. Tests: test_gui_analysis.py, test_gui_data.py,
     test_catalogue.py, test_fragment_kinetics.py, test_gui.py; guide gui.md; figures.md
     regenerated.
+
+440. **Peak claims built** (2026-11-23; PLAN 34 first step, from the design of item 438). Each
+    undeuterated control's isotope cluster (the series at the ion's charge from the tallest peak
+    in its windows of its first natural bins) is claimed by every ion read in its sample (every
+    peptide and charge, fragment ions apart) whose grid it sits on: within 4 x the run's
+    own-cluster scatter at the cluster's height (classes of log height), after the m/z check's
+    calibration of the injection plus its term for the charge; a gross shape check (leftover of a
+    scale-only fit by the natural pattern at most 0.5); the two ions' retention windows (and
+    drift ranges) overlapping in that injection where both were read, exported spectra on
+    position alone. Verdicts per control own / isomer / shared / lost / wrong_shape / unclaimed /
+    no_cluster; the series takes the most common (ties: the worse), its labelled spectra share
+    it. Module `hxex.picking.claims`, run from `pick_spectra` after the m/z check (`[run.picker]
+    off_mz_sd = false` turns both off; picking code changed, so bundles pick again on their next
+    run). Flags `other_ion` (lost), `isomer_overlap`, `shared_cluster` (owner confirmed the
+    name; QUALITY_VERSION 8); `[analysis.filters] other_ion` (default true) leaves a lost series
+    out, controls included (also out of the run's controls, as `off_mz`), with the reason `on
+    another ion's peaks (OTHER at +x ppm, own grid at +y ppm[ - by position alone: retention not
+    known])`; review status accepted keeps it; left_out_summary.csv counts them on one row.
+    Columns `claim`, `claim_other`, `claim_offset_ppm`, `claim_other_offset_ppm`,
+    `claim_by_position` in spectra.csv and series.csv (and binned.parquet). The m/z check's
+    calibration gains one term per charge for the dataset (median of that charge's agreeing,
+    distinct controls about their runs' lines, at least 5; lines and terms refitted three
+    times), as the study's charge_tilt.py. Build check on the four datasets of item 438
+    (stored spectra of the study's bundles, `hxex_private/analysis_examples/peak_claims`, README
+    section "Build check"): every lost series the same as the scratch with the same other ion
+    (tutorial 3, benchmark 0, Orbitrap 13, pooled 23), so the DDA comparison of item 438 holds
+    as it was (9 of 10 checkable pairs confirmed); isomer tutorial 12 / 12, Orbitrap 12 / 14,
+    pooled 60 / 60; shared Orbitrap 0 / 1 (VDFNVPMK, which the DDA had contradicted), pooled 20 /
+    20; `off_mz` with the charge term equal to the scratch's on every series (195, 919, 554,
+    1,585), which flags the tutorial's WT 13-24 2+ as item 438 measured. The other differences
+    (tutorial 3, benchmark 4, Orbitrap 4, pooled 5 series) move between own, unclaimed and
+    wrong_shape at the 4 sd edge (the built calibration is the m/z check's, not the study's own
+    fit of the clusters: own offsets 0.7 +- 0.7 ppm apart on the tutorial); none carries a flag.
+    Choices beside the draft: the claimants are the ions read in the sample (the study also
+    took peptide-table rows read nowhere in it), and exported spectra drop the study's
+    profile-similarity stand-in for retention (position alone, as decided). The claims take
+    1-3 s a dataset. Tests: test_claims.py (lost, isomer, windows apart, unclaimed, labelled
+    spectra, off without the m/z check, too few clusters, the charge term, flags, the filter and
+    its reason, accepted), test_report.py.

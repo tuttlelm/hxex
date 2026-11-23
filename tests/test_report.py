@@ -15,7 +15,7 @@ from hxex import chem
 from hxex.io import ReviewTable, open_bundle, write_bundle
 from hxex.model import Backend
 from hxex.model.mixture import MixtureBatch, PaddedBatch, shape_weights
-from hxex.picking.binned import MZ_CHECK_COLUMNS, PROFILE_COLUMNS
+from hxex.picking.binned import CLAIM_COLUMNS, MZ_CHECK_COLUMNS, PROFILE_COLUMNS
 from hxex.picking.screen import SCREEN_SCORES
 from hxex.pipeline import RunConfig, run
 from hxex.report import (
@@ -361,10 +361,12 @@ def test_tables_have_the_documented_columns_and_values(results):
     k_max = int(ks.max())
     assert f"mean_{k_max}" in spec and f"population_se_{k_max}" in spec
     # the screens, one column each, the series' m/z check, the purity (profile-mode spectra:
-    # every pick), then the spectrum's own m/z check, last
-    assert list(spec)[-14:] == [*SCREEN_SCORES, *MZ_CHECK_COLUMNS, *PROFILE_COLUMNS,
+    # every pick), the spectrum's own m/z check, then the claims of the series' cluster, last
+    assert list(spec)[-19:] == [*SCREEN_SCORES, *MZ_CHECK_COLUMNS, *PROFILE_COLUMNS,
                                 "spectrum_offset_ppm", "spectrum_offset_limit_ppm",
-                                "same_measurement_as"]
+                                *CLAIM_COLUMNS, "same_measurement_as"]
+    # one peptide: every series an isomer of the others (the same sequence under other labels)
+    assert set(spec["claim"]) <= {"own", "isomer", ""}
     assert np.isfinite(spec["purity"]).any() and np.isnan(spec["fit_offset_ppm"]).all()
     assert set(spec["same_measurement_as"]) == {""}  # no spectrum read twice here
     # the set's K beside the spectrum's: empty without the population test

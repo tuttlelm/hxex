@@ -168,7 +168,10 @@ log = logging.getLogger(__name__)
 FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz",
               "poor_envelope", "saturated", "tails_low", "bright", "rt_found", "undeut_high",
               "drift_unclear", "elution_cut", "precursor_off", "overlapping_ion",
-              "below_noise", "spectrum_off_mz", "low_purity")
+              "below_noise", "spectrum_off_mz", "low_purity", "other_ion", "isomer_overlap",
+              "shared_cluster")
+# the claims' verdicts (hxex.picking.claims) behind the flags of a series' undeuterated cluster
+CLAIM_FLAGS = {"other_ion": "lost", "isomer_overlap": "isomer", "shared_cluster": "shared"}
 
 
 # The version of the checks behind the flags: add one whenever a flag or statistic is added or
@@ -181,7 +184,8 @@ FLAG_NAMES = ("poor_fit", "low_intensity", "noise_outlier", "mz_shift", "off_mz"
 # 4: spectrum_off_mz (a spectrum off its injection's m/z). 5: overlapping_ion compares ions
 # within one time (a kinetics run's other times of an ion read as an overlapping ion).
 # 6: bright is no longer set (retired). 7: low_purity (a profile-fit spectrum's purity).
-QUALITY_VERSION = 7
+# 8: other_ion, isomer_overlap, shared_cluster (the claims of the undeuterated cluster).
+QUALITY_VERSION = 8
 
 # low_intensity: an injection's brightness is measured from at least this many of its spectra
 # with replicates (else it is taken as 1), and named in a warning outside these limits.
@@ -330,6 +334,9 @@ class QualityFlags:
     spectrum_offset_limit: np.ndarray | None = None
     spectrum_off_mz: np.ndarray | None = None
     low_purity: np.ndarray | None = None
+    other_ion: np.ndarray | None = None
+    isomer_overlap: np.ndarray | None = None
+    shared_cluster: np.ndarray | None = None
     version: int = QUALITY_VERSION  # of the checks that assessed them (QUALITY_VERSION)
 
     @property
@@ -347,7 +354,7 @@ class QualityFlags:
         for name in ("mz_shift", "off_mz", "poor_envelope", "saturated", "tails_low", "bright",
                      "rt_found", "undeut_high", "drift_unclear", "elution_cut",
                      "precursor_off", "overlapping_ion", "below_noise", "spectrum_off_mz",
-                     "low_purity"):
+                     "low_purity", *CLAIM_FLAGS):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.zeros(len(self.spectrum_id), dtype=bool))
         for name in ("ion_overlap_with", "injection"):
@@ -526,6 +533,7 @@ def assess_quality(
     injection: np.ndarray | None = None,
     skip_series=(),
     purity: np.ndarray | None = None,
+    claim: np.ndarray | None = None,
 ) -> QualityFlags:
     """Quality statistics and flags of a fit (see the module docstring). ``mz_offset_ppm`` is
     the picker's offset of every measurement (:attr:`~hxex.picking.BinnedSet.mz_offset_ppm`);
@@ -545,6 +553,9 @@ def assess_quality(
     ``skip_series``: series (``data_id``) left out of ``spectrum_off_mz`` (fragment ions).
     ``purity``: every measurement's purity
     (:attr:`~hxex.picking.BinnedSet.purity`; None or NaN: ``low_purity`` not assessed).
+    ``claim``: every measurement's series' claim verdict
+    (:attr:`~hxex.picking.BinnedSet.claim`; None or empty: not assessed), behind
+    ``other_ion``, ``isomer_overlap`` and ``shared_cluster``.
     ``controls``
     (:class:`hxex.controls.ControlTable`) gives ``undeut_high`` its limit (None: not
     assessed)."""
@@ -641,6 +652,11 @@ def assess_quality(
     low_purity = (np.zeros(m, dtype=bool) if config.min_purity is None or purity is None
                   else np.nan_to_num(np.asarray(purity, dtype=float), nan=1.0)
                   < config.min_purity)
+    verdict = (np.full(m, "", dtype=object) if claim is None
+               else np.asarray(claim, dtype=object))
+    if len(verdict) != m:
+        raise ValueError("claim must have one value per measurement")
+    claimed = {flag: verdict == word for flag, word in CLAIM_FLAGS.items()}
     return QualityFlags(
         config=config, spectrum_id=fit.spectrum_id, deviance=deviance,
         deviance_rel=deviance_rel, intensity=total, intensity_rel=intensity_rel,
@@ -664,7 +680,7 @@ def assess_quality(
         overlapping_ion=overlapping, signal_to_noise=snr, below_noise=below,
         injection=inj, injection_scale=scale, spectrum_offset=spec_offset,
         spectrum_offset_limit=spec_limit, spectrum_off_mz=spectrum_off, low_purity=low_purity,
-        **brightness,
+        **claimed, **brightness,
     )
 
 

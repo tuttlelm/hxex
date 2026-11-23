@@ -273,7 +273,13 @@ calibration, give or take a little scatter. With scan files (mzML or Thermo raw)
 one undeuterated control file; with the other formats, which do not say which file a spectrum came
 from, it is the undeuterated controls of one sample and replicate. On an Orbitrap the calibration is the same across
 the m/z range; on a Q-TOF it drifts by about 1 ppm per 100 m/z, so *hxex* fits a straight line
-in m/z for each injection.
+in m/z for each injection. The peaks also lean with charge, which a line in m/z cannot follow: in
+the tutorial data the 1+ ions sat about 5 ppm below the line and the 5+ ions 7 ppm above it, and on
+a Q-TOF benchmark the lean went the other way. So on top of the lines *hxex* takes one correction
+per charge for the whole project (the middle of that charge's controls about their injections'
+lines, from at least five of them; `hxex run` logs the corrections). Without it the lean widens
+the scatter, and every limit with it: in the tutorial data one series reading another ion's peaks
+passed the check in one sample by 1.4 ppm.
 
 A few series sit much further from that line, 10 to 50 ppm, by the same amount in every
 control. A peptide does not move that far by itself: the envelope there belongs to another
@@ -343,6 +349,75 @@ hxex run hxex.toml --spectra results --bundle results_offmz4
 The figures and analyses made from the earlier results are then out of date (see [Running
 again](outputs.md#running-again)). Results made with a version of *hxex* before this check have
 empty columns and no `off_mz` flag until they are run again.
+
+## A series on another ion's peaks
+
+```toml
+[analysis.filters]
+other_ion = true   # leave out series whose undeuterated peaks are another listed ion's
+```
+
+The m/z check asks how far a series' undeuterated peaks sit from where they should be; this
+check asks whose peaks they are. In each undeuterated control *hxex* finds the isotope cluster
+the series' windows hold, and lets every ion of the sample's peptide table (every peptide and
+charge, fragment ions aside) claim it when the cluster sits on that ion's own isotope positions:
+
+- **position:** within 4 times the injection's scatter for clusters of that brightness, after the
+  same calibration as the m/z check (dim clusters scatter more, so their limit is wider);
+- **shape:** the heights roughly follow the ion's natural isotope pattern (a gross check only:
+  it rejects a cluster whose first peak is not the ion's lightest; between peptides of the same
+  nominal mass the shape decides nothing);
+- **retention:** the two ions' retention windows in that injection overlap (and their drift
+  ranges, with ion mobility). Exported spectra (SpecExport, HX-Express, pooled folders) carry no
+  windows, so there a claim stands on position alone.
+
+The case behind it: in the tutorial data the ion 13-24 at 2+ is the spectrum of 55-67 at 2+ in
+every sample. The two sit 20.6 ppm apart, too close for a Q-TOF to separate; the peaks in
+13-24's windows sit on 55-67's positions (+0.2 ppm) and 20 ppm from 13-24's own. Its replicates
+agree with each other (they are all the other ion), its purity is high (one clean species, the
+wrong one), so nothing else showed it.
+
+What each series gets, from the most common verdict of its undeuterated controls (its labelled
+spectra share it, since deuterated peaks move):
+
+| `claim` | What it means | Flag | What *hxex* does |
+|---|---|---|---|
+| `own` | only the series' own ion claims its cluster | none | nothing |
+| `lost` | another listed ion claims it, the series' own ion does not | `other_ion` | `hxex analyse` leaves the series out, controls included |
+| `isomer` | another listed ion of the same composition claims it too (MS1 cannot tell them apart) | `isomer_overlap` | nothing: a flag naming the other |
+| `shared` | another listed ion of a different composition claims it too (one species claimed twice, or two species in one cluster) | `shared_cluster` | nothing: a flag naming the other |
+| `unclaimed` | no listed ion claims it (another species, or the series' cluster far off its own position) | none | nothing (the m/z check usually flags these) |
+| `wrong_shape` | on the series' own positions, but not its isotope pattern, and no other ion claims it | none | nothing |
+| `no_cluster` | no isotope cluster in its windows (often an empty control) | none | nothing |
+
+`spectra.csv` and `series.csv` show the verdict in `claim`, the other ion in `claim_other`
+(`0055-0067 LRAPSWFDTGLSE 2+`), how far the cluster sits from the series' own positions and from
+the other ion's in `claim_offset_ppm` and `claim_other_offset_ppm`, and `claim_by_position` (true
+when no retention windows could be compared). A series left out is listed in
+`left_out_spectra.csv` with the reason `on another ion's peaks`, the other ion and both offsets
+in brackets (and "by position alone: retention not known" for exported spectra).
+
+On four datasets we tested, such series were few (0 to 2 % of the series) but real: the tutorial's
+13-24 2+ in all three samples, 13 series of an Orbitrap digest (where the dataset's own
+identification runs confirmed 9 of the 10 that could be checked: the other ion was identified at
+the window's time and the series' peptide elsewhere), 5 ions in every sample of a pooled Q-TOF
+dataset, and none in a Q-TOF benchmark. The m/z check flags 13 of those 39 as well (the three
+tutorial series and 10 of the Orbitrap's); other checks caught most of the rest, but one pooled
+ion in all five samples and two Orbitrap series carried no flag at all. Isomers were more common
+(none to 60 series a dataset).
+
+What to do about a series flagged `other_ion`: as for one off its m/z, check its retention time;
+the peptide itself often elutes elsewhere. If you have checked it and want it kept, set its
+`review_status` to `accepted` in the review table, or turn the filter off with
+`[analysis.filters] other_ion = false`. For `isomer_overlap` and `shared_cluster`, compare the two
+series' values and retention times: where the two ions co-elute, neither series alone can say
+which one it measured.
+
+The check runs with the m/z check in `hxex run` (it uses its calibration): `[run.picker]
+off_mz_sd = false` turns both off. Fragment ions are not checked, nor series without an
+undeuterated control, nor any series when the project has fewer than five undeuterated clusters
+on their own positions (no scatter to measure). Results made with a version of *hxex* before this
+check have empty columns until they are run again.
 
 ## One spectrum off its injection's m/z
 

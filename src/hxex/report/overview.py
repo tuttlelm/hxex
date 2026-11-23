@@ -76,6 +76,9 @@ QUALITY_LABELS = {
     "below_noise": "below the noise",
     "spectrum_off_mz": "spectrum off m/z",
     "low_purity": "low purity",
+    "other_ion": "other ion",
+    "isomer_overlap": "isomer",
+    "shared_cluster": "shared cluster",
     "undeut_high": "UN too heavy",
     "any": "any flag",
 }

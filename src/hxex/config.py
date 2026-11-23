@@ -1966,8 +1966,9 @@ _COMMENTS: dict[str, str] = {
                             "calibration (at least 3 ppm; needs five undeuterated controls "
                             "with a found offset, else no series is checked; peptide ions "
                             "only; most likely "
-                            "another species, left out by [analysis.filters] off_mz; false: "
-                            "not checked)",
+                            "another species, left out by [analysis.filters] off_mz; its "
+                            "calibration also places the claims of other_ion, isomer_overlap, "
+                            "shared_cluster; false: neither checked)",
     "run.fit.k_min": "fewest populations tried (must be 1 with screen; the controls are also "
                      "fitted at K = 1 for the back-exchange correction, whatever k_min)",
     "run.fit.k_max": "most populations tried (equal to k_min: that number only, no choice)",
@@ -2621,6 +2622,8 @@ def template(fmt: str = "specexport", project: str = "my_project") -> str:
         "#                                 # species (spectra.csv screen_* columns)",
         "# off_mz = true                   # leave out the series flagged off_mz (another",
         "#                                 # species: check their retention times)",
+        "# other_ion = true                # leave out the series flagged other_ion (another",
+        "#                                 # listed ion's peaks: check their retention times)",
         "# replicate_outlier = 6           # typical replicate sd from the other replicates",
         "# above_amides = true             # leave out a K=1 mean above the amide count",
         '# stand_in_controls = "exclude"   # series without a measured fully deuterated control,',

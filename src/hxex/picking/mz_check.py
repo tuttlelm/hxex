@@ -34,8 +34,15 @@ out (``[analysis.filters] off_mz``).
   give no scatter (the line through three points passes through two of them): then no series
   is assessed. A control read for several samples (one file shared by them: the same ion with
   identical raw arrays) counts once in the line and scatter of every control.
+- On top of the runs' lines, one term per charge for the whole dataset (the median offset of
+  that charge's controls about their runs' lines, from at least ``MIN_CHARGE_CONTROLS`` of
+  them; the lines and the terms refitted ``CHARGE_PASSES`` times): the isotope clusters carry
+  a tilt with charge that a line in m/z does not take out (the tutorial's undeuterated
+  controls -5 to +7 ppm from 1+ to 5+, the benchmark's +1 to -3: not a constant of the
+  instrument; docs/HISTORY.md item 438). Without it the tilt widens the scatter, and every
+  limit with it.
 - A series' offset is the median over its controls (agreeing pairs included) of (offset minus
-  the run's calibration at the control's monoisotopic m/z);
+  the run's calibration at the control's monoisotopic m/z and charge);
   the series is off its m/z when that is beyond ``off_mz_sd`` times its runs' scatter, and at
   least ``MIN_LIMIT_PPM``.
 
@@ -65,6 +72,8 @@ CLIMB_GAP = 1.6  # profile points closer than this times the local spacing are o
 MIN_RUN_CONTROLS = 10  # a run with fewer offsets takes the scatter of every control
 MIN_SCATTER_OFFSETS = 5  # no scatter from fewer offsets: the series are not assessed
 MIN_LIMIT_PPM = 3.0  # an offset is never called off within this
+MIN_CHARGE_CONTROLS = 5  # a charge's term needs this many controls (fewer: no term)
+CHARGE_PASSES = 3  # the runs' lines and the charge terms refitted this many times
 _MAD_SD = 1.4826
 
 log = logging.getLogger(__name__)
@@ -179,6 +188,14 @@ class SeriesOffsets:
     n_controls: np.ndarray
     calibration: Mapping[tuple[str, str], tuple[float, float, float]] = field(
         default_factory=dict)
+    whole: tuple[float, float, float] = (float("nan"), 0.0, float("nan"))
+    charge_terms: Mapping[int, float] = field(default_factory=dict)
+
+    def calibration_ppm(self, run: tuple[str, str], mz: float, charge: int) -> float:
+        """Where the run ``run`` puts an ion of ``charge`` at the monoisotopic ``mz``: its
+        line there plus the charge's term, in ppm (NaN: no calibration)."""
+        intercept, slope, _ = self.calibration.get(run, self.whole)
+        return float(intercept + slope * mz + self.charge_terms.get(int(charge), 0.0))
 
     @property
     def off(self) -> np.ndarray:
@@ -235,7 +252,7 @@ def series_offsets(spectra, config: PickerConfig, *,
     data_id = np.asarray(spectra.data_id)
     rows = [i for i in np.flatnonzero(role == "undeut") if int(data_id[i]) not in skip]
     plans: dict[tuple, np.ndarray] = {}
-    offsets, paired, run_of, mono = [], [], [], []
+    offsets, paired, run_of, mono, charge = [], [], [], [], []
     for i in rows:
         series = int(data_id[i])
         own = series if series in clusters else None
@@ -254,17 +271,20 @@ def series_offsets(spectra, config: PickerConfig, *,
         paired.append(_agreed(tops, 1e6 * half / pred[0], pairs=True))
         run_of.append(injection(spectra, i))
         mono.append(float(pred[0]))
+        charge.append(key[1])
     offsets_arr = np.asarray(offsets, dtype=np.float64)
     mono_arr = np.asarray(mono, dtype=np.float64)
+    charge_arr = np.asarray(charge, dtype=np.int64)
     found = np.isfinite(offsets_arr)
     run_index: dict[tuple, list[int]] = defaultdict(list)
     for j, run in enumerate(run_of):
         if found[j]:
             run_index[run].append(j)
 
-    def calibration(at: np.ndarray) -> tuple[float, float, float]:
-        """(intercept, slope per m/z, scatter) of the controls ``at``."""
-        x, v = mono_arr[at], offsets_arr[at]
+    def calibration(at: np.ndarray, term: np.ndarray) -> tuple[float, float, float]:
+        """(intercept, slope per m/z, scatter) of the controls ``at``, less their charge
+        terms ``term`` (one per control)."""
+        x, v = mono_arr[at], offsets_arr[at] - term[at]
         slope, intercept = (theilslopes(v, x)[:2] if np.ptp(x) > 0
                             else (0.0, float(np.median(v))))
         resid = v - (intercept + slope * x)
@@ -283,10 +303,31 @@ def series_offsets(spectra, config: PickerConfig, *,
     if 0 < n_found < MIN_SCATTER_OFFSETS:
         log.info("m/z check: %d undeuterated control(s) with a measured offset, fewer than "
                  "the %d a scatter needs: no series assessed", n_found, MIN_SCATTER_OFFSETS)
-    whole = (calibration(np.flatnonzero(found & distinct)) if n_found >= MIN_SCATTER_OFFSETS
-             else (np.nan, 0.0, np.nan))
-    runs = {run: calibration(np.asarray(at)) if len(at) >= MIN_RUN_CONTROLS else whole
-            for run, at in run_index.items()}
+    terms: dict[int, float] = {}
+
+    def lines(terms: dict[int, float]) -> tuple[tuple, dict]:
+        term = np.array([terms.get(int(z), 0.0) for z in charge_arr], dtype=np.float64)
+        whole = (calibration(np.flatnonzero(found & distinct), term)
+                 if n_found >= MIN_SCATTER_OFFSETS else (np.nan, 0.0, np.nan))
+        return whole, {run: calibration(np.asarray(at), term) if len(at) >= MIN_RUN_CONTROLS
+                       else whole for run, at in run_index.items()}
+
+    whole, runs = lines(terms)
+    if n_found >= MIN_SCATTER_OFFSETS:
+        use = found & distinct
+        for _ in range(CHARGE_PASSES):
+            # each control's offset about its run's line (the terms taken out to fit the
+            # lines, then each charge's median of what is left)
+            about = np.array([offsets_arr[j] - runs.get(run_of[j], whole)[0]
+                              - runs.get(run_of[j], whole)[1] * mono_arr[j]
+                              for j in range(len(rows))], dtype=np.float64)
+            terms = {int(z): float(np.median(about[use & (charge_arr == z)]))
+                     for z in np.unique(charge_arr[use])
+                     if (use & (charge_arr == z)).sum() >= MIN_CHARGE_CONTROLS}
+            whole, runs = lines(terms)
+        if terms:
+            log.info("m/z check: charge terms %s",
+                     ", ".join(f"{z}+ {v:+.1f} ppm" for z, v in sorted(terms.items())))
     by_series: dict[int, list[tuple[float, float, float]]] = defaultdict(list)
     # each series from its controls' offsets with pairs (HISTORY 382: a control whose third
     # top lands on another peak still places the envelope), against its runs' calibration and
@@ -295,7 +336,9 @@ def series_offsets(spectra, config: PickerConfig, *,
                                         strict=True)):
         if np.isfinite(o):
             intercept, slope, scatter = runs.get(run, whole)
-            by_series[int(data_id[i])].append((o, o - intercept - slope * mono_arr[j], scatter))
+            term = terms.get(int(charge_arr[j]), 0.0)
+            by_series[int(data_id[i])].append(
+                (o, o - term - intercept - slope * mono_arr[j], scatter))
     ids = np.array(sorted(by_series), dtype=np.int64)
     take = lambda k: np.array([float(np.median([v[k] for v in by_series[d]]))  # noqa: E731
                                for d in ids], dtype=np.float64)
@@ -305,5 +348,5 @@ def series_offsets(spectra, config: PickerConfig, *,
         limit_ppm=np.where(np.isfinite(scatter), np.maximum(
             float(config.off_mz_sd) * np.nan_to_num(scatter), MIN_LIMIT_PPM), np.nan),
         n_controls=np.array([len(by_series[d]) for d in ids], dtype=np.int64),
-        calibration=runs,
+        calibration=runs, whole=whole, charge_terms=terms,
     )

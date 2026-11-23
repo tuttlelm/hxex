@@ -31,7 +31,8 @@ FAMILIES = {
         "Quality flags", "quality flag",
         "Marks on single spectra (and on every spectrum of a series, for the checks of a whole "
         "series), in the `flags` column of `spectra.csv` and the overview. A flag alone leaves "
-        "nothing out; the analysis acts on `off_mz` and `undeut_high` (see each)."),
+        "nothing out; the analysis acts on `off_mz`, `other_ion`, and `undeut_high` (see "
+        "each)."),
     "controls": (
         "Control flags", "control flag",
         "Why a series' undeuterated or fully deuterated value is what it is, in `series.csv`: "
@@ -155,6 +156,34 @@ _add("off_mz", "quality", "series, on each of its spectra", SPECTRA_FLAGS,
      "points at another peptide of almost the same mass.",
      "Check the retention time in the peptide table (`find_retention_time` can suggest one).",
      "picking-window.md#a-series-whose-peaks-sit-off-its-mz")
+_add("other_ion", "quality", "series, on each of its spectra", SPECTRA_FLAGS,
+     "The series' undeuterated peaks are another listed ion's: they sit on that ion's isotope "
+     "grid, not on its own.",
+     "`hxex analyse` leaves the series out (`{analysis.filters.other_ion}`; the reason names "
+     "the other ion and both offsets), controls included.",
+     "Each undeuterated control's isotope cluster is claimed by every ion of the peptide table "
+     "whose grid it sits on: within 4 times the run's scatter at that height after the run's "
+     "calibration, a gross shape check, and the two ions' retention windows (and drift ranges) "
+     "overlapping where both were read. Exported spectra have no windows: there the claim "
+     "stands on position alone (`series.csv` `claim_by_position`). `series.csv` `claim_other` "
+     "names the other ion.",
+     "Check the series' retention time: the peptide itself often elutes elsewhere. The "
+     "labelled spectra share the verdict, so replicates cannot show it.",
+     "picking-window.md#a-series-on-another-ions-peaks")
+_add("isomer_overlap", "quality", "series, on each of its spectra", SPECTRA_FLAGS,
+     "Another listed ion of the same composition claims the series' undeuterated peaks too.",
+     FLAG_ONLY,
+     "The two have the same mass, so MS1 cannot tell them apart where their retention windows "
+     "overlap (or are not known); `series.csv` `claim_other` names the other.",
+     "Retention (or MS2) decides; compare the two series' values.",
+     "picking-window.md#a-series-on-another-ions-peaks")
+_add("shared_cluster", "quality", "series, on each of its spectra", SPECTRA_FLAGS,
+     "Another listed ion of a different composition claims the series' undeuterated peaks too.",
+     FLAG_ONLY,
+     "Both grids fit the cluster: either one species claimed twice, or two species summed in "
+     "one unresolved cluster; `series.csv` `claim_other` names the other ion.",
+     "Look at the two series' spectra and retention times; their values may hold both.",
+     "picking-window.md#a-series-on-another-ions-peaks")
 _add("spectrum_off_mz", "quality", "spectrum", SPECTRA_FLAGS,
      "This spectrum's peaks sit further from where its injection puts the peptides than "
      "spectra of its brightness usually do: most likely it reads another species or a "
@@ -515,6 +544,12 @@ _add("off its m/z", "left_out", "series", LEFT_OUT,
      "The series is flagged `off_mz`: most likely another species.",
      "Left out by `{analysis.filters.off_mz}`, controls included.",
      guide="picking-window.md#a-series-whose-peaks-sit-off-its-mz")
+_add("on another ion's peaks", "left_out", "series", LEFT_OUT,
+     "The series is flagged `other_ion`: its undeuterated peaks are another listed ion's, "
+     "named in brackets with both offsets (and, for exported spectra, that retention is not "
+     "known).",
+     "Left out by `{analysis.filters.other_ion}`, controls included.",
+     guide="picking-window.md#a-series-on-another-ions-peaks")
 for _score in ("screen_below_mono", "screen_off_position", "screen_between",
                "screen_beyond_reach"):
     _add(f"spectrum quality ({_score})", "left_out", "spectrum", LEFT_OUT,

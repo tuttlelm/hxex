@@ -17,6 +17,11 @@ _FLAT = ("mz", "intensity", "n_deut", "offsets", "peak_mz")
 MZ_CHECK_COLUMNS = ("envelope_offset_ppm", "envelope_offset_limit_ppm", "window_shift_ppm")
 # the profile fit of each spectrum (hxex.picking.profile; NaN: picked, not fitted)
 PROFILE_COLUMNS = ("fit_offset_ppm", "purity", "stray_share")
+# the claims of each spectrum's series' undeuterated cluster (hxex.picking.claims): text, then
+# numbers, then the flag of a claim on position alone
+CLAIM_TEXT_COLUMNS = ("claim", "claim_other")
+CLAIM_NUMBER_COLUMNS = ("claim_offset_ppm", "claim_other_offset_ppm")
+CLAIM_COLUMNS = (*CLAIM_TEXT_COLUMNS, *CLAIM_NUMBER_COLUMNS, "claim_by_position")
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,11 @@ class BinnedSet:
     ``peak_mz`` is then each bin's fitted position. With ``pick = 'peak'`` and the run's peak
     shape measured, ``purity`` and ``stray_share`` come from one fit at the spectrum's own m/z
     offset and ``fit_offset_ppm`` stays NaN (the bins are the pick's).
+    The claims of the spectrum's series' undeuterated cluster (:mod:`hxex.picking.claims`):
+    ``claim`` (the verdict: ``own``, ``isomer``, ``shared``, ``lost``, ``wrong_shape``,
+    ``unclaimed``, ``no_cluster``; empty: not assessed), ``claim_other`` (the other ion
+    named), ``claim_offset_ppm`` and ``claim_other_offset_ppm`` (the two grids' offsets from
+    the cluster) and ``claim_by_position`` (no retention window compared them).
     Nothing is dropped here; drop flagged spectra with :meth:`select`. The index arrays are
     copied from the :class:`~hxex.spectra.SpectrumSet` that was picked.
     """
@@ -96,6 +106,11 @@ class BinnedSet:
     fit_offset_ppm: np.ndarray | None = None
     purity: np.ndarray | None = None
     stray_share: np.ndarray | None = None
+    claim: np.ndarray | None = None
+    claim_other: np.ndarray | None = None
+    claim_offset_ppm: np.ndarray | None = None
+    claim_other_offset_ppm: np.ndarray | None = None
+    claim_by_position: np.ndarray | None = None
     # per spectrum, its scans' noise at its bins and shares of the signal (ScanCut; None: not
     # recorded): such spectra are fitted through the instrument's per-scan cut
     scan_cut: np.ndarray | None = field(default=None, compare=False)
@@ -108,6 +123,16 @@ class BinnedSet:
                      *PROFILE_COLUMNS):  # picked, not fitted
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
+        m = len(self.offsets) - 1
+        for name in CLAIM_TEXT_COLUMNS:  # not assessed: picked elsewhere or by an older version
+            value = getattr(self, name)
+            object.__setattr__(self, name, np.full(m, "", dtype=object) if value is None
+                               else np.asarray(value, dtype=object))
+        for name in CLAIM_NUMBER_COLUMNS:
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(m, np.nan))
+        if self.claim_by_position is None:
+            object.__setattr__(self, "claim_by_position", np.zeros(m, dtype=bool))
         if self.window_shift_ppm is None:  # picked elsewhere or by an older version: not moved
             object.__setattr__(self, "window_shift_ppm", np.zeros(len(self.offsets) - 1))
         # retention times (minutes) and drift ranges (ms) not given: unknown

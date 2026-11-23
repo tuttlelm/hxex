@@ -23,7 +23,7 @@ from ..controls import CONTROL_NOTES, correct_means
 from ..io.entries import parse_range
 from ..io.outputs import replace_outputs
 from ..noise import noise_reference_kinds
-from ..picking.binned import MZ_CHECK_COLUMNS, PROFILE_COLUMNS
+from ..picking.binned import CLAIM_COLUMNS, MZ_CHECK_COLUMNS, PROFILE_COLUMNS
 from ..picking.screen import SCREEN_SCORES
 from ..quality import FLAG_NAMES
 from ..spectra import point_order_key, time_point
@@ -398,7 +398,10 @@ def spectra_table(results: Results, rows=None, *, analysis=None,
     are the pick's, and all three empty for a spectrum the fit does not read); and the
     spectrum's own m/z check (``spectrum_offset_ppm``, its offset against its injection's
     median, and ``spectrum_offset_limit_ppm``, :func:`hxex.quality.spectrum_mz_offsets`; empty
-    where not assessed); ``same_measurement_as``, the other spectra that are the same
+    where not assessed); the claims of the series' undeuterated cluster (``claim``,
+    ``claim_other``, ``claim_offset_ppm``, ``claim_other_offset_ppm``,
+    ``claim_by_position``, :mod:`hxex.picking.claims`; empty where not assessed);
+    ``same_measurement_as``, the other spectra that are the same
     measurement (the same file read under another sample or condition; empty for most)."""
     ks = results.effective_K
     k_max = int(ks.max())  # over every spectrum: the same columns whichever rows are made
@@ -436,6 +439,7 @@ def spectra_table(results: Results, rows=None, *, analysis=None,
                        ("spectrum_offset_limit_ppm", "spectrum_offset_limit")):
         out[name] = (np.asarray(getattr(q, attr), dtype=np.float64)[picked] if q is not None
                      else np.full(len(picked), np.nan))
+    out.update(_claim_columns(results, picked))
     out["same_measurement_as"] = _same_measurement_as(results, picked)
     return out
 
@@ -523,6 +527,35 @@ def _screen_columns(results: Results, picked=None) -> dict[str, np.ndarray]:
     rows = np.array([index.get(str(s), -1) for s in ids], dtype=np.int64)
     return {name: np.where(rows >= 0, np.asarray(getattr(b, name))[rows], np.nan)
             for name in names}
+
+
+def _claim_columns(results: Results, picked=None) -> dict[str, np.ndarray]:
+    """The claims of every spectrum's series (:data:`CLAIM_COLUMNS`), or of those at positions
+    ``picked`` (in the fit) only; empty where not assessed."""
+    ids = results.fit.spectrum_id if picked is None else results.fit.spectrum_id[picked]
+    b = results.binned
+    m = len(ids)
+    index = {} if b is None else _binned_index(b, ids)
+    rows = np.array([index.get(str(s), -1) for s in ids], dtype=np.int64)
+    found = rows >= 0
+    out: dict[str, np.ndarray] = {}
+    for name in CLAIM_COLUMNS:
+        if name in ("claim", "claim_other"):
+            col = np.full(m, "", dtype=object)
+            if b is not None:
+                col[found] = np.asarray(getattr(b, name), dtype=object)[rows[found]]
+            out[name] = col.astype(str)
+        elif name == "claim_by_position":
+            col = np.zeros(m, dtype=bool)
+            if b is not None:
+                col[found] = np.asarray(b.claim_by_position, dtype=bool)[rows[found]]
+            out[name] = col
+        else:
+            col = np.full(m, np.nan)
+            if b is not None:
+                col[found] = np.asarray(getattr(b, name), dtype=np.float64)[rows[found]]
+            out[name] = col
+    return out
 
 
 def uptake_table(results: Results, data_ids=None) -> dict[str, np.ndarray]:
@@ -650,8 +683,11 @@ def series_table(results: Results, data_ids=None) -> dict[str, np.ndarray]:
     controls), ``noise_reference`` (what its noise level comes from: ``undeuterated control``,
     ``own spectrum`` when no undeuterated control of the series was fitted, or ``run's scans``
     for kinetics; :func:`hxex.noise.noise_reference_kinds`; ``per bin`` with per-bin noise,
-    where the reference only sets the units) and ``rt`` (the median
-    chromatographic retention time of its spectra, minutes; NaN: unknown). ``data_ids``: only
+    where the reference only sets the units), ``rt`` (the median
+    chromatographic retention time of its spectra, minutes; NaN: unknown), and the claims of
+    its undeuterated cluster (``claim``, ``claim_other``, ``claim_offset_ppm``,
+    ``claim_other_offset_ppm``, ``claim_by_position``, :mod:`hxex.picking.claims`; empty
+    where not assessed). ``data_ids``: only
     those series (still by ``data_id``; the window's data tab shows one series' row)."""
     fit = results.fit
     ids = np.unique(fit.data_id)
@@ -668,7 +704,7 @@ def series_table(results: Results, data_ids=None) -> dict[str, np.ndarray]:
     cols: dict[str, list] = {n: [] for n in (
         "data_id", "sample", "peptide_range", "peptide", "charge", "n_spectra", "n_flagged",
         "n_rejected", "n_multi", "controls", "control_notes", "retention", "deamidated_share",
-        "control_fallback", "noise_reference", "rt")}
+        "control_fallback", "noise_reference", "rt", *CLAIM_COLUMNS)}
     ctrl = results.controls
     ctrl_rows = {int(d): r for r, d in enumerate(ctrl.data_id)} if ctrl is not None else {}
     uncorrected = ctrl.uncorrected if ctrl is not None else np.zeros(0, dtype=bool)
@@ -700,11 +736,18 @@ def series_table(results: Results, data_ids=None) -> dict[str, np.ndarray]:
             "control_fallback": False if r is None else bool(ctrl.fallback[r]),
             "noise_reference": refs.get(int(d), ""),
             "rt": _median_rt(b, where, fit.spectrum_id[members]),
+            "claim": "" if j is None else str(b.claim[j]),
+            "claim_other": "" if j is None else str(b.claim_other[j]),
+            "claim_offset_ppm": np.nan if j is None else float(b.claim_offset_ppm[j]),
+            "claim_other_offset_ppm": (np.nan if j is None
+                                       else float(b.claim_other_offset_ppm[j])),
+            "claim_by_position": False if j is None else bool(b.claim_by_position[j]),
         }
         for name, value in values.items():
             cols[name].append(value)
     out = {name: np.array(values) for name, values in cols.items()}
-    for name in ("sample", "peptide_range", "peptide", "controls", "noise_reference"):
+    for name in ("sample", "peptide_range", "peptide", "controls", "noise_reference", "claim",
+                 "claim_other"):
         out[name] = out[name].astype(str)
     return _with_identities(out, results, out["data_id"], after="charge")
 

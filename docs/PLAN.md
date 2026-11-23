@@ -2188,6 +2188,18 @@ Planned, not built:
      8. *Tests:* synthetic two ions of one charge 20 ppm apart (lost), the same composition
         (isomer), windows apart (no claim), an export (position alone, reason says so); build
         check against the scratch verdicts and the Orbitrap DDA pairs.
+     *Built (2026-11-23, HISTORY 440):* as drafted, in `hxex.picking.claims`
+     (run from `pick_spectra` after the m/z check, with its calibration; `[run.picker]
+     off_mz_sd = false` turns both off), the charge term in `hxex.picking.mz_check`
+     (`SeriesOffsets.charge_terms`, `calibration_ppm`), the flag `shared_cluster` (owner
+     confirmed the name), `[analysis.filters] other_ion` (default true; reason `on another
+     ion's peaks (...)`), and the `claim*` columns. Two choices beside the draft: the claimants
+     are the ions read in the sample (a peptide-table row read nowhere in it claims nothing),
+     and exported spectra drop the scratch's profile-similarity stand-in for retention
+     (position alone, as decided). Build check against the scratch: every lost series the same
+     (tutorial 3, benchmark 0, Orbitrap 13, pooled 23, each with the same other ion), isomer
+     and shared counts within 2, `off_mz` with the charge term equal on every series of the
+     four datasets; the remaining differences sit at the 4 sd edge.
 35. **A checkpoint of the fit stage** (owner, 2026-11-15, from the GUI audit's open question A 3:
    a run stopped during its fit stage leaves nothing on disk, although the stage is long now).
    The fits run in chunks of whole series with the plan recorded in the bundle (`chunk_plan`),

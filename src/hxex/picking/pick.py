@@ -26,7 +26,8 @@ from scipy.stats import binom
 from .. import chem
 from ..hooks import CancelHook, ProgressHook, check_cancel, report
 from ..spectra import SpectrumSet, _objects
-from .binned import BinnedSet
+from .binned import CLAIM_COLUMNS, BinnedSet
+from .claims import Claims, claims
 from .config import APEX_PICKS, DEFAULT_PICKER_CONFIG, PickerConfig
 from .measure import PeakMeasure, area_values, choose_measure
 from .mz_check import series_offsets
@@ -476,13 +477,14 @@ def pick_spectra(
     ``clusters`` gives the isotope clusters of some series (``data_id``), for example an
     ion-type mixture (:mod:`hxex.picking.envelope`); the others use their ion's natural ones.
     With ``config.off_mz_sd`` set, the series of peptide ions with undeuterated controls are
-    checked for an envelope off its m/z first (:mod:`hxex.picking.mz_check`; flagged, the
-    windows stay on the prediction). With ``pick = 'profile_fit'`` (a ``measure`` of
-    ``'profile_fit'``) the profile fit then reads the bins (:mod:`hxex.picking.profile`), in up
-    to ``workers`` processes (None: as many as it may use, up to eight). Otherwise, when the
-    ``measure`` holds the run's peak shape, the profile fit gives the same spectra their
-    ``purity`` and ``stray_share`` only, fitted at each spectrum's own m/z offset (its pick's
-    bright apexes) with no search: the bins keep the pick (docs/HISTORY.md, item 436)."""
+    checked for an envelope off its m/z first (:mod:`hxex.picking.mz_check`; flagged, the windows
+    stay on the prediction), and their undeuterated clusters claimed by the listed ions with the
+    same calibration (:mod:`hxex.picking.claims`). With ``pick = 'profile_fit'`` (a ``measure`` of
+    ``'profile_fit'``) the profile fit then reads the bins (:mod:`hxex.picking.profile`), in up to
+    ``workers`` processes (None: as many as it may use, up to eight). Otherwise, when the
+    ``measure`` holds the run's peak shape, the profile fit gives the same spectra their ``purity``
+    and ``stray_share`` only, fitted at each spectrum's own m/z offset (its pick's bright apexes)
+    with no search: the bins keep the pick (docs/HISTORY.md, item 436)."""
     clusters = clusters or {}
     if measure is None:
         measure = choose_measure(spectra, config, registry=registry)
@@ -497,6 +499,7 @@ def pick_spectra(
     picked: list[PickedSpectrum] = []
     n = len(spectra)
     off_rel, off_limit = np.full(n, np.nan), np.full(n, np.nan)
+    claimed = Claims.none(n)
     if config.off_mz_sd is not None and n:
         from ..controls import fragment_ids
         from ..io.mzml import fragment_series
@@ -506,6 +509,7 @@ def pick_spectra(
         checked = series_offsets(spectra, config, registry=registry, skip=skip,
                                  clusters=clusters)
         off_rel, off_limit = checked.per_spectrum(spectra.data_id)
+        claimed = claims(spectra, config, checked, registry=registry, skip=skip)
         n_off = int(checked.off.sum())
         if n_off:
             log.warning("%d of %d series sit off their m/z in their undeuterated controls "
@@ -552,7 +556,8 @@ def pick_spectra(
         binned = _assemble(spectra, picked)
     return dataclasses.replace(
         binned, screen_off_position=off_position,
-        envelope_offset_ppm=off_rel, envelope_offset_limit_ppm=off_limit)
+        envelope_offset_ppm=off_rel, envelope_offset_limit_ppm=off_limit,
+        **{name: getattr(claimed, name) for name in CLAIM_COLUMNS})
 
 
 def _profile_fit(spectra: SpectrumSet, picked: list[PickedSpectrum], plans: dict,

@@ -632,7 +632,7 @@ def _fit_part(
     data: Measurements, config: RunConfig, plan: _Plan, progress, cancel, mz_offset_ppm,
     rates=None, n_sites=None, rt=None, poor_envelope=None, groups=None, charges=None,
     fragments=(), envelope_offset=(None, None), noise_curve=_MEASURE, screened=None,
-    chosen=None, residues=None, deamidation=None, rt_found=None, drift_unclear=None,
+    claim=None, chosen=None, residues=None, deamidation=None, rt_found=None, drift_unclear=None,
     measurement=None,
     elution_cut=None, precursor=None, reused=None, injection=None, purity=None,
 ) -> tuple[list[FitResult], FitResult, ControlTable | None, QualityFlags | None,
@@ -645,7 +645,9 @@ def _fit_part(
     ``groups``: the molecule of each series (:func:`hxex.controls.series_groups`);
     ``charges``: the peptide of each series and its charge (:func:`hxex.controls.charge_groups`);
     ``envelope_offset``: the picker's m/z check of every measurement, (offset, limit) in ppm
-    (:attr:`hxex.picking.BinnedSet.envelope_offset_ppm`). ``noise_curve``: the bundle's per-bin
+    (:attr:`hxex.picking.BinnedSet.envelope_offset_ppm`); ``claim``: the claims' verdict of
+    every measurement's series (:attr:`hxex.picking.BinnedSet.claim`). ``noise_curve``: the
+    bundle's per-bin
     noise (:func:`bundle_noise`; None: one sd per spectrum, as measured there); with ``estimate
     = "controls"`` and nothing given it is measured here from every undeuterated control of
     ``data``, once for all the chunks (data without the picker's screens). ``screened``:
@@ -739,7 +741,7 @@ def _fit_part(
                                  elution_cut_spectra=elution_cut,
                                  precursor_offset=offsets, ion_overlap=overlaps,
                                  controls=controls, injection=injection,
-                                 skip_series=fragments, purity=purity)
+                                 skip_series=fragments, purity=purity, claim=claim)
     return fits, fit, controls, quality, test
 
 
@@ -1192,6 +1194,7 @@ def analyse(
     mz_offset_ppm: np.ndarray | None = None,
     envelope_offset_ppm: np.ndarray | None = None,
     envelope_offset_limit_ppm: np.ndarray | None = None,
+    claim: np.ndarray | None = None,
 ) -> tuple[
     FitResult,
     BootstrapResult | None,
@@ -1202,11 +1205,12 @@ def analyse(
     """Fit (and bootstrap) ``data`` in chunks of whole series, then the controls and the quality
     flags of the merged result (``mz_offset_ppm``, the picker's offset of every measurement,
     for the m/z screen; ``envelope_offset_ppm`` and ``envelope_offset_limit_ppm``, the
-    picker's m/z check, for ``off_mz``). The chunking does not change the result."""
+    picker's m/z check, for ``off_mz``; ``claim``, the picker's claims, for ``other_ion``,
+    ``isomer_overlap`` and ``shared_cluster``). The chunking does not change the result."""
     plan = _plan(data, config, progress_range)
     fits, fit, controls, quality, _ = _fit_part(
         data, config, plan, progress, cancel, mz_offset_ppm,
-        envelope_offset=(envelope_offset_ppm, envelope_offset_limit_ppm))
+        envelope_offset=(envelope_offset_ppm, envelope_offset_limit_ppm), claim=claim)
     boot, by_k = _bootstrap_part(config, plan, fits, progress, cancel)
     return fit, boot, by_k, controls, quality
 
@@ -1596,6 +1600,7 @@ def run(
                                              envelope_offset=(
                                                  binned.envelope_offset_ppm[kept],
                                                  binned.envelope_offset_limit_ppm[kept]),
+                                             claim=binned.claim[kept],
                                              noise_curve=noise_curve,
                                              chosen=merge_choices(chosen_k),
                                              rt_found=moved_series(
@@ -1910,7 +1915,8 @@ def _quality_of(data: Measurements, fit: FitResult, config: RunConfig, binned: B
         controls=controls,
         skip_series=fragment_ids(binned.modification[kept], binned.data_id[kept],
                                  fragment_series(source)),
-        purity=None if binned.purity is None else binned.purity[kept])
+        purity=None if binned.purity is None else binned.purity[kept],
+        claim=binned.claim[kept])
 
 
 def _bin_mz(binned: BinnedSet, kept: np.ndarray) -> list[np.ndarray]:

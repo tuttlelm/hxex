@@ -48,7 +48,12 @@ from ..fit import FitConfig, FitResult, KFit, Measurements
 from ..fit.measurements import measurement_identity
 from ..noise import ControlsNoise, NoiseEstimate
 from ..picking import BinnedSet, EnvelopeConfig, EnvelopeTable, PeakMeasure, PickerConfig
-from ..picking.binned import MZ_CHECK_COLUMNS, PROFILE_COLUMNS
+from ..picking.binned import (
+    CLAIM_NUMBER_COLUMNS,
+    CLAIM_TEXT_COLUMNS,
+    MZ_CHECK_COLUMNS,
+    PROFILE_COLUMNS,
+)
 from ..picking.screen import SCREEN_SCORES
 from ..population_test import PopulationTest, PopulationTestConfig
 from ..quality import FLAG_NAMES, QualityConfig, QualityFlags
@@ -163,6 +168,11 @@ def _binned_table(b: BinnedSet) -> pa.Table:
     )
     for name, typ in per_spectrum:
         cols[name] = pa.array(np.asarray(getattr(b, name), dtype=typ))
+    for name in CLAIM_TEXT_COLUMNS:
+        cols[name] = _str(getattr(b, name))
+    for name in CLAIM_NUMBER_COLUMNS:
+        cols[name] = pa.array(np.asarray(getattr(b, name), dtype=np.float64))
+    cols["claim_by_position"] = pa.array(np.asarray(b.claim_by_position, dtype=bool))
     return pa.table(cols)
 
 
@@ -382,7 +392,8 @@ def _read_quality(table: pa.Table, config: dict, spectrum_id: np.ndarray) -> Qua
         **{name: (b(name) if name in table.column_names else None)
            for name in ("saturated", "tails_low", "bright", "rt_found", "drift_unclear",
                         "elution_cut", "precursor_off", "overlapping_ion", "below_noise",
-                        "spectrum_off_mz", "low_purity")},
+                        "spectrum_off_mz", "low_purity", "other_ion", "isomer_overlap",
+                        "shared_cluster")},
         # written before the per-spectrum m/z check: not assessed
         **{name: (f(name) if name in table.column_names else None)
            for name in ("spectrum_offset", "spectrum_offset_limit")},
@@ -1564,6 +1575,13 @@ class Bundle:
                for name in MZ_CHECK_COLUMNS if name in t.column_names},
             **{name: np.asarray(_col(t, name), dtype=np.float64)  # older bundles: picked
                for name in PROFILE_COLUMNS if name in t.column_names},
+            # older bundles: not claimed
+            **{name: np.asarray(t.column(name).to_pylist(), dtype=object)
+               for name in CLAIM_TEXT_COLUMNS if name in t.column_names},
+            **{name: np.asarray(_col(t, name), dtype=np.float64)
+               for name in CLAIM_NUMBER_COLUMNS if name in t.column_names},
+            **({"claim_by_position": np.asarray(_col(t, "claim_by_position"), dtype=bool)}
+               if "claim_by_position" in t.column_names else {}),
         )
 
     def spectra(self, ids: Sequence[str] | None = None) -> SpectrumSet | None:

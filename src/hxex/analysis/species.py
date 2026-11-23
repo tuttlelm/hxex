@@ -46,6 +46,7 @@ from ..spectra import point_order_key
 from .screening import (
     KEPT_AT_ONE_REASON,
     OFF_MZ_REASON,
+    OTHER_ION_REASON,
     Screening,
     screen_reason,
     screening,
@@ -71,7 +72,7 @@ _SCREEN_REMOVE = ("screen_below_mono", "screen_off_position", "screen_between",
                   "screen_beyond_reach")
 # every reason (each has an entry in hxex.flags), with the window's note for a spectrum the
 # screens keep at one population
-LEFT_OUT_REASONS = (OFF_MZ_REASON, *(screen_reason(x) for x in _SCREEN_REMOVE),
+LEFT_OUT_REASONS = (OFF_MZ_REASON, OTHER_ION_REASON, *(screen_reason(x) for x in _SCREEN_REMOVE),
                     KEPT_AT_ONE_REASON, UNDEUT_HIGH_REASON, UNDEUT_LEFT_OUT_REASON,
                     STAND_IN_REASON, STAND_IN_SCREENED_REASON, STAND_IN_UNDEUT_REASON,
                     ABOVE_AMIDES_REASON, REPLICATE_OUTLIER_REASON, FRAGMENT_FLAG_REASON,
@@ -127,6 +128,11 @@ class SpeciesFilters:
       check flags ``off_mz`` (``off its m/z``): its undeuterated envelope sits away from the
       peptide's m/z, so it most likely reads another species (HISTORY 200). The controls of
       such series leave the back-exchange correction (and the stand-ins made from it) too.
+    - ``other_ion``: leave out every spectrum, controls included, of a series flagged
+      ``other_ion``: its undeuterated cluster sits on another listed ion's grid and not on its
+      own, so it reads that ion (:mod:`hxex.picking.claims`); the reason names the other ion
+      and both offsets (``on another ion's peaks (...)``). Its controls leave the
+      back-exchange correction too.
     - ``undeuterated_cap``: with the population test (``[analysis] populations =
       "population_test"``), keep the labelled and fully deuterated spectra of a peptide whose
       undeuterated set has two populations or more, in any sample of the run, at one population
@@ -161,6 +167,7 @@ class SpeciesFilters:
     stand_in_controls: str = "exclude"
     spectrum_quality_filtering: str = "loose"
     off_mz: bool = True
+    other_ion: bool = True
     undeuterated_cap: bool = False
     # (sample, peptide) whose sequence another protein in the same vial has, left out by
     # [analysis] shared_sequences = "leave_out" (hxex.analysis.shared); set by the analysis,
@@ -642,7 +649,8 @@ def left_out_spectra(results, filters: SpeciesFilters | None = SpeciesFilters(),
     if filters is None:
         out, why, fd = np.zeros(len(fit), dtype=bool), np.full(len(fit), "", dtype=object), None
     else:
-        screen = screening(results, filters.spectrum_quality_filtering, filters.off_mz)
+        screen = screening(results, filters.spectrum_quality_filtering, filters.off_mz,
+                           filters.other_ion)
         ctl, unscreened = _screened_controls(results, controls, screen, keep, quiet=True)
         out, why, fd = _left_out(results, filters, ctl, n_amides, keep, values=True,
                                  screen=screen, unscreened=unscreened)
@@ -730,7 +738,7 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
             add(name, stage, "flagged by a quality check (exclude_flagged)",
                 np.sum(~keep & (status != "rejected")), "spectra", "[analysis] exclude_flagged")
         level = filters.spectrum_quality_filtering if filters is not None else "none"
-        screen = (screening(r, level, filters.off_mz) if filters is not None
+        screen = (screening(r, level, filters.off_mz, filters.other_ion) if filters is not None
                   else Screening.nothing(len(fit)))
         ctl, _ = _screened_controls(r, controls, screen, keep, quiet=True)
         stage = "controls"
@@ -749,12 +757,17 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
             screened = (screen.remove & keep & (status != "accepted") & (role != ""))
             add(name, stage, "series corrected", np.sum(corrected), "series")
             off = np.asarray(screen.reason) == OFF_MZ_REASON
+            other = np.array([str(x).startswith(OTHER_ION_REASON) for x in screen.reason],
+                             dtype=bool)
             add(name, stage, "control spectra left out by the spectrum quality screens",
-                np.sum(screened & ~off), "spectra",
+                np.sum(screened & ~off & ~other), "spectra",
                 "[analysis.filters] spectrum_quality_filtering")
             if filters is not None and filters.off_mz:
                 add(name, stage, "control spectra left out: their series is off its m/z",
                     np.sum(screened & off), "spectra", "[analysis.filters] off_mz")
+            if filters is not None and filters.other_ion:
+                add(name, stage, "control spectra left out: their series reads another ion",
+                    np.sum(screened & other), "spectra", "[analysis.filters] other_ion")
             add(name, stage, "a control replicate left out (far from the others, above the "
                 "amide count, or a noise outlier)",
                 series_with("m0_replicate_left_out", "fd_replicate_left_out"), "series",
@@ -775,7 +788,11 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
         mine = (np.asarray(left_out["run"]).astype(str) == name) if left_out is not None else []
         reasons = (np.asarray(left_out["reason"]).astype(str)[mine] if left_out is not None
                    else np.array([], dtype=str))
-        listed = [OFF_MZ_REASON] if filters.off_mz else []
+        # one row for every series on another ion's peaks (each reason names its ion)
+        reasons = np.array([OTHER_ION_REASON if r.startswith(OTHER_ION_REASON) else r
+                            for r in reasons], dtype=str)
+        listed = [OTHER_ION_REASON] if filters.other_ion else []
+        listed += [OFF_MZ_REASON] if filters.off_mz else []
         listed += [UNDEUT_HIGH_REASON, UNDEUT_LEFT_OUT_REASON]
         listed += [screen_reason(x) for x in _SCREEN_REMOVE] if level != "none" else []
         if filters.stand_in_controls != "include":
@@ -787,7 +804,7 @@ def left_out_summary(results, filters: SpeciesFilters | None = SpeciesFilters(),
         if filters.shared:
             listed.append(SHARED_REASON)
         listed += sorted(set(reasons) - set(listed))
-        where = {OFF_MZ_REASON: "off_mz = true",
+        where = {OFF_MZ_REASON: "off_mz = true", OTHER_ION_REASON: "other_ion = true",
                  UNDEUT_HIGH_REASON: "[run.controls] m0_max",
                  UNDEUT_LEFT_OUT_REASON: "[run.controls] m0_max, replicate_outlier",
                  "spectrum quality": f"spectrum_quality_filtering = \"{level}\"",
@@ -982,7 +999,8 @@ def _spectrum_records(results, ks, exclude_flagged, filters, quiet=False,
     index = {str(s): j for j, s in enumerate(binned.spectrum_id)}
     rows = np.array([index[str(s)] for s in fit.spectrum_id])
     keep = _kept(results, exclude_flagged)
-    screen = (screening(results, filters.spectrum_quality_filtering, filters.off_mz)
+    screen = (screening(results, filters.spectrum_quality_filtering, filters.off_mz,
+                           filters.other_ion)
               if filters is not None
               else Screening.nothing(len(fit)))
     controls, unscreened = _screened_controls(results, controls_changes, screen, keep, quiet)
@@ -1732,7 +1750,7 @@ def left_out_reasons(results, config=None) -> list[str]:
     status = np.asarray(results.review_status).astype(str)
     if config.filters is not None:
         screen = screening(results, config.filters.spectrum_quality_filtering,
-                           config.filters.off_mz)
+                           config.filters.off_mz, config.filters.other_ion)
         one = np.asarray(screen.one_population, dtype=bool) & (status == "unreviewed")
         why[one] = KEPT_AT_ONE_REASON
         table = left_out_spectra(results, config.filters, exclude_flagged=config.exclude_flagged,

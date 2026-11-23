@@ -116,6 +116,9 @@ class PickerConfig:
       likely another species, which the analysis then leaves out (``[analysis.filters]
       off_mz``). None: not checked. The windows stay on the predicted m/z: moving them onto the
       envelope found (``recentre``, removed) read another peptide in most series (HISTORY 200).
+      Its calibration also places the claims of each undeuterated cluster by the listed ions
+      (:mod:`hxex.picking.claims`: ``other_ion``, ``isomer_overlap``, ``shared_cluster``);
+      None turns those off too.
 
     Either way the half-width is never above half the isotope spacing, ``1.00235 / (2 z)``, so
     the windows of neighbouring bins do not overlap: at high charge an uncapped ppm window
