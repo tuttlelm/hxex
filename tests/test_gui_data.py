@@ -195,15 +195,21 @@ def test_a_kind_selected_gathers_every_figures_rows(qtbot, tmp_path, project):
     page = window.analysis_page
     window.tabs.setCurrentWidget(page)
     window.show()
-    page.compute()
-    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    # the computed analysis selects the first kind with figures and draws it: wait for that
+    # drawing (selecting the item already current draws nothing; on a slow runner the drawing
+    # ended before a wait started after the computing, and the test timed out)
+    with qtbot.waitSignal(page.panel.drawn, timeout=120000):
+        page.compute()
+        qtbot.waitUntil(lambda: page.outputs is not None and not page.computing,
+                        timeout=120000)
     coverage = page._leaf_items["Summary\x1fcoverage"]
     stems = [s for s, _ in page._nodes["Summary\x1fcoverage"].figures]
     assert len(stems) == 2
     sample = page.choices.box("sample")  # the two figures: one per sample
     assert sample.count() == 2 and sample.isVisibleTo(page)
-    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
-        page.list.setCurrentItem(coverage)
+    if page.list.currentItem() is not coverage:
+        with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+            page.list.setCurrentItem(coverage)
     page.every_figure.setChecked(True)
     # gathered only when the data tab is shown (it draws every figure of the kind: minutes
     # for a run with hundreds; owner, 2026-11-04, ladders "stuck on drawing")

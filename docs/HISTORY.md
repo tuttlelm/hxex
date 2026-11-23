@@ -11753,7 +11753,11 @@ CSVs or mzML if wanted.
     rows (110 figures) 41 s the first time, then instant; nine references on the private
     three-protein dataset computed in 201 s. Tests: test_gui_analysis.py, test_gui_data.py,
     test_catalogue.py, test_fragment_kinetics.py, test_gui.py; guide gui.md; figures.md
-    regenerated.
+    regenerated. Test fix (CI of b543d20, py3.11 Ubuntu): test_gui_data's every-figure test
+    waited for a drawing while selecting the kind already selected; the computed analysis
+    selects and draws the first kind with figures itself, and on a slow runner that drawing
+    ended before the wait began. The test now waits for that drawing (an 8 s pause after the
+    computing reproduced the failure; the test passes with it).
 
 440. **Peak claims built** (2026-11-23; PLAN 34 first step, from the design of item 438). Each
     undeuterated control's isotope cluster (the series at the ion's charge from the tallest peak
