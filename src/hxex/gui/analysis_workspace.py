@@ -2,11 +2,13 @@
 """The Analysis workspace (docs/PLAN.md, "GUI", "Analysis"): exactly what ``hxex analyse``
 writes with the project's settings, shown rather than written.
 
-On the left, every kind of figure ``hxex analyse`` draws (:mod:`hxex.report.catalogue`): drawn,
-left to the results, or off, with the reason and a button to the setting that rules it out;
-under each kind its figures, once computed. On the right, the figure selected, drawn from
-``hxex analyse``'s own list of figures (:func:`hxex.report.analysis_outputs`), so the window and
-the files cannot differ, and saved under the name the command gives it.
+On the left, every kind of figure ``hxex analyse`` draws (:mod:`hxex.report.catalogue`), one
+row per kind under the catalogue's groups: drawn, left to the results, or off, with the reason
+and a button to the setting that rules it out. On the right, a figure of the kind selected,
+its sample, time, form, and page chosen in the lists above it (:mod:`.figure_choices`; owner,
+2026-11-22: a row per figure made the list long and hard to navigate), drawn from ``hxex
+analyse``'s own list of figures (:func:`hxex.report.analysis_outputs`), so the window and the
+files cannot differ, and saved under the name the command gives it.
 
 The analysis is computed in the background when asked (Compute, beside the reference list: half
 a minute for a large run of peptides, minutes with fragment ladder fits), and kept: a change of
@@ -24,26 +26,31 @@ import threading
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QProgressBar,
     QPushButton,
     QSplitter,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTabWidget,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+from .analysis_tree import ONE_SAMPLE_KINDS, title_at
 from .data_table import DataPanel, spectra_menu
+from .figure_choices import ChoicesRow
 from .figure_view import HINT, SPECTRA_HINT, FigurePanel
-from .order import natural_key
 from .review import table_stamp
 from .summary_panel import SummaryPanel
 from .tasks import Latest, drawing_pool
@@ -51,13 +58,47 @@ from .tips import ERROR_COLOUR, tip
 
 log = logging.getLogger(__name__)
 
-KIND, STEM = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
-STATE_WORDS = {"drawn": "drawn", "depends": "if the results have it", "off": "off"}
+KIND, NODE = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
+# before Compute: nothing beside a kind the settings draw (kinds they rule out are under Not
+# drawn), "data permitting" beside one the results decide (owner, 2026-11-23)
+STATE_WORDS = {"drawn": "", "depends": "data permitting", "off": "off"}
 
 
 # the group list's entry for the figure across the groups (results_analysis_groups); never a
 # group's name (a TOML key cannot hold this character unescaped, and the editor refuses it)
 ACROSS = "\x1facross the groups"
+
+
+class _UnderParent(QStyledItemDelegate):
+    """A row with nothing under it (a kind of figure) starts its name under its parent's name,
+    in the room its own ▸ would take, at every level; a row with rows under it keeps its ▸
+    there, so each level steps in by one ▸ (owner, 2026-11-23)."""
+
+    def paint(self, painter, option, index):
+        if index.parent().isValid() and not index.model().hasChildren(index):
+            option = QStyleOptionViewItem(option)
+            option.rect = option.rect.adjusted(-self.parent().indentation(), 0, 0, 0)
+        super().paint(painter, option, index)
+
+
+class _StayingMenu(QMenu):
+    """A list of check boxes that stays open while they are ticked (owner, 2026-11-23: several
+    references at once); it closes on a click outside it or Escape."""
+
+    def mouseReleaseEvent(self, event):  # noqa: N802 - Qt's name
+        action = self.activeAction()
+        if action is not None and action.isCheckable() and action.isEnabled():
+            action.setChecked(not action.isChecked())
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):  # noqa: N802 - Qt's name
+        action = self.activeAction()
+        if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space)
+                and action is not None and action.isCheckable()):
+            action.setChecked(not action.isChecked())
+            return
+        super().keyPressEvent(event)
 
 
 def compute_time(results, config) -> str:
@@ -93,7 +134,16 @@ class AnalysisWorkspace(QWidget):
         super().__init__()
         self.window = window
         self._error: str | None = None  # why the last computation failed (None: it did not)
-        self._expanded: set = set()  # the kinds of the list's rows open, kept across a refill
+        # the tree (hxex.gui.analysis_tree): each kind at its place (key -> Entry), the rows
+        # above the kinds (path -> item), the kinds' rows (key -> item), the rows opened (None
+        # before the first fill: the tops open)
+        self._nodes: dict = {}
+        self._row_items: dict = {}
+        self._leaf_items: dict = {}
+        self._expanded: set | None = None
+        self._figure_count = 0
+        self._drawn_draw = None  # the drawing function of the figure shown
+        self._keep_stem: str | None = None  # the figure to choose again after a refill
         # each reference's analysis: (hxex.report.AnalysisOutputs, (the results' key
         # (results_key), [analysis] text, results path, review table's stamp) it was computed
         # from)
@@ -145,9 +195,30 @@ class AnalysisWorkspace(QWidget):
                                       "for each"))
         self.reference.currentIndexChanged.connect(lambda _i: self.refresh())
         self.reference_label = QLabel("against")
+        # the references, ticked in a list (owner, 2026-11-23): written to the project file's
+        # [analysis] reference; Compute makes the analysis against each, and the tree has a
+        # Comparisons part per reference
+        self.references = QToolButton()
+        self.references.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        # Qt's own small arrow in the corner left out: the text ends in ▾ (owner, 2026-11-23)
+        self.references.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
+        self.references.setMenu(_StayingMenu(self.references))
+        self.references.menu().aboutToHide.connect(self._references_ticked)
+        self.references.setToolTip(tip(
+            "the samples the others are compared with: tick as many as you like; when the list "
+            "closes they are written to [analysis] reference in the project file, so hxex "
+            "analyse makes the same comparisons; Compute makes the analysis against each one "
+            "ticked, and the tree has a Comparisons part for each"))
+        self.references.hide()
+        self._ticked: list[str] = []  # the references ticked (the project's [analysis] reference)
+        self._compute_note = (0, 0, "")  # the reference being computed, of how many
+        self._compute_timer = QTimer(self)
+        self._compute_timer.setInterval(500)
+        self._compute_timer.timeout.connect(self._show_compute_progress)
         top = QHBoxLayout()
         top.addWidget(self.reference_label)
         top.addWidget(self.reference)
+        top.addWidget(self.references)
         top.addWidget(self.compute_button)
         top.addWidget(self.stop_button)
         top.addWidget(self.resume)
@@ -177,6 +248,7 @@ class AnalysisWorkspace(QWidget):
         self.list.setColumnCount(2)
         self.list.setHeaderLabels(["figure", ""])
         self.list.setUniformRowHeights(True)
+        self.list.setItemDelegateForColumn(0, _UnderParent(self.list))
         header = self.list.header()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -196,13 +268,32 @@ class AnalysisWorkspace(QWidget):
         side.addWidget(self.change)
 
         self.panel = FigurePanel(render=self.render, hint=HINT + SPECTRA_HINT)
+        # the figure of the kind: its sample, time, form, page (one row per kind in the list)
+        self.choices = ChoicesRow()
+        self.choices.chosen.connect(self._draw_stem)
+        self.panel.add_row(self.choices)
         self.panel.drawn.connect(self._show_data)
         self.panel.clicked_row.connect(self._clicked_row)
         self.panel.rows_asked.connect(self._rows_asked)
         # beside the figure, its values: what it draws, one row per bar (owner, 2026-11-04)
         self.data = DataPanel()
-        self._kind_rows = None  # a kind selected: the rows of all its figures are shown
+        # the rows of every figure of the kind, not only of the one shown (owner, 2026-11-04)
+        self.every_figure = QCheckBox("every figure of this kind")
+        self.every_figure.setToolTip(tip(
+            "list the rows of all the kind's figures, a figure column naming each one's file "
+            "(gathered when this tab is shown: it draws every figure of the kind)"))
+        self.every_figure.toggled.connect(self._every_toggled)
+        self.data.add_option(self.every_figure)
+        self._kind_rows = None  # the kind whose figures' rows are all shown (every_figure)
         self._rows_task = Latest(self, drawing_pool())
+        # the rows gathered of each kind and place, kept until the analysis changes (gathering
+        # draws every figure: a minute for a project's ladders; owner, 2026-11-23)
+        self._row_cache: dict[str, tuple[list, list]] = {}
+        self._cache_owners: list = []  # the analyses the cached rows and figures come from
+        self._gather_done = (0, 0)  # figures gathered so far, of how many
+        self._progress = QTimer(self)
+        self._progress.setInterval(300)
+        self._progress.timeout.connect(self._show_progress)
         self._rows_wanted = None  # (kind, stems, outputs) to gather when the data tab is shown
         self._gathering = 0  # which gathering is current; a stale one stops between figures
         self.data.activated.connect(self.go_to_spectra)
@@ -231,7 +322,6 @@ class AnalysisWorkspace(QWidget):
         layout.addWidget(split, 1)
         self._change_table = ""
         self._planned: dict[str, object] = {}
-        self._drawn_from = None  # the analysis the figure shown was drawn from
         self._latest: str | None = None  # the reference of the latest analysis computed
         self._by_group = False  # [analysis.groups]: one analysis per group, nothing shared
         self._key_cache: tuple = (None, None)  # (results object, its key): E-9
@@ -241,8 +331,17 @@ class AnalysisWorkspace(QWidget):
 
     @property
     def shown_reference(self) -> str:
-        """The reference whose analysis is shown ('' with none), or with ``[analysis.groups]``
-        the group."""
+        """The reference whose analysis is shown ('' with none): the one whose Comparisons part
+        holds the row selected, else the first ticked; or with ``[analysis.groups]`` the
+        group."""
+        if not self._by_group and self._ticked:
+            from .analysis_tree import comparisons_top
+
+            item = self.list.currentItem()
+            while item is not None and item.parent() is not None:
+                item = item.parent()
+            top = item.text(0) if item is not None else ""
+            return next((r for r in self._ticked if comparisons_top(r) == top), self._ticked[0])
         data = self.reference.currentData()
         return data if isinstance(data, str) else ""
 
@@ -273,7 +372,7 @@ class AnalysisWorkspace(QWidget):
         if not ref:
             return ""
         if ref == ACROSS:
-            return " across the groups"
+            return " of every group"
         return f" of group {ref}" if self._by_group else f" against {ref}"
 
     @property
@@ -282,27 +381,13 @@ class AnalysisWorkspace(QWidget):
         ref = self.shared_reference
         return self._analyses[ref][0] if ref is not None else None
 
-    def outputs_for(self, kind: str):
-        """The analysis a kind of figure is drawn from: the shown reference's for a comparison,
-        the latest for a figure the same against every reference."""
-        from ..report.catalogue import kind_named
-
-        try:
-            compares = kind_named(kind).compares
-        except (KeyError, ValueError, StopIteration):
-            compares = True
-        return self.outputs if compares else self.shared_outputs
-
     def _fill_references(self, config) -> None:
         """The references to choose from (shown only when there are several)."""
         from ..report import analysis_references
 
         refs = analysis_references(self.results, config)
-        if config.by_group and len(refs) > 1:
-            from ..report.groups import shared_region_names
-
-            if shared_region_names(config):  # the figure across the groups (PLAN 38, step 4)
-                refs = [*refs, ACROSS]
+        if config.by_group:  # every group in the tree, computed together (owner, 2026-11-22)
+            refs = [ACROSS]
         now = [self.reference.itemData(i) for i in range(self.reference.count())]
         if now != refs:
             keep = self.shown_reference
@@ -314,13 +399,60 @@ class AnalysisWorkspace(QWidget):
             index = self.reference.findData(keep)
             self.reference.setCurrentIndex(max(index, 0))
             self.reference.blockSignals(False)
-        several = len(refs) > 1
-        # with [analysis.groups] the choice is the group (until the window's own group choice,
-        # PLAN Next steps 38 step 4)
         self._by_group = config.by_group
-        self.reference_label.setText("group" if config.by_group else "against")
-        self.reference.setVisible(several)
-        self.reference_label.setVisible(several)
+        self.reference_label.setText("comparisons against")
+        if config.by_group:  # each group's reference is on its own page
+            self._ticked = []
+            self.references.hide()
+            self.reference.hide()
+            self.reference_label.hide()
+            return
+        self.reference.hide()  # the tree has a part per reference
+        self._ticked = [r for r in refs if r]
+        samples = list(config.samples) or self.results.samples()
+        menu = self.references.menu()
+        if [a.data() for a in menu.actions()] != samples or \
+                [a.isChecked() for a in menu.actions()] != [s in self._ticked for s in samples]:
+            menu.clear()
+            for sample in samples:
+                action = menu.addAction(sample)
+                action.setData(sample)
+                action.setCheckable(True)
+                action.setChecked(sample in self._ticked)
+        # one reference by name, several as a count (owner, 2026-11-23): the tree names each
+        shown = (self._ticked[0] if len(self._ticked) == 1 else
+                 f"multiple ({len(self._ticked)})" if self._ticked else "none")
+        self.references.setText(f"{shown} ▾")
+        self.references.setEnabled(self._project() is not None)
+        visible = len(samples) > 1
+        self.references.setVisible(visible)
+        self.reference_label.setVisible(visible)
+
+    def _references_ticked(self) -> None:
+        """The samples ticked in the references list written to [analysis] reference (none
+        ticked: the line taken out); the analysis then compares with each."""
+        from ..project_edit import ProjectError
+        from .project_editor import _quoted
+
+        project = self._project()
+        if project is None:
+            return
+        ticked = [a.data() for a in self.references.menu().actions() if a.isChecked()]
+        if ticked == self._ticked:  # the list closed without a change
+            return
+        value = (None if not ticked else _quoted(ticked[0]) if len(ticked) == 1
+                 else "[" + ", ".join(_quoted(t) for t in ticked) + "]")
+        problem = None
+        try:
+            self._write(project, [("analysis.reference", value)],
+                        f"[analysis] reference: {', '.join(ticked) or 'none'}")
+            log.info("[analysis] reference set to %s", ", ".join(ticked) or "none")
+        except (ProjectError, OSError, ValueError, TypeError) as exc:
+            problem = str(exc)
+            log.error("the references were not set: %s", exc)
+        self.refresh()
+        if problem is not None:
+            self.status.setText(f"The references were not set: {problem}")
 
     @property
     def results(self):
@@ -414,6 +546,9 @@ class AnalysisWorkspace(QWidget):
         self.compute_button.setEnabled(not self._busy)
         if self._busy:
             return
+        if not self._by_group and len(self._ticked) > 1:
+            self._status_of_several()
+            return
         why = self.why_out_of_date()
         if self.outputs is None:
             self.compute_button.setText("Compute")
@@ -440,12 +575,46 @@ class AnalysisWorkspace(QWidget):
                                 "analysis's; Recompute to see the new one.")
             self.compute_button.setText("Recompute")
         else:
-            n = len(self.outputs.figures)
+            n = self._figure_count
             ref = self.shown_reference
             self.status.setText(f"{n} figure(s)" + self._of(ref)
                                 + ", as hxex analyse would write them" + self._settings_note())
             self._redraw_if_another()
             self.compute_button.setText("Recompute")
+
+    def _status_of_several(self) -> None:
+        """The status line with several references ticked: which are not computed yet or out
+        of date (Compute makes them), else the figures against all of them."""
+        made = {r: self._analyses.get(r) for r in self._ticked}
+        missing = [r for r, m in made.items() if m is None]
+        stale = {r: self.why_out_of_date(m[1]) for r, m in made.items() if m is not None}
+        stale = {r: why for r, why in stale.items() if why}
+        if missing or stale:
+            self.compute_button.setText("Compute")
+            parts = [f"not computed yet against {', '.join(missing)}"] if missing else []
+            if stale:
+                parts.append(f"out of date against {', '.join(stale)} "
+                             f"({next(iter(stale.values()))})")
+            text = "; ".join(parts)
+            try:
+                hint = compute_time(self.results, self._settings()[0])
+            except Exception:  # noqa: BLE001 - the project file does not read: no hint
+                hint = "about half a minute for 25,000 spectra"
+            self.status.setText(f"{text[0].upper()}{text[1:]}: Compute makes them ({hint} "
+                                "each; nothing is written)." + self._settings_note())
+        else:
+            self.compute_button.setText("Recompute")
+            self.status.setText(f"{self._figure_count} figure(s) against "
+                                f"{', '.join(self._ticked)}, as hxex analyse would write them"
+                                + self._settings_note())
+        self._redraw_if_another()
+
+    def _show_compute_progress(self) -> None:
+        if not self._computing.running:
+            self._compute_timer.stop()
+            return
+        i, n, ref = self._compute_note
+        self.status.setText(f"Computing the analysis against {ref} ({i + 1} of {n})…")
 
     @property
     def _busy(self) -> bool:
@@ -573,179 +742,247 @@ class AnalysisWorkspace(QWidget):
         self.refresh()
 
     def _redraw_if_another(self) -> None:
-        """Another reference chosen: the figure selected again, unless it is drawn from the same
-        analysis (a figure the same for every reference stays as it is)."""
-        item = self.list.currentItem()
-        if item is None:
+        """The figures changed (another reference, a new analysis): the figure selected drawn
+        again, unless the drawing shown is still its own (a figure the same for every
+        reference stays as it is)."""
+        node = self._current_node()
+        if node is None:
             return
-        outputs = self.outputs_for(item.data(0, KIND))
-        if outputs is not self._drawn_from:
-            self._selected(item)
+        draw = dict(node.figures).get(self.choices.stem or "")
+        if draw is None or draw is not self._drawn_draw:
+            self._selected(self.list.currentItem())
+
+    def _current_node(self):
+        item = self.list.currentItem()
+        return self._nodes.get(item.data(0, NODE)) if item is not None else None
 
     def _settings_note(self) -> str:
         return ("" if self._project() is not None else
                 " (a bundle opened alone: the default [analysis] settings; open the project "
                 "file for its own)")
 
+    def _placed(self, config):
+        """The analyses the tree shows: with groups each group's (and the regions across them),
+        else the shown reference's comparisons with the figures of the levels from the latest
+        analysis (the same against every reference)."""
+        from .analysis_tree import Placed
+
+        if config.by_group:
+            placed = []
+            for g in config.groups:
+                outputs = self._analyses.get(g, (None,))[0]
+                placed.append(Placed(g, outputs, outputs, config.one(g).reference or ""))
+            return placed, self._analyses.get(ACROSS, (None,))[0]
+        if not self._ticked:
+            return [Placed(None, self.shared_outputs, self.outputs, "")], None
+        # the levels from the latest analysis (the same against every reference), then a
+        # Comparisons part per reference ticked (owner, 2026-11-23)
+        from .analysis_tree import comparisons_top
+
+        return ([Placed(None, self.shared_outputs, None)]
+                + [Placed(None, None, self._analyses.get(r, (None,))[0], r, comparisons_top(r))
+                   for r in self._ticked]), None
+
     def _fill(self) -> None:
-        """The kinds of figure and, once computed, their figures."""
-        from ..report.catalogue import ANALYSE, Situation, kind_of, plan
+        """The tree: Coverage, Summary, Single samples, Comparisons (:mod:`.analysis_tree`),
+        each kind of figure at its place once computed, the kinds left out under Not drawn."""
+        from ..report.catalogue import Situation, plan
+        from . import analysis_tree as at
 
         current = self.list.currentItem()
-        keep = (current.data(0, KIND), current.data(0, STEM)) if current is not None else None
-        # the kinds opened, and the place in the list, kept across the rebuild (every refresh
-        # closed them: audit of 2026-11-15, E-16)
-        self._expanded = {self.list.topLevelItem(i).data(0, KIND)
-                          for i in range(self.list.topLevelItemCount())
-                          if self.list.topLevelItem(i).isExpanded()}
+        keep = current.data(0, NODE) if current is not None else None
+        # the figure chosen, the rows opened, and the place in the list, kept across the
+        # rebuild (audit of 2026-11-15, E-16)
+        self._keep_stem = self.choices.stem
+        if self.list.topLevelItemCount():
+            self._expanded = {key for key, item in self._row_items.items() if item.isExpanded()}
         scrolled = self.list.verticalScrollBar().value()
         self.list.blockSignals(True)
         self.list.clear()
-        self._planned = {}
+        self._planned, self._nodes, self._row_items, self._leaf_items = {}, {}, {}, {}
+        self._figure_count = 0
         if self.results is not None:
             try:
                 config = self._settings()[0]
                 self._fill_references(config)
-                if self.shown_reference == ACROSS:
-                    self._fill_across(config, keep)
-                    return
-                if not config.single_reference:
-                    config = config.one(self.shown_reference)
-                situation = Situation.of(analysis=config, results=self.results)
-                # the figure across the groups is the "(across the groups)" entry's alone
-                planned = [p for p in plan(situation) if p.kind.name != "cross_group_regions"]
+                one = (config if config.single_reference or config.by_group
+                       else config.one(self.shown_reference))
+                planned = plan(Situation.of(analysis=one, results=self.results))
             except Exception as exc:  # noqa: BLE001 - settings these results refuse
                 self.list.blockSignals(False)
                 self._error = str(exc)
                 self.status.setText(f"The analysis cannot be made: {exc}")
                 return
             self._error = None
-            by_kind: dict[str, list[str]] = {}
-            for outputs, compares in ((self.shared_outputs, False), (self.outputs, True)):
-                for stem, _ in (outputs.figures if outputs is not None else []):
-                    kind = kind_of(stem)
-                    if kind is not None and kind.compares == compares:
-                        by_kind.setdefault(kind.name, []).append(stem)
-            for stems in by_kind.values():  # fragment figures by parent, residues by value
-                kind = kind_of(stems[0])
-                if kind is not None and kind.fragments:
-                    stems.sort(key=natural_key)
-            kinds = [p for p in planned if p.kind.command == ANALYSE]
-            sections = analysis_sections(
-                kinds, situation.fragments,
-                config.reference if config.group else self.shown_reference,
-                self.shared_reference, group=config.group or None)
-            for heading, words, group in sections:
-                if not group:
-                    continue
-                head = QTreeWidgetItem([heading, ""])
-                head.setFlags(Qt.ItemFlag.ItemIsEnabled)  # a heading: not selectable
-                font = head.font(0)
-                font.setBold(True)
-                head.setFont(0, font)
-                head.setToolTip(0, tip(words))
-                head.setFirstColumnSpanned(True)
-                self.list.addTopLevelItem(head)
-                head.setFirstColumnSpanned(True)
-                for p in group:
-                    self._add_kind(p, by_kind.get(p.kind.name, []), keep)
+            self._planned = {p.kind.name: p for p in planned}
+            placed, across = self._placed(config)
+            computed = any(p.levels is not None or p.compared is not None for p in placed)
+            found = at.entries(placed, across) if computed else []
+            have = {e.kind for e in found}
+            shown, left = at.planned_entries(planned, (lambda k: k in have) if computed
+                                             else None)
+            if not config.by_group and self._ticked:
+                # each reference not computed yet: its comparisons named in its part, not drawn
+                waiting = [p for p in placed if p.reference and p.compared is None]
+                named = [e for e in at.planned_entries(planned)[0]
+                         if e.path[0] == at.COMPARISONS]
+                shown = [e for e in shown if e.path[0] != at.COMPARISONS]
+                if computed and waiting:
+                    left = [e for e in left if at.HOME[e.kind] != at.COMPARISONS]
+                shown += [at.Entry((p.comparisons,), e.kind) for p in waiting for e in named]
+            # the figures hxex analyse writes (not the window's own of one sample)
+            written = {id(o): o for p in placed for o in (p.levels, p.compared)
+                       if o is not None}
+            self._figure_count = sum(len(o.figures) for o in written.values()) + (
+                len(across.figures) if across is not None else 0)
+            refs = {p.group: p.reference for p in placed}
+            parts = [p.comparisons for p in placed]
+
+            def place(entry):  # the parts in order, each reference's in the list's order
+                t = entry.path[0]
+                return (at.TOPS.index(at.top_of(t)) if t in at.TOPS or t in parts else 99,
+                        parts.index(t) if t in parts else 0)
+
+            for entry in sorted(found + shown + left, key=place):
+                self._add_entry(entry, computed, refs)
+            if keep in self._leaf_items:
+                self.list.setCurrentItem(self._leaf_items[keep])
         self.list.blockSignals(False)
         self.list.verticalScrollBar().setValue(scrolled)
         self._describe(self.list.currentItem())
 
-    def _fill_across(self, config, keep) -> None:
-        """The list for ``(across the groups)``: the Regions across the groups and, once
-        computed, its figures (one per time). Called from :meth:`_fill`, the list's signals
-        blocked."""
-        from ..report.catalogue import Situation, plan
+    def _row(self, path: tuple, refs: dict) -> QTreeWidgetItem:
+        """The row of ``path`` (a top, a group or class, a sample or form, a level), made with
+        the rows above it when new."""
+        from . import analysis_tree as at
 
-        self._error = None
-        planned = next(p for p in plan(Situation.of(analysis=config, results=self.results))
-                       if p.kind.name == "cross_group_regions")
-        head = QTreeWidgetItem(["Across the groups", ""])
-        head.setFlags(Qt.ItemFlag.ItemIsEnabled)
-        font = head.font(0)
-        font.setBold(True)
-        head.setFont(0, font)
-        head.setToolTip(0, tip("each region's fD in every group that has a region of that name, "
-                               "from each group's own analysis (Compute makes every group's "
-                               "first), as hxex analyse writes results_analysis_groups"))
-        head.setFirstColumnSpanned(True)
-        self.list.addTopLevelItem(head)
-        head.setFirstColumnSpanned(True)
-        outputs = self.outputs
-        stems = [stem for stem, _ in outputs.figures] if outputs is not None else []
-        self._add_kind(planned, stems, keep)
-        self.list.blockSignals(False)
-        self._describe(self.list.currentItem())
-
-    def _add_kind(self, p, stems: list[str], keep) -> None:
-        """One kind of figure in the list, with its figures under it (``keep``: the kind and
-        figure selected before, selected again)."""
-        outputs = self.outputs_for(p.kind.name)
-        self._planned[p.kind.name] = p
-        item = QTreeWidgetItem([p.kind.title, self._state_text(p, stems)])
-        item.setData(0, KIND, p.kind.name)
-        item.setToolTip(0, tip(p.kind.shows))
-        if p.state == "off" or (outputs is not None and not stems):
+        if path in self._row_items:
+            return self._row_items[path]
+        item = QTreeWidgetItem([path[-1], ""])
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        font = item.font(0)
+        if len(path) == 1:
+            font.setBold(True)
+            item.setToolTip(0, tip(at.TOP_WORDS.get(at.top_of(path[0]), "")))
+        elif path[-1] in at.LEVELS:
+            font.setItalic(True)
+        elif path[0] == at.COMPARISONS and len(path) == 2 and refs.get(path[1]):
+            item.setText(1, f"against {refs[path[1]]}")  # a group's own reference
+        item.setFont(0, font)
+        if path[0] == at.NOT_DRAWN:  # grey, as the kinds under it (owner, 2026-11-23)
             for col in (0, 1):
                 item.setForeground(col, self.palette().placeholderText())
-        for stem in stems:
-            child = QTreeWidgetItem([stem, ""])
-            child.setData(0, KIND, p.kind.name)
-            child.setData(0, STEM, stem)
-            item.addChild(child)
-        self.list.addTopLevelItem(item)
-        if p.kind.name in self._expanded:
-            item.setExpanded(True)
-        if keep is not None and keep[0] == p.kind.name:
-            target = item
-            for i in range(item.childCount()):
-                if item.child(i).data(0, STEM) == keep[1]:
-                    target = item.child(i)
-            self.list.setCurrentItem(target)
-            item.setExpanded(True)
+        if len(path) == 1:
+            self.list.addTopLevelItem(item)
+        else:
+            self._row(path[:-1], refs).addChild(item)
+        self._row_items[path] = item
+        expanded = self._expanded if self._expanded is not None else {
+            (t,) for t in at.TOPS}  # at first the tops open
+        item.setExpanded(path in expanded)
+        return item
 
-    def _state_text(self, planned, stems) -> str:
+    def _add_entry(self, entry, computed: bool, refs: dict) -> None:
+        """One kind of figure at its place in the tree (its figures chosen above the figure)."""
+        from . import analysis_tree as at
+
+        p = self._planned.get(entry.kind)
+        if p is None:
+            return
+        key = "\x1f".join(entry.key)
+        self._nodes[key] = entry
+        n = len(entry.figures)
+        text = ((f"{n} figure" + "s" * (n != 1)) if n else
+                self._state_text(p, computed))
+        item = QTreeWidgetItem([title_at(entry, p.kind.title), text])
+        item.setData(0, KIND, entry.kind)
+        item.setData(0, NODE, key)
+        item.setToolTip(0, tip(p.kind.shows))
+        if not n and (computed or p.state == "off" or entry.path[0] == at.NOT_DRAWN):
+            for col in (0, 1):
+                item.setForeground(col, self.palette().placeholderText())
+        self._row(entry.path, refs).addChild(item)
+        self._leaf_items[key] = item
+
+    def _state_text(self, planned, computed: bool) -> str:
         if planned.state == "off":
             return "off"
-        if self.outputs_for(planned.kind.name) is None:
+        if not computed:
             return STATE_WORDS[planned.state]
-        return f"{len(stems)} figure(s)" if stems else "none for these results"
+        return "none for these results"
 
     def _selected(self, item, _previous=None) -> None:
+        """A kind selected: its figure chosen in the lists above the figure (the one chosen
+        before, after a refill; else the sample, time, and form of the kind shown before, where
+        this kind has them; else its first), and drawn. A row above the kinds (a group, a
+        sample) changes nothing."""
+        from ..report.catalogue import figure_choices, kind_named
+
         self._describe(item)
-        outputs = self.outputs_for(item.data(0, KIND)) if item is not None else None
-        if item is None or item.data(0, KIND) is None or outputs is None:
+        node = self._nodes.get(item.data(0, NODE)) if item is not None else None
+        keep, self._keep_stem = self._keep_stem, None
+        if node is None:
             return
-        stem = item.data(0, STEM)
         self._kind_rows = None
         self._rows_wanted = None
         self._gathering += 1  # a gathering under way stops at its next figure
-        if stem is None and item.childCount():  # a kind: its first figure, every figure's rows
-            item.setExpanded(True)
-            stem = item.child(0).data(0, STEM)
-            stems = [item.child(i).data(0, STEM) for i in range(item.childCount())]
-            self._kind_rows = item.data(0, KIND)
-            self._rows_wanted = (item.data(0, KIND), stems, outputs)
-            self.data.show_rows([], [], self._kind_rows)
-            self.data.set_note(f"The rows of the {len(stems)} figures of this kind are gathered "
-                               "when this tab is shown.")
-            self.views.setTabText(1, "data")
-            self._gather_if_shown()
-        if stem is None:  # a kind with no figure: why, in the figure's place
+        if not node.figures:  # a kind with no figure here: why, in the figure's place
+            self.choices.set_figures(None)
             self.panel.save_name = ""
-            self._clear_figure(self._off_text(self._planned.get(item.data(0, KIND)))
-                             or "no figure of this kind for these results")
+            self._drawn_draw = None
+            self._clear_figure(self._off_text(self._planned.get(node.kind))
+                               or ("not computed yet: Compute makes the figures"
+                                   if not self._computed_any() else
+                                   "no figure of this kind for these results"))
             return
-        draw = dict(outputs.figures).get(stem)
-        self._drawn_from = outputs
+        stem = self.choices.set_figures(figure_choices(kind_named(node.kind),
+                                                       [s for s, _ in node.figures]),
+                                        keep=self.choices.values(), stem=keep)
+        self._draw_stem(stem)
+
+    def _computed_any(self) -> bool:
+        return any(e.figures for e in self._nodes.values())
+
+    def _draw_stem(self, stem: str) -> None:
+        """Draw the figure ``stem`` of the kind selected (chosen in the lists above it)."""
+        node = self._current_node()
+        if node is None:
+            return
+        draw = dict(node.figures).get(stem)
+        self._drawn_draw = draw
+        if self.every_figure.isChecked():
+            self._want_kind_rows(node)
         if draw is None:  # a figure of an earlier analysis this one does not draw
             self.panel.save_name = ""
             self._clear_figure("this figure is not in the analysis computed now")
             return
         self.panel.save_name = stem
-        self.panel.draw(draw)
+        self._check_caches()
+        self.panel.draw(draw, key=(node.key, stem))
+
+    def _want_kind_rows(self, node) -> None:
+        """The rows of every figure of the kind selected in the data tab, gathered when it is
+        shown (once per kind selected)."""
+        key = "\x1f".join(node.key)
+        if self._kind_rows == key:
+            return
+        self._kind_rows = key
+        self._rows_wanted = (key, node.kind, [s for s, _ in node.figures], dict(node.figures))
+        self.data.show_rows([], [], node.kind)
+        self.data.set_note(f"The rows of the {len(node.figures)} figures of this kind are "
+                           "gathered when this tab is shown.")
+        self.views.setTabText(1, "data")
+        self._gather_if_shown()
+
+    def _every_toggled(self, on: bool) -> None:
+        node = self._current_node()
+        self._gathering += 1
+        self._kind_rows = None
+        self._rows_wanted = None
+        if on and node is not None and node.figures:
+            self._want_kind_rows(node)
+        elif not on and self.panel.view.figure is not None:
+            self._show_data()
 
     def _clear_figure(self, message: str = "") -> None:
         self.panel.clear(message)
@@ -756,7 +993,7 @@ class AnalysisWorkspace(QWidget):
         """The figure drawn: its data table (a kind selected: every figure's, gathered apart)."""
         from .figures import figure_rows
 
-        if self._kind_rows is not None:
+        if self.every_figure.isChecked() and self._kind_rows is not None:
             return
         columns, rows = figure_rows(self.panel.view.figure)
         self.data.show_rows(columns, rows, self.panel.save_name)
@@ -768,11 +1005,11 @@ class AnalysisWorkspace(QWidget):
         draws every figure of the kind, minutes for a run with hundreds)."""
         if self._rows_wanted is None or self.views.currentWidget() is not self.data:
             return
-        kind, stems, outputs = self._rows_wanted
+        key, kind, stems, figures = self._rows_wanted
         self._rows_wanted = None
-        self._gather_rows(kind, stems, outputs)
+        self._gather_rows(key, kind, stems, figures)
 
-    def _gather_rows(self, kind: str, stems: list[str], outputs) -> None:
+    def _gather_rows(self, key: str, kind: str, stems: list[str], figures: dict) -> None:
         """A kind selected: the rows of every one of its figures in the data tab, a ``figure``
         column naming each one's file (owner, 2026-11-04: the first time point alone was
         confusing). Made in the drawing thread (matplotlib is used by one thread at a time);
@@ -780,18 +1017,24 @@ class AnalysisWorkspace(QWidget):
         figure, not for all), and a kind whose first figure carries no rows has none."""
         from .figures import figure_rows
 
-        figures = dict(outputs.figures)
-        self._kind_rows = kind
+        self._kind_rows = key
         self._gathering += 1
         mine = self._gathering
+        self._check_caches()
+        if key in self._row_cache:  # gathered before, from the same analysis
+            self._rows_gathered(key, self._row_cache[key], kind)
+            return
         self.data.show_rows([], [], kind)
-        self.data.set_note(f"Gathering the rows of the {len(stems)} figures of this kind…")
+        self._gather_done = (0, len(stems))
+        self._show_progress()
+        self._progress.start()
 
         def work():
             columns, rows = ["figure"], []
             for n, stem in enumerate(stems):
                 if self._gathering != mine:  # another selection since: stop
                     return None
+                self._gather_done = (n, len(stems))
                 draw = figures.get(stem)
                 if draw is None:
                     continue
@@ -802,13 +1045,34 @@ class AnalysisWorkspace(QWidget):
                 rows += [{"figure": stem, **r} for r in found]
             return columns, rows
 
-        self._rows_task.submit(work, lambda made: self._rows_gathered(kind, made),
+        self._rows_task.submit(work, lambda made: self._rows_gathered(key, made, kind),
                                lambda message: self.data.set_note(
                                    f"The rows could not be gathered: {message}"))
 
-    def _rows_gathered(self, kind: str, made) -> None:
-        if made is None or self._kind_rows != kind:  # another selection since
+    def _show_progress(self) -> None:
+        """How far a gathering has come, on the data tab's note line."""
+        if not self._rows_task.running:
+            self._progress.stop()
             return
+        n, total = self._gather_done
+        self.data.set_note(f"Gathering the rows: {n} of {total} figures of this kind (each is "
+                           "drawn once; kept until the analysis changes)…")
+
+    def _check_caches(self) -> None:
+        """Forget the rows and figures kept when the analyses shown are other ones (a Compute,
+        other results)."""
+        owners = [made for made, _ in self._analyses.values()]
+        if len(owners) != len(self._cache_owners) or any(
+                a is not b for a, b in zip(owners, self._cache_owners, strict=True)):
+            self._row_cache.clear()
+            self.panel.forget_kept()
+            self._cache_owners = owners
+
+    def _rows_gathered(self, key: str, made, kind: str = "") -> None:
+        self._progress.stop()
+        if made is None or self._kind_rows != key:  # another selection since
+            return
+        self._row_cache[key] = made
         columns, rows = made
         if not rows:
             columns = []
@@ -854,18 +1118,28 @@ class AnalysisWorkspace(QWidget):
             self.about.setText("")
             return
         p = self._planned.get(item.data(0, KIND))
-        if p is None:
-            self.about.setText("")
+        if p is None:  # a row above the kinds: a top says what it holds
+            from .analysis_tree import TOP_WORDS, top_of
+
+            path = next((k for k, v in self._row_items.items() if v is item), ())
+            words = TOP_WORDS.get(top_of(path[0]), "") if len(path) == 1 else ""
+            self.about.setText(f"{path[0]}: {words}." if words else "")
             return
         lines = [f"{p.kind.title}: {p.kind.shows}."]
-        if p.state == "off":
+        node = self._nodes.get(item.data(0, NODE))
+        if node is not None and node.figures and node.kind in ONE_SAMPLE_KINDS \
+                and node.path[0] == "Single samples":
+            lines = [f"{title_at(node, p.kind.title)}: drawn for this sample alone (the "
+                     f"window's own; hxex analyse writes the figure of every sample: "
+                     f"{p.kind.shows})."]
+        if p.state == "off" and not (node is not None and node.figures):
             lines.append(self._off_text(p))
             if p.missing:
                 need = p.missing[0]
                 self._change_table = setting_table(need.setting)
                 self.change.setText(f"Change {need.setting}…")
                 self.change.show()
-        elif p.reason:
+        elif p.reason and p.state != "off":
             lines.append(f"Drawn {p.reason}.")
         self.about.setText("\n".join(lines))
 
@@ -901,6 +1175,8 @@ class AnalysisWorkspace(QWidget):
                                 "window does not show that yet; hxex analyse writes it.")
             return
         ref = self.shown_reference
+        several = (not config.by_group and len(self._ticked) > 1)
+        full = config
         if not config.single_reference and ref != ACROSS:
             config = config.one(ref)
         stamp = table_stamp(self._project())
@@ -937,6 +1213,25 @@ class AnalysisWorkspace(QWidget):
         self.fit_rates.setEnabled(False)  # the settings stay as computed until it is done
         self._computing_path = path
         log.info("computing the analysis (as hxex analyse, nothing written)")
+        if several:  # every reference ticked not computed yet or out of date, in turn
+            todo = [r for r in self._ticked if r not in self._analyses
+                    or self.why_out_of_date(self._analyses[r][1])] or list(self._ticked)
+            made_each: dict = {}
+            self._compute_note = (0, len(todo), todo[0])
+            self._show_compute_progress()
+            self._compute_timer.start()
+
+            def each():
+                for i, r in enumerate(todo):
+                    self._compute_note = (i, len(todo), r)
+                    made_each[r] = analysis_outputs(results, full.one(r), base=base,
+                                                    cancel=cancel.is_set)
+                return made_each[todo[-1]]
+
+            self._computing.submit(
+                each, lambda outputs: self._computed(outputs, key, text, path, todo[-1], stamp,
+                                                     made_each), self._failed)
+            return
         if ref == ACROSS:  # every group's analysis (those up to date kept), then across them
             ready = {g: entry[0] for g, entry in self._analyses.items()
                      if g in (config.groups or {}) and not self.why_out_of_date(entry[1])}
@@ -962,6 +1257,9 @@ class AnalysisWorkspace(QWidget):
         self._analyses = {}  # `outputs` reads from it
         self._key_cache = (None, None)
         self.panel.clear()
+        self.panel.forget_kept()  # the figures kept to show again
+        self._row_cache.clear()
+        self._cache_owners = []
 
     def cancel(self) -> None:
         """Stop the computation running, if any (other results are shown, or the window
@@ -1008,13 +1306,10 @@ class AnalysisWorkspace(QWidget):
         self.refresh()  # draws the figure shown again from the new analysis, once (E-15)
         if self.list.currentItem() is not None:
             self._redraw_if_another()  # nothing to do when refresh drew it
-        else:  # the first figure drawn
-            for i in range(self.list.topLevelItemCount()):
-                item = self.list.topLevelItem(i)
-                if item.childCount():
-                    item.setExpanded(True)
-                    self.list.setCurrentItem(item.child(0))
-                    break
+        else:  # the first kind with figures selected: its first figure drawn
+            first = next((k for k, e in self._nodes.items() if e.figures), None)
+            if first is not None:
+                self.list.setCurrentItem(self._leaf_items[first])
 
     def _failed(self, message: str) -> None:
         self._compute_when_loaded = None
@@ -1073,10 +1368,11 @@ class AnalysisWorkspace(QWidget):
 
 
 def across_outputs(results, config, base, ready: dict, made: dict, cancel=None):
-    """The analysis across the groups as the window shows it: each group's analysis (those in
-    ``ready`` reused, the others computed and put in ``made``), then the table and figures
-    hxex analyse writes in results_analysis_groups (``cross_group_regions``), as an
-    :class:`hxex.report.analysis.AnalysisOutputs`."""
+    """Every group's analysis as the window shows it (those in ``ready`` reused, the others
+    computed and put in ``made``), then, when two groups or more share a region name, the
+    table and figures hxex analyse writes in results_analysis_groups
+    (``cross_group_regions``), as an :class:`hxex.report.analysis.AnalysisOutputs` (empty
+    without them)."""
     from ..hooks import check_cancel
     from ..report import analysis_outputs
     from ..report.analysis import AnalysisOutputs, _time_label, _time_scale
@@ -1091,6 +1387,10 @@ def across_outputs(results, config, base, ready: dict, made: dict, cancel=None):
             outputs = made[name] = analysis_outputs(results, config.one(name), base=base,
                                                     cancel=cancel)
         analyses[name] = (config.one(name), outputs.tables)
+    from ..report.groups import shared_region_names
+
+    if len(config.groups) < 2 or not shared_region_names(config):  # every group, no regions
+        return AnalysisOutputs(tables={}, figures=[], config=config)
     table = cross_group_regions(analyses)
     scale = _time_scale(results)
     note = provisional_note(results)
@@ -1102,38 +1402,3 @@ def across_outputs(results, config, base, ready: dict, made: dict, cancel=None):
 
     figures = [(f"{CROSS_TABLE}_{_time_label(t, scale)}", draw(t)) for t in times]
     return AnalysisOutputs(tables={CROSS_TABLE: table}, figures=figures, config=config)
-
-
-def analysis_sections(kinds, fragments: bool | None, shown_reference: str | None,
-                      shared_reference: str | None,
-                      group: str | None = None) -> list[tuple[str, str, list]]:
-    """The parts of the Analysis list: ``(heading, tooltip, planned kinds)`` for the peptides'
-    figures (MS1) the same for every reference, those compared with the reference, and the
-    fragment ions' (MS2/MS3), the last only when the results may hold fragment series
-    (``fragments`` not False). ``group``: the group of ``[analysis.groups]`` shown (its own
-    samples, so nothing is the same for another group); ``shown_reference`` is then the
-    group's reference."""
-    drawn_once = ("drawn once, from the latest analysis computed (against "
-                  + (shared_reference if shared_reference else "the reference computed")
-                  + "), and shown whichever reference is chosen")
-    peptides = [p for p in kinds if not p.kind.fragments]
-    if group:
-        drawn_once = f"drawn for the samples of group {group} only"
-    return [
-        ((f"Peptides (MS1) of group {group}: not compared" if group else
-          "Peptides (MS1): same for every reference"),
-         "figures of the peptides, from their MS1 spectra, that do not compare samples with "
-         "the reference: " + drawn_once,
-         [p for p in peptides if not p.kind.compares]),
-        ("Peptides (MS1): compared with the reference"
-         + (f" {shown_reference}" if shown_reference else ""),
-         "figures of the peptides, from their MS1 spectra, that compare each sample with the "
-         "reference chosen above",
-         [p for p in peptides if p.kind.compares]),
-        ("Fragment ions (MS2/MS3)",
-         "figures of the fragment ions read in the MS2 and MS3 scans: every fragment of a "
-         "series on one panel (the first look), the ladders, the closure "
-         "(measured against the parent's MS1 spectrum where the run read it) and the residue "
-         "rates; " + drawn_once,
-         [p for p in kinds if p.kind.fragments] if fragments is not False else []),
-    ]

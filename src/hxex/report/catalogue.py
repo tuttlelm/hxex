@@ -6,7 +6,7 @@ settings that change it, and the guide page that explains it.
 :func:`plan` says, for a project's settings (and, when given, its results), which kinds are
 drawn, which are left to the data, and which a setting rules out, naming that setting. The user
 guide's figure page (``docs/guide/figures.md``, from :mod:`hxex._reference`), ``hxex figures``
-and the window's Analysis list are made from it. :func:`kind_of` names the kind of a written
+and the window's Analysis tree are made from it. :func:`kind_of` names the kind of a written
 file; a test ties every file ``hxex report --figures`` and ``hxex analyse`` write to its entry
 here, so the list cannot fall behind the drawing code.
 """
@@ -258,7 +258,7 @@ KINDS: tuple[FigureKind, ...] = (
         changed_by=("[analysis] redundancy", "[analysis] coverage_times",
                     "[analysis.colours]")),
     FigureKind(
-        "residues_all", "Residue fD, every sample", ANALYSE, ("residues_all_{time}",),
+        "residues_all", "Residue fDavg, every sample", ANALYSE, ("residues_all_{time}",),
         "every sample's average deuteration (fDavg: the K=1 fit, or the K=2 average where two "
         "populations lie at least 2 D apart) by residue on one axis, none of them a reference, "
         "with its standard error", _ANALYSIS_PAGE,
@@ -289,7 +289,7 @@ KINDS: tuple[FigureKind, ...] = (
                     "[input] pooled_classes", "[analysis] samples", "[analysis.colours]",
                     "[analysis] times", "[analysis] page_size")),
     FigureKind(
-        "choice", "Residue profile with the population choice", ANALYSE,
+        "choice", "Population choice", ANALYSE,
         ("choice_{sample}_{time}",),
         "the residue profile: K=1, the K=2 ranks, the chosen description and the population",
         _ANALYSIS_PAGE, (_K2,), data="where the sample has K=2 values at that time",
@@ -308,7 +308,7 @@ KINDS: tuple[FigureKind, ...] = (
         "population-test.md#the-residue-tiers", (_TEST,),
         data="where a residue has a tier", changed_by=("[analysis] page_size",)),
     FigureKind(
-        "overlay_residues", "Residue overlay", ANALYSE, ("overlay_residues_{time}",),
+        "overlay_residues", "Residue fD overlay", ANALYSE, ("overlay_residues_{time}",),
         "each sample's residue values drawn over the reference's (values only, no "
         "significance)", _ANALYSIS_PAGE, (_REFERENCE,),
         data="where the reference and a sample have the values to draw at that time",
@@ -420,13 +420,13 @@ KINDS: tuple[FigureKind, ...] = (
         changed_by=("[analysis.fragments]", "[analysis.fragments] fit_rates",
                     "[analysis] page_size")),
     FigureKind(
-        "closure", "Ladder closure", ANALYSE, ("closure_{parent}_{ions}",),
+        "closure", "Fragment ladder closure", ANALYSE, ("closure_{parent}_{ions}",),
         "the closure miss over time for each split of the parent into an N- and a C-terminal "
         "fragment", "fragment-residues.md", (_FRAGMENTS,),
         data="where both fragments of a split were measured",
         changed_by=("[analysis.fragments]",)),
     FigureKind(
-        "residue_rates", "Residue rates", ANALYSE, ("residue_rates_{parent}",),
+        "residue_rates", "Fragment residue rates", ANALYSE, ("residue_rates_{parent}",),
         "per-residue rates, amplitudes and, with kint, protection, from the fragment ladders",
         "fragment-residues.md", (_FRAGMENTS, _FIT_RATES),
         changed_by=("[analysis.fragments]", "[analysis.fragments.exchange]")),
@@ -536,3 +536,91 @@ def plan(situation: Situation) -> list[Planned]:
         else:
             out.append(Planned(kind, "drawn"))
     return out
+
+
+# --- the choices inside a kind (the window's lists above a figure) -----------------------
+
+PAGE = "page"
+TIME = "time"
+_PARENT = re.compile(r"(.*?-?\d+-\d+(?:_z\d+)?)(?:_(.+))?\Z")  # name_START-END[_zN][_rest]
+_FRAGMENT_REST = {"fragment_traces": "condition and ion", "ladder": "ion", "closure": "ions"}
+_FIRST_LABEL = {"population_tiers": "class"}  # a pool's extra figures: one per class
+
+
+@dataclass(frozen=True)
+class FigureChoices:
+    """The figures of one kind as choices (the window's lists above the figure, in place of a
+    row per figure): ``labels`` name what varies (``sample``, ``time``, ``form``, ``page``...),
+    and ``entries`` hold each figure's file stem with its value for every label, in the order
+    of the figures given. A value ``''`` stands for a figure of every sample (a pool's
+    figures of a form beside it); ``page`` values count from ``'1'``."""
+
+    labels: tuple[str, ...]
+    entries: tuple[tuple[str, tuple[str, ...]], ...]
+
+    def values(self, label: str, where: dict[str, str] | None = None) -> list[str]:
+        """The values of ``label``, in order, among the figures matching ``where``."""
+        i = self.labels.index(label)
+        out: list[str] = []
+        for _, values in self.entries:
+            if where and any(values[self.labels.index(k)] != v for k, v in where.items()):
+                continue
+            if values[i] not in out:
+                out.append(values[i])
+        return out
+
+    def stem(self, chosen: dict[str, str]) -> str | None:
+        """The stem of the figure with these values (None: no such figure)."""
+        for stem, values in self.entries:
+            if all(chosen.get(k) == v for k, v in zip(self.labels, values, strict=True)):
+                return stem
+        return None
+
+    def of(self, stem: str) -> dict[str, str]:
+        """The values of the figure ``stem`` (empty: not one of these)."""
+        for s, values in self.entries:
+            if s == stem:
+                return dict(zip(self.labels, values, strict=True))
+        return {}
+
+
+def figure_choices(kind: FigureKind, stems: list[str]) -> FigureChoices:
+    """``stems``, the figures of ``kind`` an analysis draws, split into what varies between
+    them, from their file names: a page (``NAME_2`` beside ``NAME``), then the time (the last
+    part, for a kind whose files name one; a time's part never holds ``_``), and before it
+    the sample, form, or class; a fragment figure's parent (``NAME_START-END_zN``) and the
+    series after it. A part found in no figure is not a choice (a figure per time only)."""
+    names = [m.group(1) for f in kind.files for m in re.finditer(r"\{([^}]+)\}", f)]
+    fixed = re.split(r"\{", kind.files[0])[0].rstrip("_")
+    has_time = TIME in names
+    if kind.fragments:
+        labels = ["parent"] + ([_FRAGMENT_REST[kind.name]] if kind.name in _FRAGMENT_REST
+                               else [])
+    else:
+        first = next((n for n in names if n not in (TIME, PAGE)),
+                     _FIRST_LABEL.get(kind.name, "form"))
+        labels = [first] + [TIME] * has_time
+    known = set(stems)
+    rows = []
+    for stem in stems:
+        core, page = stem, "1"
+        m = re.fullmatch(r"(.+)_(\d+)", stem)
+        if m and m.group(1) in known:  # page 1 is the figure's own name (_page_stem)
+            core, page = m.group(1), m.group(2)
+        rest = core[len(fixed):].lstrip("_") if core.startswith(fixed) else core
+        if kind.fragments:
+            found = _PARENT.match(rest)
+            parts = [found.group(1), found.group(2) or ""] if found else [rest, ""]
+            parts = parts[:len(labels)]
+        elif has_time:
+            before, _, when = rest.rpartition("_")
+            parts = [before, when]
+        else:
+            parts = [rest]
+        rows.append((stem, (*parts, page)))
+    labels.append(PAGE)
+    used = [i for i in range(len(labels))
+            if any(values[i] not in ("", "1" if labels[i] == PAGE else "")
+                   for _, values in rows)]
+    return FigureChoices(tuple(labels[i] for i in used),
+                         tuple((stem, tuple(values[i] for i in used)) for stem, values in rows))

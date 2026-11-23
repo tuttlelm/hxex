@@ -1011,3 +1011,22 @@ def test_a_watch_the_system_refuses_is_said(qtbot, tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="hxex.gui.window"):
         w._watch(str(tmp_path / "user_review_table.csv"))
     assert "cannot be watched" in caplog.text
+
+
+def test_a_project_file_that_reads_after_a_fix_opens_its_results(qtbot, window, bundle,
+                                                                 tmp_path):
+    """An old project file with a retired setting (``[output] overwrite = true``) does not
+    read, so its results were not opened; deleting the line opened nothing until the session
+    was opened again (owner, 2026-11-23): now the results open once the file reads."""
+    project = tmp_path / "old.toml"
+    good = f'project = "gui"\n\n[analysis]\n\n[output]\nbundle = "{bundle.as_posix()}"\n'
+    project.write_text(good + "overwrite = true\n", encoding="utf-8")
+    window.open_project(project)
+    assert window.results_path is None and not window.loading
+    project.write_text(good + "overwrite = true\n", encoding="utf-8")
+    window.project_page._file_changed()  # still not readable: nothing opened
+    assert window.results_path is None and not window.loading
+    project.write_text(good, encoding="utf-8")  # the line deleted
+    window.project_page._file_changed()  # as the file watcher does
+    qtbot.waitUntil(lambda: window.project_results, timeout=30000)
+    assert window.results_page.results is not None

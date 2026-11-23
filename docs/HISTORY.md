@@ -11716,3 +11716,41 @@ CSVs or mzML if wanted.
     gets a flag naming the other (no filter), and the charge term is built into the m/z check
     together with the claims. Design draft in PLAN 34. Private record:
     hxex_private/analysis_examples/peak_claims (README, scripts, out/).
+
+439. **The Analysis tree** (report redesign step 1, 2026-11-22/23; plan:
+    hxex_private/plans/report.md, "Decided"). The window's Analysis list, one row per figure
+    file, is now a tree with a row per kind of figure at each place, the owner's layout:
+    **Summary** (coverage, redundancy and resolution, then the samples together: residue fDavg,
+    regions, population tiers), **Single samples** (each sample's figures, coverage first, the
+    summary figures drawn for that sample alone among them, its fragment figures last),
+    **Head to head (sequences)** (pooled projects; listed once, the same whatever the
+    reference), one **Comparisons (vs. REFERENCE)** part per reference ticked (the whole group's
+    significance maps, then each compared sample's figures, among them its rows of the residue
+    significance map, its panel of the residue fD and population overlays, and the population
+    tiers of the reference and that sample), and **Not drawn** (grey). A pool's forms are placed
+    as samples, each class as a group. What varies among a kind's figures at a place (sample,
+    time, form, page, a fragment's parent and ion) is chosen in lists above the figure
+    (`hxex.report.catalogue.figure_choices`, `hxex.gui.figure_choices`); a choice the next kind
+    lacks is said ("no figure for …") and comes back on the next kind that has it, and a
+    fragment parent is matched by its residues between the residue rates (all precursor charges)
+    and the traces, ladders, and closure. The single-sample and per-sample comparison figures
+    are the window's own (`AnalysisOutputs.window`; `hxex analyse` writes none of them: files of
+    one sample are the report's, step 2). Renamed: "Residue fDavg, every sample", "Residue fD
+    overlay", "Population choice", "Fragment ladder closure", "Fragment residue rates". The
+    references are ticked in a list that stays open while ticking and writes `[analysis]
+    reference` in the project file when it closes; Compute makes the analysis against each one
+    not computed or out of date, in turn ("2 of 9"); the button reads one name or "multiple
+    (N)". The fragment ladder, closure, and residue rates figures have data tabs (each point,
+    each fit's rate and amplitude; the rates' rows of ladder_rates.csv); every other kind had
+    rows (counted on four projects). "every figure of this kind" keeps the gathered rows until
+    the analysis changes and says how far it has come; the panel keeps the last four figures
+    drawn (a ladder page ~3 MB, a tiers page ~40 MB; gathered rows a few MB a kind). Leaves of
+    the tree start under their parent's name; "data permitting" replaces "if the results have
+    it", and kinds the settings draw have no word. The Run tab lists Info first. The population
+    tiers figure reserves its legend's space (the legend had met the axis label). A project
+    file the window could not read when opened (an old `[output] overwrite` line) now has its
+    results opened once it reads, without reopening. Measured on the fragment demo: the ladder's
+    rows (110 figures) 41 s the first time, then instant; nine references on the private
+    three-protein dataset computed in 201 s. Tests: test_gui_analysis.py, test_gui_data.py,
+    test_catalogue.py, test_fragment_kinetics.py, test_gui.py; guide gui.md; figures.md
+    regenerated.

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Ctrl+mouse wheel sets the font size of the window's tables, lists and text boxes (owner,
 2026-11-13 for the tables; 2026-11-20 for the rest): the data tabs, the HDX Summary Table, the
-Results tree and List, the Analysis list, the Tables view, the Project editor's lists, the File
+Results tree and List, the Analysis tree, the Tables view, the Project editor's lists, the File
 tab, the Run tab's log, the messages pane, and the sequence view. One size for all of them,
 remembered in the window's settings (``table_font_size``, its name from when it was for tables
 only; 0 or none: the system's); Ctrl+0 over one of them goes back to it.

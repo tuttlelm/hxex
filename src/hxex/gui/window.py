@@ -251,6 +251,7 @@ class MainWindow(QMainWindow):
         self._loading = Latest(self)
         self._loading_path: Path | None = None  # the results being loaded (None: none)
         self._pending_selection: dict = {}
+        self._results_wanted: Path | None = None  # opened once the project file reads
         self.setWindowTitle("hxex")
         self.resize(1200, 800)
 
@@ -825,7 +826,14 @@ class MainWindow(QMainWindow):
             return
         state = self.project_state
         if state.loaded is None:  # said in the log when the state was read
+            # opened once the file reads (a line fixed in the Project tab or elsewhere): an
+            # old file with a retired setting showed no results until reopened (owner,
+            # 2026-11-23)
+            self._results_wanted = path.absolute()
+            log.warning("the results are opened once the project file reads: change or delete "
+                        "the line named above")
             return
+        self._results_wanted = None
         bundle = state.bundle
         if bundle is not None and bundle.exists():
             self.open_results(path)  # the project's results, with its review applied
@@ -1072,7 +1080,18 @@ class MainWindow(QMainWindow):
         """The project file changed: when the results shown are the project's and its
         [figures] or [review] changed, load them again (they carry those settings), keeping the
         place in the tree; when its [analysis] changed, the tree's 'left out' column is worked
-        out again. Other settings do not change results already made."""
+        out again. Other settings do not change results already made. A project whose file
+        did not read when it was opened has its results opened once it does."""
+        wanted, self._results_wanted = self._results_wanted, None
+        if wanted is not None and wanted == self.project:
+            if self.project_state.loaded is None:
+                self._results_wanted = wanted  # still not readable: wait for the next change
+            else:
+                bundle = self.project_state.bundle
+                if bundle is not None and bundle.exists():
+                    log.info("the project file reads now: its results are opened")
+                    self.open_results(self.project)  # the session's selection, if any, kept
+                    return
         if self.project_results and not self.loading:
             # the table it names, or the table's name, may have changed: the windows saved
             # since the run follow

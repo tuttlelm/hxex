@@ -17,7 +17,7 @@ The window is being built in steps. What it does today:
   why each figure left out is left out (below).
 
 In every table, list, and text box of the window (the data tabs, the HDX Summary Table, the
-Results tree and list, the Analysis list, the Tables view, the lists in the Project settings,
+Results tree and list, the Analysis tree, the Tables view, the lists in the Project settings,
 the File tab, the sequence view, the Run tab's messages, and the messages pane), hold Ctrl and
 turn the mouse wheel to make the text larger or smaller. The size applies to all of them, and
 the window remembers it; Ctrl+0 over one of them goes back to the usual size. Figures are
@@ -750,24 +750,57 @@ waiting when you open other results is dropped, and the Messages pane says so.
 same figures, made by the same program from the same settings (`[analysis]` in the project
 file), so what you see here is what the command writes.
 
-- The list on the left has every kind of figure `hxex analyse` can draw. A kind with figures
-  shows how many; open it to see them (one per sample, or per time point, named as the command
-  names their files). **off** means a setting leaves it out: select it to see which, and
-  **Change…** opens that setting. *none for these results* means the settings allow it, but
-  these results have nothing to draw (no peptide with two populations, say). [Figures](figures.md)
-  lists every kind, with what each shows and needs; `hxex figures hxex.toml` prints the same
-  list in a terminal.
+- The tree on the left places every figure `hxex analyse` can draw, in three parts:
+  - **Summary**: the samples together, none of them a reference: the coverage maps and
+    redundancy and resolution first (where the peptides are), then the residue fDavg of every
+    sample, the regions, and the population tiers.
+  - **Single samples**: each sample's figures: its coverage map, redundancy and resolution,
+    residue fDavg, population tiers, the population choice at each time, its region bars, and
+    its protection factors, then its fragment figures (traces, ladders, ladder closure, and
+    residue rates; the parent is chosen in the lists above the figure). Most of these are the summary figures drawn for that
+    sample alone: the window's own, which `hxex analyse` does not write (it writes the figure
+    of every sample).
+  - **Head to head (sequences)**, for pooled samples with candidates: the pool's sequences
+    compared with each other, range by range, in each sample. It has no reference sample, so
+    it is the same whichever references are ticked, and listed once.
+  - **Comparisons (vs. REFERENCE)**, one part for each reference ticked: the significance maps
+    of the whole group, then each sample's figures: its Woods plots, butterfly plot, its rows of the
+    residue significance map, the significance map at K=2, its panel of the residue fD overlay
+    and the population overlay, the population tiers of the reference and that sample, and
+    protection-factor differences. The sample's own panels, rows, and tiers are drawn by the
+    window; `hxex analyse` writes the figures of every sample.
+
+  **Not drawn** at the end lists the kinds the settings leave out (**off**: select one to see
+  which setting, and **Change…** opens it) or these results give nothing for (*none for these
+  results*: no peptide with two populations, say). A kind with figures shows how many. Select
+  it to see one: what varies among its figures there (the **sample**, **time**, **form** of a
+  pool, or **page**; a fragment figure's **parent** and ion) is chosen in lists above the
+  figure, each with ◀ and ▶ to step through it. A list offers only what the lists before it
+  allow (the times of the sample chosen, the pages of that figure), and a list with one value
+  is not shown (the tree names the sample, the figure its time). Choosing another kind keeps
+  the sample and time where it has them, and a fragment figure's parent (the residue rates
+  of a parent read at several precursor charges show them together; the traces, ladders,
+  and closure then show the charge you last chose). A kind with no figure for the sample or
+  parent chosen says so beside its lists (*no figure for …*) and shows another; the next kind that has it shows
+  it again. Before **Compute**, the tree names the kinds the
+  settings allow under their parts, with no samples yet; *data permitting* beside a kind means
+  the settings allow it but the results decide (a K = 2 figure needs peptides with two
+  populations, say). [Figures](figures.md) lists every
+  kind, with what each shows and needs; `hxex figures hxex.toml` prints the same list in a
+  terminal.
+- A pool's forms (`[input] pooled_fasta`) are placed as samples are, each class of forms
+  standing for a group: under Summary each class's residue fDavg of its forms and its tiers,
+  under Single samples and Comparisons each class, then each sample's form.
 - With two samples or more and no `[analysis] reference`, a red line above the list says
   *Reference needed for comparison plots*, with **choose a reference…** beside it: the sample
   chosen is written to the project file (**every sample in turn** writes `reference = "all"`).
-- With groups of samples (`[analysis.groups]`) the list above is the **group**: each group's
-  analysis is its own, against its own reference, and nothing is shared between groups. When
-  two groups or more have a region of one name, **(across the groups)** follows the groups: its
-  **Compute** makes every group's analysis not yet made (or out of date), then the Regions
-  across the groups, one figure per time, as `hxex analyse` writes them in
-  `results_analysis_groups`; the groups' analyses made on the way are shown when you choose
-  them.
-- Select a figure to see it; **Save figure…** suggests the name `hxex analyse` gives it.
+- With groups of samples (`[analysis.groups]`) each part of the tree has a branch per
+  group: each group's analysis is its own, its comparisons against its own reference (said
+  beside the group), and nothing is shared between groups. **Compute** makes every group's
+  analysis (those not yet made, or out of date). When two groups or more have a region of
+  one name, **Summary** also holds the Regions across the groups, one figure per time, as
+  `hxex analyse` writes them in `results_analysis_groups`.
+- **Save figure…** suggests the name `hxex analyse` gives the figure shown.
 - The **data** tab beside the figure lists what the figure draws, one row per bar: on a coverage
   map each peptide's sample, time, residues, sequence, fD and its error, and how many spectra
   and charge states it comes from; on a Woods plot both samples' values, the difference and
@@ -784,11 +817,17 @@ file), so what you see here is what the command writes.
   rows of `compare_population_counts.csv`, `compare_peptides.csv`, and the protection tables.
   Click a column's header to sort (a crowded Woods plot is easier to read sorted by residue or
   by difference), press Ctrl+C to copy the rows you selected, and **Save table…** to write the
-  rows, in the order shown, as a CSV file named after the figure. Choose a kind of figure
-  rather than one figure (the coverage maps, say) and the data tab gathers the rows of all its
-  figures, with a `figure` column naming each one's file. It does so when you open the data
-  tab, since it draws every figure of the kind (minutes for a run with hundreds); choosing
-  another figure meanwhile stops it.
+  rows, in the order shown, as a CSV file named after the figure. Tick **every figure of this
+  kind** in the data tab and it gathers the rows of all the kind's figures (the coverage maps
+  of every sample, say), with a `figure` column naming each one's file. It does so when you
+  open the data tab, since it draws every figure of the kind (a minute for a project's fragment
+  ladders), saying how far it has come; unticking it, or choosing another kind, meanwhile stops
+  it. The rows gathered are kept until the analysis changes (another **Compute**, other
+  results), so a kind gathered once shows its rows at once after that, and the last few
+  figures drawn show again without being drawn. The fragment figures list their points:
+  the traces each fragment's D at each time, the ladder each step's fragments, difference,
+  and fitted rate and amplitude, the closure each split's miss, and the residue rates their
+  rows of `ladder_rates.csv`.
 - The **HDX Summary Table** tab beside **figure** and **data** shows the data summary of
   Masson et al. (2019) that `hxex analyse` writes as `summary.csv` and `summary.md`: one row per
   item and one column per sample, the reference first ([The HDX data summary for a
@@ -825,30 +864,31 @@ file), so what you see here is what the command writes.
   the figures are out of date and why; they stay until you press **Recompute**, which draws the
   figure you are looking at again. When the review table changed, **Recompute** reads the
   results again with it first. A change that only redraws the Results part (a `[figures]`
-  setting) does not count. The kinds you opened in the list stay open through all this.
+  setting) does not count. The kind and the figure you chose, and the rows you opened in the
+  tree, stay as they are through all this.
   Opening other results starts afresh.
-- When `[analysis] reference` names several samples, or `"all"`, a list at the top chooses
-  which reference's analysis is shown. Each is computed when you press **Compute** with it
-  chosen, and then kept, so switching back is instant; `hxex analyse` writes a folder for
-  each.
-- The list has up to three parts. **Peptides (MS1): same for every reference** comes first:
-  coverage, redundancy and resolution, the residue profiles and population choices, the
-  population tiers, regions, and protection factors. These compare nothing, so they are drawn
-  once, in the order and colours of `[analysis] samples`, from the latest analysis computed,
-  and stay as they are when you choose another reference. A **Recompute** renews them too.
-  **Peptides (MS1): compared with the reference** follows: the overlays, Woods and butterfly
-  plots, the significance maps, and protection-factor differences, for the reference chosen.
-  When the results hold fragment ions, **Fragment ions (MS2/MS3)** comes last: the ladders, the
-  closure, and the residue rates, from the fragment scans (the closure is measured against the
-  parent's MS1 spectrum where the run read it). Like the first part, they are drawn once
-  whichever reference is chosen.
+- **comparisons against** at the top is a list of the samples with a box to tick for each:
+  the samples ticked are the references, the samples the others are compared with. The list
+  stays open while you tick (a click outside it, or Escape, closes it); when it closes, the
+  samples ticked are written to `[analysis] reference` in the project file (one sample, a list
+  of several, or the line taken out), so `hxex analyse` makes the same comparisons, a folder for
+  each. **Compute** makes the analysis against each reference ticked that is not computed yet
+  or out of date, one after another (the line beside it says which, "2 of 3"), and the tree
+  has a **Comparisons (vs. …)** part for each. Each takes about as long as one analysis (a
+  few minutes for nine references on a large project), and what is computed is kept: ticking
+  a reference again shows it at once.
+- The figures of Summary and Single samples compare nothing, so they are drawn once, in the
+  order and colours of `[analysis] samples`, from the latest analysis computed, the same
+  whichever references are ticked. A **Recompute** renews them too.
+  The fragment figures come from the fragment scans (the closure is measured against the
+  parent's MS1 spectrum where the run read it).
 - Results opened alone (a bundle, not through the project file) use the default settings.
   A project that compares separate runs (`[analysis.runs]`) is not shown in the window yet:
   `hxex analyse` writes it.
 
 ## Running the commands
 
-**Run** has a button for each command: **Check**, **Report**, **Analyse**, and **Info**, with
+**Run** has a button for each command: **Info** (first: what the results hold), **Check**, **Report**, and **Analyse**, with
 **Start again…** apart at the right end of that row and **Run** on the row below them. Each runs that command on the project file,
 in the project's folder, exactly as `hxex run hxex.toml` would in a terminal: the line above the
 messages shows the command as you would type it. One command runs at a time.

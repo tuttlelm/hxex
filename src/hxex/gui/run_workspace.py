@@ -54,10 +54,12 @@ log = logging.getLogger(__name__)
 
 # (button, command, what it does): the commands a project runs, in the order of a project's life
 # (Run and Start again are on the stage row, :mod:`hxex.gui.stage_row`)
-COMMANDS = (("Check", "check", "check the project file and show what would be read"),
+# Info first: what the results hold is the first thing to read on opening a project with
+# results (owner, 2026-11-22)
+COMMANDS = (("Info", "info", "what the results hold"),
+            ("Check", "check", "check the project file and show what would be read"),
             ("Report", "report", "write the tables again (with the review applied)"),
-            ("Analyse", "analyse", "compare the samples: the analysis tables and figures"),
-            ("Info", "info", "what the results hold"))
+            ("Analyse", "analyse", "compare the samples: the analysis tables and figures"))
 CHANGES_RESULTS = ("run", "report")  # the window shows the results again after these
 DEVICE_SETTING = "[run.fit.backend] device"  # the project file's device setting, by its name
 # the commands that take --keep-previous, and the words their refusal to write over output

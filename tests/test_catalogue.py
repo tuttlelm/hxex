@@ -208,3 +208,41 @@ def test_pooled_results_rule_out_the_mixtures_residue_figures(two_sample_bundle,
     drawn = _drawn(tmp_path / "out", ANALYSE)
     assert "pooled_forms" in drawn
     _agrees(situation, drawn, ANALYSE)
+
+
+def test_every_kind_analyse_draws_has_a_place_in_the_analysis_tree():
+    from hxex.gui.analysis_tree import HOME
+    from hxex.report.catalogue import ANALYSE, KINDS
+
+    assert set(HOME) == {k.name for k in KINDS if k.command == ANALYSE}
+
+
+def test_a_kinds_figures_split_into_choices():
+    """The window's lists above a figure (owner, 2026-11-22): from the file stems, a page
+    (NAME_2 beside NAME), a time (the last part), and the sample, form, or class before it; a
+    fragment figure's parent and series."""
+    from hxex.report.catalogue import figure_choices, kind_named
+
+    woods = figure_choices(kind_named("woods"), ["woods_alone_fresh_30s", "woods_V_30s",
+                                                 "woods_V_1p5min"])
+    assert woods.labels == ("sample", "time")
+    assert woods.values("sample") == ["alone_fresh", "V"]  # a sample's own _ kept
+    assert woods.values("time", {"sample": "V"}) == ["30s", "1p5min"]
+    assert woods.stem({"sample": "V", "time": "1p5min"}) == "woods_V_1p5min"
+    assert woods.of("woods_V_30s") == {"sample": "V", "time": "30s"}
+    pages = figure_choices(kind_named("coverage"), ["coverage_S", "coverage_S_2", "coverage_V"])
+    assert pages.labels == ("sample", "page")
+    assert pages.values("page", {"sample": "S"}) == ["1", "2"]
+    assert pages.values("page", {"sample": "V"}) == ["1"]
+    one = figure_choices(kind_named("residues_all"), ["residues_all_30s", "residues_all_1h"])
+    assert one.labels == ("time",)  # a figure per time: no sample
+    tiers = figure_choices(kind_named("population_tiers"),
+                           ["population_tiers", "population_tiers_2", "population_tiers_A"])
+    assert tiers.labels == ("class", "page") and tiers.values("class") == ["", "A"]
+    ladder = figure_choices(kind_named("ladder"), ["ladder_WT_2-12_z2_c_z1",
+                                                   "ladder_WT_2-12_z2_c_z1_2",
+                                                   "ladder_WT_-3-9_z3_z_z1"])
+    assert ladder.labels == ("parent", "ion", "page")
+    assert ladder.values("parent") == ["WT_2-12_z2", "WT_-3-9_z3"]
+    assert ladder.of("ladder_WT_2-12_z2_c_z1_2") == {"parent": "WT_2-12_z2", "ion": "c_z1",
+                                                     "page": "2"}

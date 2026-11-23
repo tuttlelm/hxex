@@ -131,7 +131,13 @@ def plot_population_tiers(
     three = bool(np.isfinite(residues.test_strength_3[k1]).any())
     shown = len(TIERS) if three else 4
     cmap = ListedColormap(list(TIER_COLOURS)).with_extremes(bad="white")
-    fig = Figure(figsize=(max(8.0, min(16.0, 0.06 * n + 3.0)), 0.2 * edges[-1] + 1.7))
+    # the legend's rows, in inches under the axis (a share of the height overlapped the axis
+    # label on a short figure: one sample's rows, a small class of a pool)
+    n_handles = shown + 1 + (block_outline is not None) + any(borders)
+    ncol = 3 if three else 5
+    legend_in = 0.16 * -(-n_handles // ncol) + 0.12
+    height = 0.2 * edges[-1] + 1.3 + legend_in
+    fig = Figure(figsize=(max(8.0, min(16.0, 0.06 * n + 3.0)), height))
     ax = fig.add_subplot()
     cells = ax.pcolormesh(np.arange(n + 1) + 0.5, edges, image, cmap=cmap, vmin=-0.5,
                           vmax=len(TIERS) - 0.5, shading="flat")
@@ -162,10 +168,10 @@ def plot_population_tiers(
         handles.append(_block_patch(block_outline))
     if any(borders):
         handles.append(BorderHandle())
-    fig.legend(handles=handles, frameon=False, loc="lower center", ncol=3 if three else 5,
+    fig.legend(handles=handles, frameon=False, loc="lower center", ncol=ncol,
                fontsize=7, handler_map={BorderHandle: BorderHandler()})
     ax.set_title("Population test (set) by residue: strong = combined p of the covering peptides "
                  "below 0.01; agreement = share of their weight with the populations "
                  "(undeuterated rows should show none)", fontsize=8, loc="left")
-    fig.tight_layout(rect=(0, 0.07 if three else 0.05, 1, 1))
+    fig.tight_layout(rect=(0, legend_in / height, 1, 1))
     return fig

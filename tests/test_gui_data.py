@@ -89,15 +89,14 @@ def test_a_coverage_figures_rows_lead_to_the_spectra(qtbot, tmp_path, project):
     window.show()
     page.compute()
     qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
-    kinds = {page.list.topLevelItem(i).data(0, 256): page.list.topLevelItem(i)
-             for i in range(page.list.topLevelItemCount())}
-    coverage = kinds["coverage"]
-    assert coverage.childCount() >= 1
+    coverage = page._leaf_items["Summary\x1fcoverage"]
+    assert coverage.childCount() == 0  # one row per kind: its figures chosen above the figure
     # the computed analysis may already show this figure (the first one in the list), and
     # then choosing it draws nothing new: wait for the figure and its rows, not for a signal
     # (macOS CI, 2026-11-12: the first drawing was done before the wait began)
-    stem = coverage.child(0).data(0, 257)
-    page.list.setCurrentItem(coverage.child(0))
+    page.list.setCurrentItem(coverage)
+    stem = page.choices.stem
+    assert stem.startswith("coverage_")
     qtbot.waitUntil(lambda: page.panel.save_name == stem and not page.panel.drawing
                     and page.panel.view.figure is not None and bool(page.data.model.rows),
                     timeout=60000)
@@ -187,9 +186,9 @@ def test_a_right_click_lists_every_peptide_under_the_pointer(qtbot):
 
 
 def test_a_kind_selected_gathers_every_figures_rows(qtbot, tmp_path, project):
-    """A kind of figure selected (owner: the first time point's rows alone were confusing):
-    the data tab has the rows of all its figures, each named by a figure column; one figure
-    selected: its own rows."""
+    """"every figure of this kind" (owner: the first time point's rows alone were confusing):
+    the data tab has the rows of all the kind's figures, each named by a figure column;
+    without it, the rows of the figure shown."""
     window = _window(qtbot, tmp_path / "gui.ini")
     window.open_project(project)
     qtbot.waitUntil(lambda: not window.loading, timeout=30000)
@@ -198,12 +197,14 @@ def test_a_kind_selected_gathers_every_figures_rows(qtbot, tmp_path, project):
     window.show()
     page.compute()
     qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
-    kinds = {page.list.topLevelItem(i).data(0, 256): page.list.topLevelItem(i)
-             for i in range(page.list.topLevelItemCount())}
-    coverage = kinds["coverage"]
-    stems = [coverage.child(i).data(0, 257) for i in range(coverage.childCount())]
+    coverage = page._leaf_items["Summary\x1fcoverage"]
+    stems = [s for s, _ in page._nodes["Summary\x1fcoverage"].figures]
     assert len(stems) == 2
-    page.list.setCurrentItem(coverage)
+    sample = page.choices.box("sample")  # the two figures: one per sample
+    assert sample.count() == 2 and sample.isVisibleTo(page)
+    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+        page.list.setCurrentItem(coverage)
+    page.every_figure.setChecked(True)
     # gathered only when the data tab is shown (it draws every figure of the kind: minutes
     # for a run with hundreds; owner, 2026-11-04, ladders "stuck on drawing")
     assert page.data.note.text().endswith("gathered when this tab is shown.")
@@ -212,15 +213,18 @@ def test_a_kind_selected_gathers_every_figures_rows(qtbot, tmp_path, project):
     gathered = page.data.model.rows
     assert {r["figure"] for r in gathered} == set(stems)
     assert page.data.note.text().startswith("Every figure of this kind (2 with rows)")
+    page.every_figure.setChecked(False)  # the figure shown: its own rows
     with qtbot.waitSignal(page.panel.drawn, timeout=60000):
-        page.list.setCurrentItem(coverage.child(1))
+        sample.setCurrentIndex(1)
+    assert page.panel.save_name == stems[1]
     one = page.data.model.rows
     assert "figure" not in page.data.model.columns and page.data.note.isHidden()
     assert len(one) == sum(r["figure"] == stems[1] for r in gathered)
-    # a new selection stops a gathering under way: its result is never shown
-    page.list.setCurrentItem(coverage)
+    # unticked meanwhile, a gathering under way stops: its result is never shown
+    page.every_figure.setChecked(True)
+    page.every_figure.setChecked(False)
     with qtbot.waitSignal(page.panel.drawn, timeout=60000):
-        page.list.setCurrentItem(coverage.child(0))
+        sample.setCurrentIndex(0)
     # both jobs done in the drawing thread, their results delivered, before the check: a job's
     # result is posted to the window's thread before the job ends, so once the pool is done
     # sending the posted events delivers them (no fixed wait: audit of 2026-11-15, Q-29)
@@ -400,3 +404,37 @@ def test_the_summary_saved_with_the_markdown_filter_is_markdown(qtbot, tmp_path,
         encoding="utf-8").startswith("# HDX data summary")
     assert panel.save(tmp_path / "by_suffix.md").read_text(
         encoding="utf-8").startswith("# HDX data summary")
+
+
+def test_gathered_rows_and_drawn_figures_are_kept_until_the_analysis_changes(qtbot, tmp_path,
+                                                                             project):
+    """Gathering a kind's rows draws every figure of it (a minute for a project's ladders):
+    each visit gathered them again (owner, 2026-11-23). The rows are kept until another
+    analysis is shown, and the last figures drawn are shown again without drawing."""
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(project)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    window.tabs.setCurrentWidget(page)
+    window.show()
+    page.compute()
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    coverage = page._leaf_items["Summary\x1fcoverage"]
+    other = page._leaf_items["Summary\x1fredundancy_resolution"]
+    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+        page.list.setCurrentItem(coverage)
+    page.every_figure.setChecked(True)
+    page.views.setCurrentWidget(page.data)
+    qtbot.waitUntil(lambda: page.data.model.columns[:1] == ["figure"], timeout=60000)
+    gathered = list(page.data.model.rows)
+    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+        page.list.setCurrentItem(other)
+    qtbot.waitUntil(lambda: not page._rows_task.running, timeout=60000)
+    page.list.setCurrentItem(coverage)  # back: the rows at once, the figure without drawing
+    assert not page._rows_task.running and page.data.model.rows == gathered
+    assert not page.panel.drawing and page.panel.save_name == page.choices.stem
+    page.compute()  # another analysis: nothing kept from the one before
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    page.list.setCurrentItem(page._leaf_items["Summary\x1fredundancy_resolution"])
+    page.list.setCurrentItem(page._leaf_items["Summary\x1fcoverage"])
+    assert "Summary\x1fcoverage" not in page._row_cache

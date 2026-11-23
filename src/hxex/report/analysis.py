@@ -396,7 +396,8 @@ def fragment_series_ids(results) -> tuple[set[int], bool]:
     return series, bool(targets) and len(series) == len(targets)
 
 
-def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None, shared=None):
+def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None, shared=None,
+                     window: dict | None = None):
     """The tables (name -> columns) and figures (stem -> drawing function) of the peptide
     analysis of the species table ``up``; ``shared`` (:class:`hxex.analysis.shared.
     SharedPeptides`) marks the peptides another protein of a sample's vial also has on its
@@ -699,7 +700,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None, sha
         pools, up, pooled, tables, config, labels=labels, styles=styles, order=pooled_order,
         ref_state=ref_state, k1=k1_raw, times=times, scale=scale, floor=peptide_top,
         comparisons=raw_comparisons, k2_tested=k2_tested, booted=booted, marks=marks,
-        counts=counts_raw)
+        counts=counts_raw, window=window)
         if pooled and forms_on else ([], peptide_top))
     if pooled:  # a coverage map per form of the pool: peptide-level, whatever residue_level
         form_jobs += _pooled_coverage_jobs(pools, up, pooled, config, labels=labels,
@@ -824,6 +825,10 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None, sha
                         k2_stack, s, t, annotations=ann, length=length, shared=strips.get(s),
                         note=("compared where both samples have two populations" if gate
                               else "every K=2 description compared"), **when)))
+        if window is not None:  # each compared sample alone against the reference
+            _compared_sample_jobs(window.setdefault("compared", {}), residues, res_cmp,
+                                  reference, residue_others, choice, config, times=times,
+                                  scale=scale, styles=styles, length=length, annotations=ann)
         # which residues differ from the reference, judged on the shared peptides (HISTORY 203)
         compared = [s for s in residue_others if res_cmp.where(sample=s).any()]
         if compared:
@@ -903,6 +908,12 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None, sha
             if (regions.time == t).any():
                 jobs.append((f"regions_{_time_label(t, scale)}", lambda t=t: plot_region_bars(
                     regions, t, samples=in_order, styles=styles, **when)))
+    if window is not None:
+        window["samples"] = [x for x in in_order if x not in pooled_shown] + list(states)
+        window["reference"] = reference
+        _single_sample_jobs(window.setdefault("single", {}), residues, coverage, regions,
+                            res_order + states, in_order, config, times=times, scale=scale,
+                            styles=styles, length=length, top=highest, marks=marks)
     jobs.extend(form_jobs)
     check_cancel(cancel)
     # the HDX data summary table of Masson et al. 2019, one column per sample (the reference
@@ -911,6 +922,95 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None, sha
         results, up, wanted, labels, config=config, sequences=sequences, tables=tables,
         time_scale=scale, set_averages=set_average_ks(up))
     return tables, jobs
+
+
+def _single_sample_jobs(single: dict, residues, coverage, regions, on_residues: list,
+                        samples: list, config: AnalysisConfig, *, times, scale: str, styles,
+                        length, top, marks) -> None:
+    """The figures the window draws for one sample alone (owner, 2026-11-22: its "Single
+    samples" branch), added to ``single`` (sample -> ``(stem, draw)``): the residue fD of the
+    every-sample figure with this sample's line only (the same y axis, its own +-1 standard
+    error), its redundancy and resolution, its rows of the population tiers, and its region
+    bars. ``hxex analyse`` writes none of them (the window's own; files of one sample are the
+    report's scope, PLAN report step 2)."""
+    when = {"time_scale": scale}
+    tiered = (np.zeros(0, dtype=bool) if residues is None else
+              (residues.K == 1) & (residues.population_tier != ""))
+    for s in on_residues:
+        mine = single.setdefault(s, [])
+        for t in times:
+            if residues is not None and residues.where(sample=s, time=t, K=1, rank=1).any():
+                mine.append((f"residues_all_{s}_{_time_label(t, scale)}",
+                             lambda s=s, t=t: plot_residue_samples(
+                                 residues, [s], t, styles=styles,
+                                 annotations=config.annotations, length=length, top=top,
+                                 **when)))
+        if coverage is not None and (np.asarray(coverage.sample) == s).any():
+            mine.append((f"redundancy_resolution_{s}", lambda s=s: plot_redundancy_resolution(
+                coverage, samples=[s], marks=marks, styles=styles)))
+        mine_tiered = tiered & (residues.sample == s) if len(tiered) else tiered
+        if config.populations == "population_test" and mine_tiered.any():
+            points = [np.nan] + sorted({float(t) for t in residues.time[mine_tiered]
+                                        if np.isfinite(t)})
+            for n, chunk in enumerate(_map_pages(config.page_size, points, 1, 2.2)):
+                mine.append((_page_stem(f"population_tiers_{s}", n), lambda s=s, chunk=chunk:
+                             plot_population_tiers(residues, [s], length=length, times=chunk,
+                                                   **when)))
+    for s in (samples if regions is not None else []):
+        mine = single.setdefault(s, [])
+        for t in times:
+            if ((regions.time == t) & (np.asarray(regions.sample) == s)).any():
+                mine.append((f"regions_{s}_{_time_label(t, scale)}", lambda s=s, t=t:
+                             plot_region_bars(regions, t, samples=[s], styles=styles, **when)))
+
+
+def _compared_sample_jobs(compared: dict, residues, res_cmp, reference: str, others: list,
+                          choice, config: AnalysisConfig, *, times, scale: str, styles, length,
+                          annotations) -> None:
+    """The comparison figures the window draws for each compared sample alone (owner,
+    2026-11-23), added to ``compared`` (sample -> ``(stem, draw)``): its panel of the residue fD
+    and population overlays, its rows of the residue significance map, and the population
+    tiers of the reference and that sample. ``hxex analyse`` writes none of them (it writes the
+    figures of every sample; files of one sample are the report's scope, PLAN report step 2).
+    """
+    when = {"time_scale": scale}
+    only = choice if config.overlay_two_only else None
+    tiered = (np.zeros(0, dtype=bool) if residues is None or config.populations
+              != "population_test" else (residues.K == 1) & (residues.population_tier != ""))
+    for s in others:
+        mine = compared.setdefault(s, [])
+        for t in times:
+            when_ = _time_label(t, scale)
+            if (_has_overlay(residues, s, t, config.overlay, only)
+                    and _has_overlay(residues, reference, t, config.overlay, only)):
+                mine.append((f"overlay_residues_{s}_{when_}", lambda s=s, t=t:
+                             residue_overlay_figure(
+                                 residues, reference, [s], t, show=config.overlay, choice=only,
+                                 annotations=annotations, length=length, styles=styles,
+                                 **when)))
+            if choice is not None and (
+                    _has_overlay(residues, reference, t, ("pop_high",), choice)
+                    or _has_overlay(residues, s, t, ("pop_high",), choice)):
+                mine.append((f"overlay_populations_{s}_{when_}", lambda s=s, t=t:
+                             residue_overlay_figure(
+                                 residues, reference, [s], t, show=("pop_high",),
+                                 choice=choice, annotations=annotations, length=length,
+                                 styles=styles, **when)))
+        if res_cmp is not None and res_cmp.where(sample=s).any():
+            map_times = sorted({float(t) for t in res_cmp.time[res_cmp.where(sample=s)]})
+            for n, chunk in enumerate(_map_pages(config.page_size, map_times, 1, 2.4)):
+                mine.append((_page_stem(f"residue_significance_{s}", n),
+                             lambda s=s, chunk=chunk: plot_residue_significance(
+                                 res_cmp, [s], length=length, times=chunk, **when)))
+        pair = [reference, s]
+        both = tiered & np.isin(residues.sample, pair) if len(tiered) else tiered
+        if both.any() and (tiered & (residues.sample == s)).any():
+            points = [np.nan] + sorted({float(t) for t in residues.time[both]
+                                        if np.isfinite(t)})
+            for n, chunk in enumerate(_map_pages(config.page_size, points, 2, 2.2)):
+                mine.append((_page_stem(f"population_tiers_{reference}_{s}", n),
+                             lambda pair=pair, chunk=chunk: plot_population_tiers(
+                                 residues, pair, length=length, times=chunk, **when)))
 
 
 def _population_comparisons(residues, pairs: dict, choice, pair_choice: dict, ref: str,
@@ -1027,7 +1127,8 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
                          labels: dict, styles: dict, order: list, ref_state, k1, times,
                          scale: str, floor: float | None = None, comparisons: dict | None = None,
                          k2_tested: bool = False, booted: bool = False,
-                         marks=(), counts=None) -> tuple[list, float | None]:
+                         marks=(), counts=None,
+                         window: dict | None = None) -> tuple[list, float | None]:
     """The residue-level outputs of the pooled samples (owner, 2026-11-09): the forms of each
     pool's minimum set (``pooled_forms`` table), each form's residue values (rows of the
     ``residues`` table, the sample named ``'<sample> <form>'``), each form compared with the
@@ -1188,6 +1289,20 @@ def _pooled_form_outputs(pools: dict, up, pooled: set, tables: dict, config: Ana
         form = state[1][len(sample) + 1:]  # the state is '<sample> <form>'
         shown_as = form_labels[state]  # '<the sample's display label> <form>'
         states[shown_as] = (shown_as[:len(shown_as) - len(form) - 1], form)
+    if window is not None:  # the window's tree: each class's forms as a group's samples
+        window["pools"] = [{"class": cls, "stem": _stem(cls or "other"),
+                            "forms": {f.name: _stem(f.name) for f in members},
+                            "states": [f"{s} {f.name}" for f in members for s in order]}
+                           for cls, members in groups.items()]
+        single: dict = {}
+        _single_sample_jobs(single, shown, None, None,
+                            [st for pool in window["pools"] for st in pool["states"]], [],
+                            config, times=times, scale=scale, styles={}, length=None, top=top,
+                            marks=marks)
+        named = window.setdefault("single", {})
+        for state, mine in single.items():
+            named[state] = [(stem, lambda draw=draw: name_forms(draw(), states))
+                            for stem, draw in mine]
     return [(stem, lambda draw=draw: name_forms(draw(), states)) for stem, draw in jobs], top
 
 
@@ -1433,6 +1548,11 @@ class AnalysisOutputs:
     tables: dict
     figures: list
     config: AnalysisConfig
+    # what the window's Analysis tree needs beside the figures, never written: "samples"
+    # (the display labels in order, the reference first when it is one), "reference",
+    # "pools" (each class of a pool's forms: its name, file-name part, forms, and states),
+    # "single" (sample or state -> the figures of it alone, (stem, draw))
+    window: dict = dataclasses.field(default_factory=dict)
 
 
 def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".", review=None,
@@ -1491,6 +1611,7 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
         frag_tables, frag_jobs = fragment_outputs(results, config.fragments,
                                                   page_size=config.page_size, cancel=cancel)
     tables, jobs = {}, []
+    window: dict = {}  # what the window's tree needs beside the figures (never written)
     if not only_fragments:
         if any_fragments:
             peptides = {name: r.without_series(split[name][0]) if split[name][0] else r
@@ -1508,6 +1629,7 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
         check_cancel(cancel)
         if len(up):
             tables, jobs = _peptide_outputs(results, config, base, up, cancel=cancel,
+                                            window=window,
                                             shared=shared)
             if config.group:
                 _add_shared_with(tables, shared, config)
@@ -1522,7 +1644,7 @@ def analysis_outputs(results, config: AnalysisConfig, *, base: str | Path = ".",
                 tables["flags"] = found
     tables.update(frag_tables)
     jobs += frag_jobs
-    return AnalysisOutputs(_with_pooled_identities(tables, runs), jobs, config)
+    return AnalysisOutputs(_with_pooled_identities(tables, runs), jobs, config, window)
 
 
 def _shared_peptides(results, config: AnalysisConfig, base):

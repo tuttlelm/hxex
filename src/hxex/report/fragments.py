@@ -36,6 +36,7 @@ from ..analysis.fragments import (
 from ..analysis.runs import display_labels
 from ..analysis.runs import label as _label
 from ..kint import IntrinsicRates, expected_uptake, intrinsic_rates
+from . import hover
 
 # per condition: (shorter fragment, longer fragment) and the difference
 _PAIR_COLOURS = [("tab:green", "tab:red"), ("tab:purple", "tab:brown"),
@@ -49,14 +50,20 @@ _MARKER = {"marker": "v", "s": 9, "linewidths": 0}
 _ERRORS = {"fmt": "none", "elinewidth": 0.6, "alpha": 0.35, "capsize": 0}  # +-1 se, light
 
 
-def _points(ax, trace, colour, label=None, alpha=None, **style) -> None:
-    """``trace`` as points with light +-1 se error bars (where the error is known)."""
+def _points(ax, trace, colour, label=None, alpha=None, rows: dict | None = None,
+            **style) -> None:
+    """``trace`` as points with light +-1 se error bars (where the error is known); with
+    ``rows`` (the columns that name the trace), each point is a row of the data tab."""
     known = np.isfinite(trace.mean_se)
     if known.any():
         ax.errorbar(trace.time[known], trace.mean[known], yerr=trace.mean_se[known],
                     ecolor=colour, **{**_ERRORS, "alpha": _ERRORS["alpha"] * (alpha or 1.0)})
-    ax.scatter(trace.time, trace.mean, color=colour, label=label, alpha=alpha,
-               **(style or _MARKER))
+    dots = ax.scatter(trace.time, trace.mean, color=colour, label=label, alpha=alpha,
+                      **(style or _MARKER))
+    if rows is not None:
+        hover.set_rows(dots, [{**rows, "time": float(t), "mean": float(m), "mean_se": float(e)}
+                              for t, m, e in zip(trace.time, trace.mean, trace.mean_se,
+                                                 strict=True)])
 # closure splits: a colour and a marker each (10 colours, 7 markers: 70 distinct pairs)
 _SPLIT_COLOURS = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown",
                   "tab:pink", "tab:gray", "tab:olive", "tab:cyan"]
@@ -155,18 +162,25 @@ def ladder_kinetics_figure(
     left, right = axes[0]
     left.set_title(f"{named}  {activation} M_z{pre_z}" + (f"  ({note})" if note else ""),
                    fontsize=9)
+    # the data tab: each point (time, D, its error) named by step, trace and condition, and
+    # each fitted curve's rate, amplitude and offset (owner, 2026-11-23)
+    base = {"sample": shown, "parent": parent, "parent_charge": int(pz)}
     for j, cond in enumerate(conditions):
         colours = _PAIR_COLOURS[j % len(_PAIR_COLOURS)]
         for m, ion in enumerate(precursors):
             label = f"{ion}:{len(residues)}"
             tr = fragment_trace(table, label, run=cond[0], condition=cond[1], charge=pre_z)
             if len(tr):
-                _points(left, tr, colours[m % 2], f"{ion} {names[cond]}")
+                _points(left, tr, colours[m % 2], f"{ion} {names[cond]}", rows={
+                    **base, "condition": names[cond], "step": "precursor", "trace": label,
+                    "charge": int(pre_z)})
         tr = fragment_trace(table, f"M:{len(residues)}", run=cond[0], condition=cond[1],
                             charge=pre_z)
         if len(tr) and right_defaults:
             _fitted(right, tr, _DIFF_COLOURS[j % len(_DIFF_COLOURS)], f"M {names[cond]}",
-                    min_time, fit)
+                    min_time, fit, rows={**base, "condition": names[cond], "step": "precursor",
+                                         "trace": f"M:{len(residues)} fit",
+                                         "charge": int(pre_z)})
     _extras(right, right_traces, None, min_time)
     t_axis = table.time[table.time > 0]
     if kint is not None and kint.conditions.initial_fraction is not None:
@@ -192,6 +206,9 @@ def ladder_kinetics_figure(
                 ax.text(0.5, 0.5, step.note, ha="center", va="center", transform=ax.transAxes,
                         color="0.4")
             continue
+        where = {**base, "step": f"{lo}" if lo == hi else f"{lo}-{hi}",
+                 "residues": ", ".join(map(str, step.residues)), "ion_type": ion_type,
+                 "charge": int(charge)}
         for j, cond in enumerate(conditions):
             colours = _PAIR_COLOURS[j % len(_PAIR_COLOURS)]
             for m, frag in enumerate((step.smaller, step.larger)):
@@ -200,16 +217,21 @@ def ladder_kinetics_figure(
                 tr = fragment_trace(table, frag, run=cond[0], condition=cond[1], charge=charge)
                 if len(tr):
                     _points(left, tr, colours[m],
-                            f"{names[cond]}:{frag.replace(':', '_')}_z{charge}")
+                            f"{names[cond]}:{frag.replace(':', '_')}_z{charge}",
+                            rows={**where, "condition": names[cond], "trace": frag})
             if step.smaller is not None:
                 tr = difference_trace(table, step.larger, step.smaller, run=cond[0],
                                       condition=cond[1], charge=charge)
                 colour = _DIFF_COLOURS[j % len(_DIFF_COLOURS)]
                 if len(tr):
-                    _points(left, tr, colour, f"Δ {names[cond]}")
+                    diff = f"Δ {step.larger} − {step.smaller}"
+                    _points(left, tr, colour, f"Δ {names[cond]}",
+                            rows={**where, "condition": names[cond], "trace": diff})
                     if right_defaults:
                         _fitted(right, tr, colour, f"Δ {names[cond]}", min_time,
-                                fit and step.single)
+                                fit and step.single,
+                                rows={**where, "condition": names[cond],
+                                      "trace": f"{diff} fit"})
         _extras(right, right_traces, step, min_time)
         if (step.single and kint is not None
                 and kint.conditions.initial_fraction is not None):
@@ -279,25 +301,31 @@ def _intrinsic(ax, kint, residues, times, label) -> None:
             color="black", ls="--", lw=1.0, label=label)
 
 
-def _fitted(ax, trace, colour, label, min_time, fit) -> None:
+def _fitted(ax, trace, colour, label, min_time, fit, rows: dict | None = None) -> None:
     """``trace`` as points, with its decay fit (from ``min_time``) when ``fit`` (else the
-    points carry the label): a resolved fit with its +-1 se band, an unresolved one dashed."""
-    _points(ax, trace, colour, None if fit else label)
+    points carry the label): a resolved fit with its +-1 se band, an unresolved one dashed.
+    With ``rows``, the fit is a row of the data tab too (its rate, amplitude, and offset)."""
+    _points(ax, trace, colour, None if fit else label)  # its rows are the left panel's
     if not fit:
         return
     f = fit_decay(trace, min_time=min_time)
     if not f.ok:
         return
     t = np.geomspace(max(trace.after(min_time).time.min(), 1e-6), trace.time.max(), 200)
+    fit_row = None if rows is None else {
+        **rows, "rate": f.rate, "rate_se": f.rate_se, "amplitude": f.amplitude,
+        "amplitude_se": f.amplitude_se, "offset": f.offset, "n": f.n, "resolved": f.resolved}
     if not f.resolved:
-        ax.plot(t, f.curve(t), color=colour, lw=1.0, ls="--",
-                label=f"{label}, rate not resolved")
-        return
-    curve, se = f.curve(t), f.curve_se(t)
-    if np.isfinite(se).all():  # +-1 se of the fitted curve
-        ax.fill_between(t, curve - se, curve + se, color=colour, alpha=0.2, lw=0)
-    ax.plot(t, curve, color=colour, lw=1.5,
-            label=f"{label}, rate: {f.rate:.2e}±{f.rate_se:.2e} s⁻¹")
+        (line,) = ax.plot(t, f.curve(t), color=colour, lw=1.0, ls="--",
+                          label=f"{label}, rate not resolved")
+    else:
+        curve, se = f.curve(t), f.curve_se(t)
+        if np.isfinite(se).all():  # +-1 se of the fitted curve
+            ax.fill_between(t, curve - se, curve + se, color=colour, alpha=0.2, lw=0)
+        (line,) = ax.plot(t, curve, color=colour, lw=1.5,
+                          label=f"{label}, rate: {f.rate:.2e}±{f.rate_se:.2e} s⁻¹")
+    if fit_row is not None:
+        hover.set_row(line, fit_row)
 
 
 def _legend(ax) -> None:
@@ -326,8 +354,6 @@ def _trace_panel(ax, table: FragmentUptake, shown: str, pair: tuple[str, str], n
     name's gid is ``series:<data_id>`` (the window selects that series on a click). The number
     of fragments drawn."""
     from matplotlib import colormaps
-
-    from . import hover
 
     rows = (table.where(ion_type=ion_type, charge=charge, condition=pair[1])
             & (np.asarray(table.run) == pair[0]))
@@ -673,10 +699,14 @@ def closure_figure(
             style = {"marker": _SPLIT_MARKERS[m % len(_SPLIT_MARKERS)], "s": 10,
                      "linewidths": 0}
             early = tr.time < (min_time if min_time is not None else -np.inf)
+            split = {"sample": shown, "parent": parent, "parent_charge": int(pz),
+                     "condition": names[cond], "split": f"{n_ion}_{k} + {c_ion}_{n - k}",
+                     "n_fragment": f"{n_ion}:{k}", "c_fragment": f"{c_ion}:{n - k}"}
             _points(ax, Trace(tr.time[~early], tr.mean[~early], tr.mean_se[~early]), colour,
-                    f"{n_ion}_{k} + {c_ion}_{n - k}", 0.8, **style)
+                    f"{n_ion}_{k} + {c_ion}_{n - k}", 0.8,
+                    rows={**split, "before_min_time": False}, **style)
             _points(ax, Trace(tr.time[early], tr.mean[early], tr.mean_se[early]), colour,
-                    None, 0.25, **style)
+                    None, 0.25, rows={**split, "before_min_time": True}, **style)
         ax.set_title(f"{shown} {_span(int(table.parent_start[0]), parent)} (Z{pz})  "
                      f"{names[cond]}", fontsize=9)
         ax.set_xlabel("Time, sec")
@@ -772,6 +802,8 @@ def residue_rates_figure(
         pf.axhline(1.0, color="0.5", lw=0.8)
         pf.set_ylabel("protection factor")
         pf.grid(True, axis="y", alpha=0.4)
+    # the data tab: the rows of ladder_rates.csv this figure draws (owner, 2026-11-23)
+    hover.set_table(top, rates.columns(), keep=pick)
     top.set_yscale("log")
     # the axis follows the rates known to better than their own size
     good = pick & rates.resolved & (rates.rate_se < rates.rate)

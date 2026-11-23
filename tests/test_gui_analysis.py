@@ -8,9 +8,8 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt
 
-from hxex.gui.analysis_workspace import setting_table
+from hxex.gui.analysis_workspace import KIND, setting_table
 from test_analysis import two_sample_bundle  # noqa: F401 - the fixture
 from test_gui import _window
 
@@ -24,8 +23,26 @@ def project(tmp_path, two_sample_bundle):  # noqa: F811
 
 
 def _items(page) -> dict:
-    return {page.list.topLevelItem(i).data(0, 256): page.list.topLevelItem(i)
-            for i in range(page.list.topLevelItemCount())}
+    """Each kind's first row in the tree (in the tree's order: under its top before Not
+    drawn)."""
+    found = {}
+    for item in page._leaf_items.values():
+        found.setdefault(item.data(0, 256), item)
+    return found
+
+
+def _at(page, *path):
+    """The row of a kind at ``path`` (the rows above it, then the kind)."""
+    return page._leaf_items["\x1f".join(path)]
+
+
+def _tops(page) -> list[str]:
+    return [page.list.topLevelItem(i).text(0) for i in range(page.list.topLevelItemCount())]
+
+
+def _under(page, top: str) -> set:
+    """The kinds anywhere under the top ``top``."""
+    return {e.kind for e in page._nodes.values() if e.path[0] == top}
 
 
 def test_the_analysis_is_computed_shown_and_marked_out_of_date(qtbot, tmp_path, project):
@@ -42,9 +59,13 @@ def test_the_analysis_is_computed_shown_and_marked_out_of_date(qtbot, tmp_path, 
     page.compute_button.click()
     qtbot.waitUntil(lambda: page.outputs is not None, timeout=120000)
     items = _items(page)
-    assert items["woods"].childCount() >= 1 and "figure(s)" in items["woods"].text(1)
-    assert items["regions"].text(1) == "off"
-    assert "ladder" not in items  # no fragment series: no "Fragment ions (MS2/MS3)" part
+    # one row per kind, saying how many figures it has (chosen above the figure, not listed)
+    assert items["woods"].childCount() == 0 and "figure" in items["woods"].text(1)
+    assert items["regions"].text(1) == "off" and _under(page, "Not drawn") >= {"regions"}
+    # no fragment series: no fragment figures in the tree, the kinds listed as not drawn
+    assert "ladder" in _under(page, "Not drawn")
+    assert not {"ladder", "regions"} & set().union(*(_under(page, t) for t in _tops(page)
+                                                    if t != "Not drawn"))
     # the first figure is drawn, under the name hxex analyse gives it
     qtbot.waitUntil(lambda: page.panel.view.figure is not None, timeout=60000)
     assert page.panel.save_name in dict(page.outputs.figures)
@@ -72,10 +93,10 @@ def test_the_analysis_is_computed_shown_and_marked_out_of_date(qtbot, tmp_path, 
     page.refresh()
     assert "Out of date: the results changed" in page.status.text()
     assert page.outputs is shown and page.compute_button.text() == "Recompute"
-    woods = _items(page)["woods"].child(0)
+    woods = _items(page)["woods"]
     with qtbot.waitSignal(page.panel.drawn, timeout=60000):
         page.list.setCurrentItem(woods)
-    before, stem = page.panel.view.figure, woods.data(0, 257)
+    before, stem = page.panel.view.figure, page.choices.stem
     assert before is not None
     page.compute()
     qtbot.waitUntil(lambda: not page.computing and page.outputs is not shown, timeout=120000)
@@ -101,7 +122,10 @@ def test_settings_the_results_refuse_say_so(qtbot, tmp_path, project):
     assert "nothing" in page.status.text() and page.outputs is None
 
 
-def test_several_references_are_chosen_and_kept(qtbot, tmp_path, project):
+def test_several_references_are_ticked_computed_and_kept(qtbot, tmp_path, project):
+    """The references are ticked in a list written to [analysis] reference (owner,
+    2026-11-23): Compute makes the analysis against each, the tree has a Comparisons part per
+    reference, and unticking one writes the file and keeps what was computed."""
     project.write_text(project.read_text().replace('reference = "S"', 'reference = "all"'),
                        encoding="utf-8")
     window = _window(qtbot, tmp_path / "gui.ini")
@@ -110,41 +134,39 @@ def test_several_references_are_chosen_and_kept(qtbot, tmp_path, project):
     page = window.analysis_page
     window.tabs.setCurrentWidget(page)
     window.show()
+    menu = page.references.menu()
+    assert page.references.isVisibleTo(page) and not page.reference.isVisibleTo(page)
+    assert [(a.text(), a.isChecked()) for a in menu.actions()] == [("S", True), ("V", True)]
+    words = page.references.toolTip().replace("\n", " ")
+    assert "[analysis] reference in the project file" in words
+    assert "Not computed yet against S, V" in page.status.text()
     page.compute()
-    qtbot.waitUntil(lambda: page.outputs is not None, timeout=120000)
-    assert page.reference.isVisibleTo(page) and page.reference.count() == 2
-    assert page.shown_reference == "S" and "against S" in page.status.text()
-    first = page.outputs
-    # two sections: the figures the same for every reference first, then the comparisons
-    heads = [page.list.topLevelItem(i) for i in range(page.list.topLevelItemCount())
-             if page.list.topLevelItem(i).data(0, 256) is None]
-    assert [h.text(0) for h in heads] == ["Peptides (MS1): same for every reference",
-                                          "Peptides (MS1): compared with the reference S"]
-    # the results hold no fragment series: no fragment section
-    names = [page.list.topLevelItem(i).data(0, 256)
-             for i in range(page.list.topLevelItemCount())]
-    assert names.index("coverage") < names.index(None, 1) < names.index("woods")
-    assert not heads[0].flags() & Qt.ItemFlag.ItemIsSelectable
-    coverage = _items(page)["coverage"].child(0)
-    page.list.setCurrentItem(coverage)  # the first figure: drawn by the Compute already (E-20)
-    qtbot.waitUntil(lambda: page.panel.view.figure is not None and not page.panel.drawing,
-                    timeout=60000)
-    drawn = page.panel.view.figure
-    page.reference.setCurrentIndex(1)  # V: computed when asked
-    assert page.outputs is None and "Not computed yet against V" in page.status.text()
-    assert "shown from the analysis against S" in page.status.text()
-    # a figure the same for every reference stays, without computing or drawing again
-    assert _items(page)["coverage"].childCount() >= 1 and _items(page)["woods"].childCount() == 0
-    assert page.panel.view.figure is drawn and not page.panel.drawing
-    page.compute()
-    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
-    assert page.shown_reference == "V" and page.outputs is not first
-    assert any(stem.startswith("woods_S_") for stem, _ in page.outputs.figures)
-    # the latest analysis now gives the common figures (a Recompute renews them)
-    assert page.shared_reference == "V" and page.shared_outputs is page.outputs
-    page.reference.setCurrentIndex(0)  # back to S: kept, not computed again
-    assert page.outputs is first and not page.computing
-    assert page.shared_reference == "V"
+    qtbot.waitUntil(lambda: set(page._analyses) == {"S", "V"} and not page.computing,
+                    timeout=240000)
+    assert _tops(page) == ["Summary", "Single samples", "Comparisons (vs. S)",
+                           "Comparisons (vs. V)", "Not drawn"]
+    assert "figure(s) against S, V" in page.status.text()
+    on_v = page._leaf_items["\x1f".join(("Comparisons (vs. V)", "S", "woods"))]
+    page.list.setCurrentItem(on_v)  # the reference of the part selected is the one shown
+    assert page.shown_reference == "V" and page.outputs is page._analyses["V"][0]
+    first = page._analyses["S"][0]
+    # the list stays open while boxes are ticked (owner, 2026-11-23), written when it closes
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    menu.popup(page.references.mapToGlobal(QPoint(0, page.references.height())))
+    qtbot.waitUntil(menu.isVisible, timeout=5000)
+    v = menu.actions()[1]
+    at = menu.actionGeometry(v).center()
+    QTest.mouseMove(menu, at)
+    QTest.mouseClick(menu, Qt.MouseButton.LeftButton, pos=at)
+    assert menu.isVisible() and not v.isChecked()  # V unticked, the list still open
+    assert 'reference = "all"' in project.read_text()  # nothing written yet
+    menu.close()  # V unticked: written, its analysis kept
+    qtbot.waitUntil(lambda: 'reference = "S"' in project.read_text(), timeout=5000)
+    qtbot.waitUntil(lambda: _tops(page)[2:4] == ["Comparisons (vs. S)", "Not drawn"],
+                    timeout=30000)
+    assert page._analyses["S"][0] is first and not page.computing
 
 
 def test_a_changed_review_table_marks_the_analysis_and_is_read_before_recomputing(
@@ -255,25 +277,36 @@ def test_the_fit_rates_box_writes_the_project_file(qtbot, tmp_path, project):
     assert not load_project(frag_project, analysis_only=True).analysis.fragments.fit_rates
 
 
-def test_the_analysis_list_puts_the_fragment_figures_apart():
-    """The Analysis list: the peptides' figures (MS1) in two parts, then the fragment ions'
-    (MS2/MS3) in a part of their own, which results without fragment series do not show."""
-    from hxex.analysis import AnalysisConfig
-    from hxex.gui.analysis_workspace import analysis_sections
-    from hxex.report.catalogue import ANALYSE, Situation, plan
-
-    situation = dataclasses.replace(Situation.of(analysis=AnalysisConfig(reference="S")),
-                                   fragments=True)
-    kinds = [p for p in plan(situation) if p.kind.command == ANALYSE]
-    heads = analysis_sections(kinds, True, "S", "S")
-    assert [h[0] for h in heads] == ["Peptides (MS1): same for every reference",
-                                     "Peptides (MS1): compared with the reference S",
-                                     "Fragment ions (MS2/MS3)"]
-    names = [[p.kind.name for p in h[2]] for h in heads]
-    assert names[2] == ["fragment_traces", "ladder", "closure", "residue_rates"]
-    assert "coverage" in names[0] and "woods" in names[1]
-    assert not {"ladder", "fragment_traces", "closure"} & set(names[0] + names[1])
-    assert analysis_sections(kinds, False, "S", "S")[2][2] == []
+def test_the_tree_places_each_figure(qtbot, tmp_path, project):
+    """The tree (owner, 2026-11-22, 2026-11-23): Summary (coverage, redundancy, then the
+    samples together), Single samples (each sample's figures, coverage first: the summary
+    figures drawn for one sample among them), Comparisons (the whole group's significance
+    maps, then each sample's figures, its panel of the overlays and its tiers among them)."""
+    window, page = _computed_window(qtbot, tmp_path, project)
+    rows = set(page._row_items)
+    assert {("Single samples", "S"), ("Single samples", "V"), ("Comparisons (vs. S)", "V")} <= rows
+    assert ("Comparisons (vs. S)", "S") not in rows  # the reference compares with nothing
+    summary = [page.list.topLevelItem(0).child(i).data(0, KIND)
+               for i in range(page.list.topLevelItem(0).childCount())]
+    assert summary[:2] == ["coverage", "redundancy_resolution"]
+    v = _at(page, "Single samples", "V", "coverage").parent()
+    assert [v.child(i).data(0, KIND) for i in range(2)] == ["coverage",
+                                                            "redundancy_resolution"]
+    assert "Residue fDavg" == _at(page, "Single samples", "V", "residues_all").text(0)
+    one = page._nodes["\x1f".join(("Single samples", "V", "residues_all"))]
+    assert all(stem.startswith("residues_all_V_") for stem, _ in one.figures)
+    assert not set(dict(one.figures)) & set(dict(page.outputs.figures))  # the window's own
+    assert _under(page, "Comparisons (vs. S)") >= {"woods", "butterfly"}
+    _at(page, "Comparisons (vs. S)", "V", "woods")  # a sample's comparisons under the sample
+    # the overlays of every sample are each sample's panel instead (owner, 2026-11-23)
+    mine = page._nodes["\x1f".join(("Comparisons (vs. S)", "V", "overlay_residues"))]
+    assert all(stem.startswith("overlay_residues_V_") for stem, _ in mine.figures)
+    keys = {n.key[:2] for n in page._nodes.values()}
+    assert ("Comparisons (vs. S)", "overlay_residues") not in keys
+    assert "drawn for this sample alone" not in page.about.text()
+    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+        page.list.setCurrentItem(_at(page, "Single samples", "V", "residues_all"))
+    assert "drawn for this sample alone" in page.about.text()
 
 
 
@@ -364,8 +397,7 @@ def _settled() -> None:
 def _nothing_computed(page) -> None:
     assert page.outputs is None and page.shared_outputs is None and not page.computing
     assert not page._analyses and not page.busy.isVisibleTo(page)
-    assert all(page.list.topLevelItem(i).childCount() == 0
-               for i in range(page.list.topLevelItemCount()))
+    assert not any(e.figures for e in page._nodes.values())
     assert page.status.text().startswith("Not computed yet")
     assert page.compute_button.isEnabled()
 
@@ -491,17 +523,49 @@ def test_a_recompute_draws_the_figure_shown_once(qtbot, tmp_path, project):
     assert len(draws) == 1
 
 
-def test_a_refresh_keeps_the_kinds_opened(qtbot, tmp_path, project):
-    """E-16: every refresh closed the kinds the user had opened."""
+def _show(qtbot, page, item) -> None:
+    """Select a kind and wait for its figure (it may be shown already: no signal then)."""
+    page.list.setCurrentItem(item)
+    qtbot.waitUntil(lambda: not page.panel.drawing and page.panel.view.figure is not None
+                    and page.panel.save_name == page.choices.stem, timeout=60000)
+
+
+def test_a_refresh_keeps_the_figure_chosen(qtbot, tmp_path, project):
+    """E-16: a refresh kept neither the place in the list nor the figure chosen."""
     window, page = _computed_window(qtbot, tmp_path, project)
-    items = _items(page)
-    for kind in ("coverage", "woods"):
-        items[kind].setExpanded(True)
-    assert items["coverage"].isExpanded() and items["woods"].isExpanded()
+    _show(qtbot, page, _at(page, "Summary", "coverage"))
+    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+        page.choices.box("sample").setCurrentIndex(1)
+    chosen = page.choices.stem
+    page.list.collapseItem(page.list.topLevelItem(2))  # Comparisons closed, a sample opened
+    _at(page, "Single samples", "V", "residues_all").parent().setExpanded(True)
     page.refresh()
-    items = _items(page)
-    assert items["coverage"].isExpanded() and items["woods"].isExpanded()
-    assert not items["butterfly"].isExpanded()
+    assert page.list.currentItem() is _at(page, "Summary", "coverage")
+    assert page.choices.stem == chosen
+    assert not page.list.topLevelItem(2).isExpanded()
+    assert _at(page, "Single samples", "V", "residues_all").parent().isExpanded()
+
+
+def test_the_figure_of_a_kind_is_chosen_above_it(qtbot, tmp_path, project):
+    """A row per kind at each place (owner, 2026-11-22): what varies among its figures there
+    is chosen in lists above the figure, each among the figures the lists before it allow;
+    another kind keeps the values where it has them, and a list with one value is hidden (the
+    tree's row names the sample)."""
+    window, page = _computed_window(qtbot, tmp_path, project)
+    _show(qtbot, page, _at(page, "Summary", "coverage"))
+    assert page.choices.isVisibleTo(page)
+    sample = page.choices.box("sample")
+    assert sample.count() == 2
+    with qtbot.waitSignal(page.panel.drawn, timeout=60000):
+        sample.setCurrentIndex(1)
+    chosen = sample.currentData()
+    assert page.panel.save_name == page.choices.stem == f"coverage_{chosen}"
+    # a kind under one sample: no sample list; one time point: no time list either
+    page.list.setCurrentItem(_at(page, "Comparisons (vs. S)", "V", "woods"))
+    shown = [b for b in page.choices.findChildren(type(sample)) if b.isVisibleTo(page)]
+    assert shown == []  # hidden at once, not when Qt deletes the old lists
+    _show(qtbot, page, _at(page, "Comparisons (vs. S)", "V", "woods"))
+    assert page.choices.values()["time"] == page.panel.save_name.rsplit("_", 1)[1]
 
 
 def test_a_refresh_while_the_results_are_read_again_keeps_compute_busy(qtbot, tmp_path, project):
@@ -555,9 +619,10 @@ def test_stop_ends_the_computation_and_keeps_the_figures(qtbot, tmp_path, projec
     assert outcome["end"] == "cancelled" and page.outputs is first
 
 
-def test_groups_are_chosen_and_share_nothing(qtbot, tmp_path, project):
-    """With [analysis.groups] the choice above the list is the group; each group's figures,
-    those that compare no samples too, are its own (the groups hold different samples)."""
+def test_groups_are_branches_of_the_tree(qtbot, tmp_path, project):
+    """With [analysis.groups] every group is a branch under each top (owner, 2026-11-22),
+    computed together; each group's figures are its own (the groups hold different samples),
+    its comparisons against its own reference."""
     project.write_text(project.read_text().replace('reference = "S"\n', "") +
                        '[analysis.groups.G1]\nreference = "S"\nsamples = ["S", "V"]\n'
                        '[analysis.groups.G2]\nreference = "V"\nsamples = ["V"]\n',
@@ -568,27 +633,24 @@ def test_groups_are_chosen_and_share_nothing(qtbot, tmp_path, project):
     page = window.analysis_page
     window.tabs.setCurrentWidget(page)
     window.show()
-    assert page.reference_label.text() == "group" and page.reference.count() == 2
+    assert not page.reference.isVisibleTo(page)  # no choice: every group in the tree
     assert page.no_reference.isHidden()  # the groups name their references
     page.compute()
-    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
-    assert page.shown_reference == "G1" and "of group G1" in page.status.text()
-    heads = [page.list.topLevelItem(i).text(0) for i in range(page.list.topLevelItemCount())
-             if page.list.topLevelItem(i).data(0, 256) is None]
-    assert heads == ["Peptides (MS1) of group G1: not compared",
-                     "Peptides (MS1): compared with the reference S"]
-    assert _items(page)["coverage"].childCount() >= 1
-    page.reference.setCurrentIndex(1)
-    assert page.outputs is None and "Not computed yet of group G2" in page.status.text()
-    assert _items(page)["coverage"].childCount() == 0  # G1's coverage is not G2's
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=180000)
+    assert "of every group" in page.status.text()
+    assert {"G1", "G2"} <= set(page._analyses)
+    rows = page._row_items
+    assert ("Summary", "G1") in rows and ("Single samples", "G2", "V") in rows
+    assert rows[("Comparisons", "G1")].text(1) == "against S"
+    assert ("Comparisons", "G2") not in rows  # G2 holds its reference alone
+    g1 = page._nodes["\x1f".join(("Summary", "G1", "coverage"))]
+    g2 = page._nodes["\x1f".join(("Summary", "G2", "coverage"))]
+    assert len(g1.figures) == 2 and len(g2.figures) == 1  # each group's samples only
 
 
-def test_the_regions_across_the_groups_are_a_choice_of_their_own(qtbot, tmp_path, project):
-    """With two groups sharing a region name, "(across the groups)" follows the groups (PLAN
-    Next steps 38, step 4): Compute makes each group's analysis, then the table and the figures
-    hxex analyse writes in results_analysis_groups; a group's own list leaves that kind out."""
-    from hxex.gui.analysis_workspace import ACROSS
-
+def test_the_regions_across_the_groups_are_in_the_summary(qtbot, tmp_path, project):
+    """With two groups sharing a region name, Compute makes each group's analysis, then the
+    table and the figures hxex analyse writes in results_analysis_groups, under Summary."""
     project.write_text(project.read_text().replace('reference = "S"\n', "") +
                        '[[analysis.regions]]\nname = "all"\nstart = 1\nend = 30\n'
                        '[analysis.groups.G1]\nreference = "S"\nsamples = ["S"]\n'
@@ -600,26 +662,15 @@ def test_the_regions_across_the_groups_are_a_choice_of_their_own(qtbot, tmp_path
     page = window.analysis_page
     window.tabs.setCurrentWidget(page)
     window.show()
-    assert [page.reference.itemData(i) for i in range(page.reference.count())] \
-        == ["G1", "G2", ACROSS]
-    assert page.reference.itemText(2) == "(across the groups)"
-    assert "cross_group_regions" not in _items(page)
-    page.reference.setCurrentIndex(2)
-    assert "Not computed yet across the groups" in page.status.text()
-    assert "cross_group_regions" in _items(page)
+    assert "Not computed yet of every group" in page.status.text()
     page.compute()
     qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=180000)
     table = page.outputs.tables["cross_group_regions"]
     assert set(table["group"]) == {"G1", "G2"}
-    kind = _items(page)["cross_group_regions"]
-    assert kind.childCount() == len(set(table["time"])) >= 1
-    assert "across the groups" in page.status.text()
-    stem = kind.child(0).data(0, Qt.ItemDataRole.UserRole + 1)
-    fig = dict(page.outputs.figures)[stem]()
+    node = page._nodes["\x1f".join(("Summary", "cross_group_regions"))]
+    assert len(node.figures) == len(set(table["time"])) >= 1
+    fig = node.figures[0][1]()
     assert fig.axes and fig.legends  # drawn as hxex analyse draws it
-    # each group's analysis was made on the way, and is shown without computing it again
-    page.reference.setCurrentIndex(1)
-    assert page.outputs is not None and "of group G2" in page.status.text()
 
 
 def test_a_groups_regions_changed_after_computing_put_it_out_of_date(qtbot, tmp_path, project):
@@ -640,17 +691,83 @@ def test_a_groups_regions_changed_after_computing_put_it_out_of_date(qtbot, tmp_
     page = window.analysis_page
     window.tabs.setCurrentWidget(page)
     window.show()
-    page.compute()  # group G1
-    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=120000)
+    page.compute()  # every group
+    qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=180000)
     assert page.why_out_of_date() == ""
     project.write_text(project.read_text().replace("end = 30\n[analysis.groups.G2]",
                                                    "end = 8\n[analysis.groups.G2]"),
                        encoding="utf-8")
     qtbot.waitUntil(lambda: "settings changed" in page.why_out_of_date(), timeout=10000)
-    page.reference.setCurrentIndex([page.reference.itemData(i)
-                                    for i in range(page.reference.count())].index(ACROSS))
+    assert page.shown_reference == ACROSS
     page.compute()
     qtbot.waitUntil(lambda: page.outputs is not None and not page.computing, timeout=180000)
     table = page.outputs.tables["cross_group_regions"]
     ends = {(g, int(e)) for g, e in zip(table["group"], table["end"], strict=True)}
     assert ("G1", 8) in ends and ("G1", 30) not in ends  # G1 computed again
+
+
+def test_a_fragment_parent_is_kept_between_the_rates_and_the_traces(qtbot):
+    """The residue rates of a parent read at several precursor charges name it without the
+    charge (``S_2-12``), the traces with it (``S_2-12_z3``): moving between them kept no
+    parent and showed the first (owner, 2026-11-23)."""
+    from hxex.gui.figure_choices import ChoicesRow
+    from hxex.report.catalogue import figure_choices, kind_named
+
+    row = ChoicesRow()
+    qtbot.addWidget(row)
+    traces = figure_choices(kind_named("fragment_traces"), [
+        "fragments_S_1-9_z2_etd_c_z1", "fragments_S_2-12_z2_etd_c_z1",
+        "fragments_S_2-12_z3_etd_c_z1"])
+    rates = figure_choices(kind_named("residue_rates"), ["residue_rates_S_1-9_z2",
+                                                         "residue_rates_S_2-12"])
+    assert row.set_figures(traces, stem="fragments_S_2-12_z3_etd_c_z1")
+    assert row.set_figures(rates, keep=row.values()) == "residue_rates_S_2-12"
+    # back to the charge last chosen
+    assert row.set_figures(traces, keep=row.values()) == "fragments_S_2-12_z3_etd_c_z1"
+    assert row.set_figures(rates, keep=row.values()) == "residue_rates_S_2-12"
+
+
+def test_a_parent_a_kind_lacks_is_said_and_comes_back_after(qtbot):
+    """A parent with no closure figure showed the first parent there, which the next kind then
+    kept (owner, 2026-11-23): the closure says so beside its lists, and the next kind with the
+    parent shows it again."""
+    from hxex.gui.figure_choices import ChoicesRow
+    from hxex.report.catalogue import figure_choices, kind_named
+
+    row = ChoicesRow()
+    qtbot.addWidget(row)
+    row.show()
+    rates = figure_choices(kind_named("residue_rates"), ["residue_rates_S_2-12_z3",
+                                                         "residue_rates_S_31-36_z2"])
+    closure = figure_choices(kind_named("closure"), ["closure_S_2-12_z3_c-1+z-dot",
+                                                     "closure_S_51-72_z4_c-1+z-dot"])
+    traces = figure_choices(kind_named("fragment_traces"), [
+        "fragments_S_2-12_z3_EThcD_c-1_z1", "fragments_S_31-36_z2_EThcD_c-1_z1"])
+    assert row.set_figures(rates, stem="residue_rates_S_2-12_z3")
+    row.box("parent").setCurrentIndex(1)  # 31-36, chosen
+    assert row.set_figures(closure, keep=row.values()) == "closure_S_2-12_z3_c-1+z-dot"
+    assert row.note.isVisible() and "S_31-36_z2" in row.note.text()
+    assert row.set_figures(traces, keep=row.values()) == "fragments_S_31-36_z2_EThcD_c-1_z1"
+    assert not row.note.isVisible()
+    assert row.set_figures(rates, keep=row.values()) == "residue_rates_S_31-36_z2"
+
+
+def test_the_head_to_head_figure_is_in_its_own_part_once():
+    """The pooled sequences' head to head compares sequences, not samples with a reference:
+    the same whichever reference is ticked, so it has a part of its own, listed once (owner,
+    2026-11-23)."""
+    from types import SimpleNamespace
+
+    from hxex.gui.analysis_tree import HEAD_TO_HEAD, Placed, comparisons_top, entries
+
+    def outputs(ref):
+        return SimpleNamespace(figures=[("head_to_head_30min", lambda: None),
+                                        (f"woods_X_30min_{ref}", lambda: None)],
+                               window={"samples": ["X"]})
+
+    placed = [Placed(None, None, outputs(r), r, comparisons_top(r)) for r in ("A", "B")]
+    found = entries(placed)
+    h2h = [e for e in found if e.kind == "head_to_head"]
+    assert [e.path for e in h2h] == [(HEAD_TO_HEAD,)] and len(h2h[0].figures) == 1
+    assert {e.path[0] for e in found if e.kind == "woods"} == {"Comparisons (vs. A)",
+                                                              "Comparisons (vs. B)"}

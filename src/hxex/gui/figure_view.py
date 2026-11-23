@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import logging
+from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 
@@ -590,6 +591,9 @@ class FigurePanel(QWidget):
         self._picturing = False  # the matplotlib view's picture of a new figure is to come
         self._saving: list[Latest] = []  # figures being saved (in the drawing thread)
         self._drawing = Latest(self, pool or drawing_pool())
+        # the last figures drawn by key (draw(key=...)), shown again without drawing; a few
+        # only: a page of population tiers is ~40 MB (owner, 2026-11-23)
+        self._kept: OrderedDict = OrderedDict()
 
         self.bar = QWidget()
         buttons = QHBoxLayout(self.bar)
@@ -735,10 +739,20 @@ class FigurePanel(QWidget):
         text = self._task or ("Saving the figure…" if self._saving else "")
         self._set_status(text, busy=bool(text), veil=self._picturing)
 
-    def draw(self, draw: Callable[[], Figure]) -> None:
+    KEPT_FIGURES = 4  # the figures drawn with a key kept to show again
+
+    def draw(self, draw: Callable[[], Figure], key=None) -> None:
         """Draw a figure with ``draw`` in a worker thread and show it when done; a newer call
-        replaces an older one still drawing."""
+        replaces an older one still drawing. With ``key`` (anything naming the figure and what
+        it was drawn from), the figure is kept, the last :attr:`KEPT_FIGURES` of them, and one
+        asked for again is shown without drawing (:meth:`forget_kept` lets them go)."""
         svg = self.render == "svg"  # the matplotlib view draws its own picture
+        kept = None if key is None else (key, svg)
+        if kept is not None and kept in self._kept:
+            self._drawing.drop()  # an older figure still drawing would replace it
+            self._kept.move_to_end(kept)
+            self.show_figure(*self._kept[kept])
+            return
 
         def work():
             fig = draw()
@@ -746,8 +760,20 @@ class FigurePanel(QWidget):
                 return fig, None, None
             return fig, figure_svg(fig), figure_marks(fig)
 
+        def done(made):
+            if kept is not None:
+                self._kept[kept] = made
+                while len(self._kept) > self.KEPT_FIGURES:
+                    self._kept.popitem(last=False)
+            self.show_figure(*made)
+
         self._set_status("Drawing the figure…", busy=True)
-        self._drawing.submit(work, lambda done: self.show_figure(*done), self._failed)
+        self._drawing.submit(work, done, self._failed)
+
+    def forget_kept(self) -> None:
+        """Let go of the figures kept by :meth:`draw` (they were drawn from results replaced
+        since)."""
+        self._kept.clear()
 
     @property
     def drawing(self) -> bool:

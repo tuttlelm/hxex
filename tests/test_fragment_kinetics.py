@@ -791,6 +791,18 @@ def test_write_analysis_of_a_fragment_run(tmp_path):
     assert bottom.get_xticklabels()[1].get_text() == "S12"
     with pytest.raises(ValueError, match="no c and y"):
         closure_figure(u, "c", "y")
+    # the data tab of each (owner, 2026-11-23): the rates' rows of ladder_rates.csv, the
+    # closure's points by split, the ladder's points by step and its fits
+    from hxex.gui.figures import figure_rows
+
+    columns, rows = figure_rows(fig)
+    assert len(rows) == len(rates.rate) and {"residue", "rate", "amplitude"} <= set(columns)
+    columns, rows = figure_rows(closure_figure(u, "c", "z", precursor_charge=1))
+    assert rows and {"split", "condition", "time", "mean"} <= set(columns)
+    columns, rows = figure_rows(ladder_kinetics_figure(u, "c", min_time=10.0))
+    assert {"step", "trace", "time", "mean", "rate", "amplitude"} <= set(columns)
+    assert any(r["step"] == "precursor" for r in rows)
+    assert any(str(r.get("trace", "")).startswith("Δ") and "rate" in r for r in rows)
 
 
 def test_intrinsic_rates_in_the_fragment_outputs(tmp_path):
