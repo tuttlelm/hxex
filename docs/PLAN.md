@@ -2322,6 +2322,51 @@ Planned, not built:
      worked out off the window's thread in two passes, the quick one without the set-K check).
      Tests: each incremental path against a fresh run,
      as the preset tests do (HISTORY 354).
+41. **Fragment-ion coverage: which fragments have data to fit** (owner, 2026-11-23: designed
+   from drafts, nothing built; drafts and script in the private record
+   `hxex_private/analysis_examples/fragment_coverage`). An overall quality assessment, per
+   parent at one precursor charge: which fragment ions kept enough spectra after the fragment
+   flag filter (HISTORY 410) to fit ladder rates, and which were never read.
+   - *Layout (owner chose it over a row per ion, a row per cut with charges as sub-rows, and a
+     grid of cuts).* A panel per condition (the fragment list's label or the scan conditions:
+     activation, pre-activation), side by side, sharing the rows. The x axis is the parent's
+     residues: the one-letter sequence below, the protein numbers above, every residue
+     numbered and centred over its letter, short outward marks at the residue boundaries (top
+     and bottom) so each residue reads as a segment; numbers turned upright up to 16 residues,
+     on their side above. First rows: the precursor ion M at each charge, a full-width bar,
+     labelled `M 2+` on the left. Then a block per fragment charge (1+, 2+, ...), each block
+     a row per cut k = 1 .. n-1: the N-terminal ion of length k (`c-1:k`) as a bar left of
+     the cut and its complement, the C-terminal ion of length n-k (`z-dot:n-k`), right of it,
+     with a small gap at the cut so two empty bars still show where it is. Left axis names
+     the N-terminal ion, right axis the C-terminal one. The c and z of a row have the same
+     fragment charge (not charges adding to the precursor's less one: in ETD of a 2+ precursor
+     one partner is always neutral). A cut before a proline is never targeted: its row keeps
+     its place with a red P on the proline. Blocks are kept whole, also when every ion of a
+     charge is left out: missing ions are part of the assessment (owner). Title:
+     `SEQUENCE (start-end), precursor 3+`, nothing after it.
+   - *What a bar shows.* Each fragment series (condition, ion type, length, fragment charge)
+     counts its time points (the undeuterated control as time 0) with at least one spectrum
+     the fragment analysis keeps (not rejected, not excluded, no flag of `leave_out_flags`;
+     the precursor ion never filtered, as in the analysis). Five states, one colour ramp: every
+     point kept; some left out, ≥ 4 kept; 1-3 points kept (too few to fit rates); read, every
+     point left out (white, outlined); targeted, never read (hatched grey: a target in the read
+     record with no spectrum). 4 is `fit_decay`'s fewest points. The number in each bar, at
+     the cut end (at the right end for M), is the count of time points kept; in a kinetics
+     run (every scan its own time, `io.mzml.kinetics_spectra`) it is the share kept, as a
+     percentage, with the same 4-point rule. Each panel's title gives its number of time
+     points. Hover and the data tab: the series, points kept and total, spectra left out per
+     reason.
+   - *Where.* A new figure kind `fragment_coverage` (`fragment_coverage_{parent}_z{charge}`,
+     one per parent and precursor charge, a merged sample's runs side by side like the other
+     fragment figures), in the fragment part of the Analysis tree and the catalogue
+     (generated `figures.md`); a table `fragment_coverage.csv` in the analysis folder, one row
+     per fragment series (sample, run, parent, precursor charge, condition, ion, length,
+     charge, points kept, points, state, then a count per reason). Analysis only, not a
+     Results tab: Results has no coverage figures (owner). The report redesign's `[report]`
+     list takes it like any other kind.
+   - *Not in it.* Which residues a ladder resolves (two neighbouring fragments both fittable):
+     the ladder figure's business. The MS1 parent: the closure figure's reference, a peptide
+     series in Results.
 
 ## Risks and open decisions
 
