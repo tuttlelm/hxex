@@ -10317,7 +10317,11 @@ CSVs or mzML if wanted.
     the menu's submenus deleted although Qt still has them (6.11 does not; reproduced alone in
     a lowest-versions environment). hxex itself never calls it, and events through the
     window's application-wide filter do not trigger it, so only the test was affected; the
-    helper now finds the menu among the menu bar's children.
+    helper now finds the menu among the menu bar's children. The test that a closed window
+    lets its results go (M-5) failed once on macOS CI (2026-11-23, py3.12: the results still
+    held, the figure gone; not reproduced in 24 local runs): it now waits for the window's
+    drawing thread and Qt's global pool to finish (their jobs hold the results in their
+    arguments) before it collects.
 
 394. **View > Appearance (the widget style) and `hxex gui --dark` / `--light`.** The owner,
     opening the window on Windows for the first time, preferred the look Linux shows (Qt's

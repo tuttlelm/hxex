@@ -211,5 +211,16 @@ def test_a_closed_window_lets_its_results_and_figures_go(qtbot, tmp_path, projec
     results = page = panel = None
     assert window.close()
     QApplication.processEvents()
+    # background work the window started (a drawing, Qt's global pool) holds the results in
+    # its arguments until it ends: waited for, then its callbacks delivered (macOS CI,
+    # 2026-11-23: the results still held once, the figure gone)
+    from PySide6.QtCore import QThreadPool
+
+    from hxex.gui import tasks
+
+    for pool in (tasks._DRAWING, QThreadPool.globalInstance()):
+        if pool is not None:
+            assert pool.waitForDone(120000)
+    QApplication.processEvents()
     gc.collect()
     assert [ref() for ref in held] == [None] * len(held)
