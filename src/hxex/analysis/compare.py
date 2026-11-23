@@ -134,14 +134,30 @@ def _spread_columns(a, ea, b, eb) -> dict[str, float]:
 _SCALAR_FIELDS = ("alpha", "delta_crit", "reference", "reference_run", "K", "rank", "quantity",
                   "scaled", "share")
 QUANTITIES = ("fD", "population")
-MATCHES = ("range", "sequence")
+MATCHES = ("range", "sequence")  # the values of [analysis] peptide_match besides "auto"
+# and "similar", which "auto" resolves to for data that are not pooled (resolve_match): by
+# range, where the two sequences are the same protein's (HISTORY pending, owner 2026-11-23)
+PAIRINGS = (*MATCHES, "similar")
+SIMILAR_SHARE = 1 / 3  # at most this share of positions differing: one protein's mutants
+
+
+def different_sequences(a: str, b: str) -> bool:
+    """Whether peptides ``a`` and ``b`` (over one range) are not one protein's: different
+    lengths, or more than :data:`SIMILAR_SHARE` of their residues differ. Mutants differ at
+    one or two positions (0.02-0.14 of them on the tutorial); different proteins at half or
+    more (0.50-1.00 on the private three-protein heterooligomer dataset)."""
+    x, y = chem.parse_sequence(a), chem.parse_sequence(b)
+    if len(x) != len(y):
+        return True
+    return sum(p != q for p, q in zip(x, y, strict=True)) > SIMILAR_SHARE * len(x)
 
 
 def _pairs(ref: dict, other: dict, match: str) -> list[tuple[tuple, tuple]]:
     """Pairs ``(reference key, sample key)`` of species keys ``(peptide, modification, start,
     end, time)``. ``'sequence'``: the same key. ``'range'``: the same start, end and time; where
     either side has several species there (e.g. a modified and an unmodified form), only those
-    with the same sequence are paired, so forms are never crossed."""
+    with the same sequence are paired, so forms are never crossed. ``'similar'``: as ``'range'``,
+    leaving out pairs whose sequences are not one protein's (:func:`different_sequences`)."""
     if match == "sequence":
         return [(k, k) for k in sorted(other) if k in ref]
     by_range: dict[tuple, tuple[list, list]] = {}
@@ -151,9 +167,37 @@ def _pairs(ref: dict, other: dict, match: str) -> list[tuple[tuple, tuple]]:
     out = []
     for _, (a, b) in sorted(by_range.items()):
         if len(a) == 1 and len(b) == 1:
-            out.append((a[0], b[0]))
+            if match != "similar" or not different_sequences(a[0][0], b[0][0]):
+                out.append((a[0], b[0]))
         else:
             out.extend((k, k) for k in sorted(set(a) & set(b)))
+    return out
+
+
+def dissimilar_ranges(uptake, reference: str, samples: Sequence[str] | None = None
+                      ) -> dict[str, list[tuple[int, int, str, str]]]:
+    """For each sample (but the reference) of ``uptake`` (the species table), the ranges it
+    shares with the ``reference`` where each has one peptide and the two are not one
+    protein's (:func:`different_sequences`): sample -> ``(start, end, reference's peptide,
+    sample's peptide)``, for the warning that says what ``'similar'`` left unpaired or
+    ``'range'`` compared by position."""
+    pep = uptake.kind == "peptide" if hasattr(uptake, "kind") else np.ones(len(uptake.sample),
+                                                                         dtype=bool)
+    by: dict[str, dict[tuple[int, int], set]] = {}
+    for i in np.flatnonzero(pep):
+        by.setdefault(str(uptake.sample[i]), {}).setdefault(
+            (int(uptake.start[i]), int(uptake.end[i])), set()).add(str(uptake.peptide[i]))
+    ref = by.get(reference, {})
+    out = {}
+    for sample, ranges in by.items():
+        if sample == reference or (samples is not None and sample not in samples):
+            continue
+        found = [(*rng, next(iter(ref[rng])), next(iter(peps)))
+                 for rng, peps in sorted(ranges.items())
+                 if rng in ref and len(peps) == 1 and len(ref[rng]) == 1
+                 and different_sequences(next(iter(ref[rng])), next(iter(peps)))]
+        if found:
+            out[sample] = found
     return out
 
 
@@ -415,8 +459,8 @@ def compare_peptides(
     :class:`PeptideComparison` ``positions``); computed when None."""
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
-    if match not in MATCHES:
-        raise ValueError(f"match must be one of {', '.join(MATCHES)}")
+    if match not in PAIRINGS:
+        raise ValueError(f"match must be one of {', '.join(PAIRINGS)}")
     if quantity not in QUANTITIES:
         raise ValueError(f"quantity must be one of {', '.join(QUANTITIES)}")
     if quantity == "population" and K != 2:
@@ -997,8 +1041,8 @@ def paired_residue_maps(
     maps only judge whether a difference is significant (:func:`judged_on_shared`).
     ``residue_kw`` goes to :func:`hxex.analysis.residue_map` (``sequences``,
     ``weight_exponent``, ...)."""
-    if match not in MATCHES:
-        raise ValueError(f"match must be one of {', '.join(MATCHES)}")
+    if match not in PAIRINGS:
+        raise ValueError(f"match must be one of {', '.join(PAIRINGS)}")
     pep = uptake.select(uptake.kind == "peptide")
     named, base = separate_modified(pep, registry) if modified == "separate" else (pep, {})
     present = list(dict.fromkeys(zip((str(u) for u in named.run),
@@ -1361,8 +1405,8 @@ def compare_population_counts(
     only where both have two (owner, 2026-10-21; HISTORY 137). ``set_p`` (the population
     test's p-values of each set, by the keys of ``best_sets``: :func:`hxex.analysis.set_pvalues`)
     judges ``borderline`` by the test, at its ``significance``, instead of ``evidence``."""
-    if match not in MATCHES:
-        raise ValueError(f"match must be one of {', '.join(MATCHES)}")
+    if match not in PAIRINGS:
+        raise ValueError(f"match must be one of {', '.join(PAIRINGS)}")
     by_state: dict[tuple[str, str], dict[tuple, tuple[int, float]]] = {}
     for (run, sample, peptide, mod, start, end, time), value in best_sets.items():
         by_state.setdefault((run, sample), {})[(peptide, mod, start, end, time)] = value

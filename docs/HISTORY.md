@@ -11823,3 +11823,29 @@ CSVs or mzML if wanted.
     version): 254 every point kept, 201 enough, 16 too few, 885 every point left out, 194 never
     read; the drawn pages match the drafts. Private record:
     `hxex_private/analysis_examples/fragment_coverage`. Tests: test_fragment_kinetics.py.
+
+442. **Peptides of different proteins are not paired by position** (2026-11-23; owner:
+    "yes"). The private three-protein heterooligomer dataset, analysed every sample against
+    every other (`reference = "all"`), paired residues 1-12 of two different proteins
+    (MDIAIHHPWIRR against MEIPVPVQPSWL) in the Woods plot: `[analysis] peptide_match =
+    "auto"` meant `"range"` for data that are not pooled, pairing any peptides over the same
+    residue numbers. Measured: on the tutorial the peptides over a shared range differ at
+    0.02-0.14 of positions (the mutations), on the heterooligomer dataset at 0 (the same
+    protein in another vial) or 0.50-1.00 (another protein), 2-5 ranges per pair of different
+    proteins. `"auto"` now resolves to `"similar"` for data that are not pooled
+    (`hxex.analysis.settings.resolve_match`): by range where the two peptides are one
+    protein's, the same length and differing at a third of positions or fewer
+    (`hxex.analysis.compare.different_sequences`, `SIMILAR_SHARE`); other pairs are left out,
+    and the analysis warns, naming the reference, an example and the ranges left out per
+    sample (`dissimilar_ranges`). `"range"` set by hand still pairs every peptide over the same
+    residues, with a warning naming those of other proteins (comparing homologues on a
+    numbering that lines up remains possible; a numbering the user sets is PLAN Next steps
+    42). `"sequence"` is unchanged. Tutorial: 492 K = 1 rows against WT either way, the 52
+    mutant rows kept. Heterooligomer against HSPB5: 1,038 -> 963 rows, the 75 cross-protein
+    rows gone. Residues of different proteins are then judged on no shared peptide ("not
+    tested"). Also: the Analysis page's "choose a reference…" list beside the red "Reference
+    needed" line is gone; the line points at the comparisons-against list, which writes
+    `[analysis] reference` (owner). Guide experiments.md, gui.md; settings.md regenerated;
+    template comment. Tests: test_analysis.py (mutant paired, another protein not under
+    "similar", paired under "range"; dissimilar_ranges; resolve_match), test_pooled_forms.py,
+    test_gui_analysis.py (the reference ticked in the list, names written as text).

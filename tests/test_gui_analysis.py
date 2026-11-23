@@ -327,19 +327,25 @@ def test_without_a_reference_the_window_says_so_and_offers_one(qtbot, tmp_path,
     window.tabs.setCurrentWidget(page)
     window.show()
     assert page.no_reference.isVisibleTo(page)
-    assert page.no_reference_text.text() == "Reference needed for comparison plots"
-    choices = [page.choose_reference.itemText(i) for i in range(page.choose_reference.count())]
-    assert choices == ["choose a reference…", "S", "V", "every sample in turn"]
-    page.choose_reference.activated.emit(choices.index("S"))
+    assert page.no_reference_text.text() == (
+        "Reference needed for comparison plots: tick one under comparisons against")
+    # the list above chooses it (owner, 2026-11-23: no second choice beside the warning)
+    menu = page.references.menu()
+    assert page.references.isVisibleTo(page)
+    assert [(a.text(), a.isChecked()) for a in menu.actions()] == [("S", False), ("V", False)]
+    menu.actions()[0].setChecked(True)
+    page._references_ticked()  # as when the list closes
     assert tomllib.loads(path.read_text(encoding="utf-8"))["analysis"]["reference"] == "S"
     assert not page.no_reference.isVisibleTo(page)  # compared now: the warning goes
-    # every sample in turn
+    # every sample, ticked: a list of them
     path.write_text(f'project = "gui"\n\n[output]\nbundle = "{two_sample_bundle.as_posix()}"\n'
                     '\n[analysis]\nresidue_level = true\n', encoding="utf-8")
     page.refresh()
     assert page.no_reference.isVisibleTo(page)
-    page.choose_reference.activated.emit(page.choose_reference.count() - 1)
-    assert tomllib.loads(path.read_text(encoding="utf-8"))["analysis"]["reference"] == "all"
+    for action in menu.actions():
+        action.setChecked(True)
+    page._references_ticked()
+    assert tomllib.loads(path.read_text(encoding="utf-8"))["analysis"]["reference"] == ["S", "V"]
 
 
 def test_a_reference_set_shows_no_warning(qtbot, tmp_path, project):
@@ -495,7 +501,7 @@ def _computed_window(qtbot, tmp_path, project):
 
 
 def test_a_reference_named_like_a_number_or_a_date_is_written_as_text(qtbot, tmp_path, project):
-    """E-8: the reference chosen in the bar is written quoted, so a sample named "37" or
+    """E-8: the reference ticked in the list is written quoted, so a sample named "37" or
     "2026-11-01" is read as text, not refused or taken for a number."""
     from hxex.config import load_project
 
@@ -503,9 +509,15 @@ def test_a_reference_named_like_a_number_or_a_date_is_written_as_text(qtbot, tmp
     window.open_project(project)
     qtbot.waitUntil(lambda: not window.loading, timeout=30000)
     page = window.analysis_page
+    menu = page.references.menu()
     for name in ("37", "2026-11-01"):
-        page.choose_reference.addItem(name, name)
-        page._reference_chosen(page.choose_reference.count() - 1)
+        menu.clear()
+        action = menu.addAction(name)
+        action.setData(name)
+        action.setCheckable(True)
+        action.setChecked(True)
+        page._ticked = []
+        page._references_ticked()
         assert load_project(project, analysis_only=True).analysis.reference == name
         assert f'reference = "{name}"' in project.read_text(encoding="utf-8")
 

@@ -674,8 +674,8 @@ def compare_protection(
     (:class:`ProtectionComparison`)."""
     from scipy import stats
 
-    if match not in ("range", "sequence"):
-        raise ValueError("match must be 'range' or 'sequence'")
+    if match not in ("range", "similar", "sequence"):
+        raise ValueError("match must be 'range', 'similar' or 'sequence'")
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
 

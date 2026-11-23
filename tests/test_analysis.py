@@ -638,6 +638,27 @@ def test_compare_peptides_with_the_hybrid_rule(results):
     assert pc.same_sequence.all()
     with pytest.raises(ValueError, match="match"):
         compare_peptides(results, "S", match="position")
+    # another protein's peptide over the same residue numbers (owner, 2026-11-23): "similar"
+    # (what "auto" resolves to) pairs the mutant but not it; "range" pairs it by position
+    from types import SimpleNamespace
+
+    from hxex.analysis.compare import different_sequences, dissimilar_ranges
+
+    other = "".join("W" if c != "W" else "Y" for c in seq)
+    assert not different_sequences(seq, mutant) and different_sequences(seq, other)
+    assert different_sequences(seq, seq[:-1])  # another length
+    assert len(compare_peptides(dataclasses.replace(results, binned=mutated), "S",
+                                match="similar")) == len(pc)
+    foreign = dataclasses.replace(shifted, peptide=np.where(binned.data_id == 1, other, seq))
+    assert len(compare_peptides(dataclasses.replace(results, binned=foreign), "S",
+                                match="similar")) == 0
+    assert len(compare_peptides(dataclasses.replace(results, binned=foreign), "S",
+                                match="range")) == len(pc)
+    up = SimpleNamespace(sample=np.array(["S", "V", "V"]),
+                         peptide=np.array([seq, other, mutant]),
+                         start=np.array([1, 1, 20]), end=np.array([9, 9, 28]))
+    found = dissimilar_ranges(up, "S")
+    assert found == {"V": [(1, 9, seq, other)]}
 
 
 def test_the_spread_columns_rebuild_every_number_of_a_comparison(results):
@@ -759,7 +780,8 @@ def test_a_modified_form_is_paired_with_the_reference_as_a_state_of_its_own():
 
 def test_peptide_match_auto_compares_pooled_data_by_sequence():
     """[analysis] peptide_match = "auto" (the default): by sequence for pooled data, where two
-    sequences at one range are different proteins, else by range; a setting given is kept."""
+    sequences at one range are different proteins, else by range where the peptides are one
+    protein's ("similar"); a setting given is kept."""
     from types import SimpleNamespace
 
     from hxex.analysis import AnalysisConfig
@@ -770,7 +792,7 @@ def test_peptide_match_auto_compares_pooled_data_by_sequence():
 
     assert AnalysisConfig().peptide_match == "auto"
     assert resolve_match("auto", {"": run("pooled")}) == "sequence"
-    assert resolve_match("auto", {"": run("specexport")}) == "range"
+    assert resolve_match("auto", {"": run("specexport")}) == "similar"
     assert resolve_match("auto", {"a": run("specexport"), "b": run("pooled")}) == "sequence"
     assert resolve_match("range", {"": run("pooled")}) == "range"
     with pytest.raises(ValueError, match="peptide_match must be one of auto, range, sequence"):

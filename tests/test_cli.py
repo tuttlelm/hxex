@@ -1212,7 +1212,7 @@ def test_the_analysis_folder_is_replaced_and_moved_as_the_tables_are(tmp_path, c
     used = load_project(folder / "analysis_settings_used.toml", analysis_only=True)
     # the settings used name the rule the analysis took (no population test: best_set)
     assert used.analysis == dataclasses.replace(load_project(path).analysis,  # as decided
-                                                populations="best_set", peptide_match="range")
+                                                populations="best_set", peptide_match="similar")
     run_copy = (folder / "run_settings_used.toml").read_text()
     assert run_copy == (tmp_path / "out" / "run_settings_used.toml").read_text()
     # a figure an earlier analysis wrote and this one does not, and a file of the user's

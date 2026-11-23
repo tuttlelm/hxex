@@ -60,9 +60,13 @@ summed. See [Input formats](inputs.md).
   (`[analysis.choice]`), a residue is described by two populations, otherwise by one. Three
   populations are shown but the choice is only between one and two.
 - Comparisons with a `reference` sample: per peptide (Welch t-test together with a critical
-  difference), per residue, per population, with Woods and butterfly plots. `peptide_match =
-  "range"` pairs a mutant's peptide with the reference's over the same residues (the default,
-  except for pooled data, which is compared by sequence).
+  difference), per residue, per population, with Woods and butterfly plots. By default a
+  mutant's peptide is paired with the reference's over the same residues, while a different
+  protein's peptide over the same residue numbers is not (more than a third of its positions
+  differ; a warning names those left out), and pooled data are compared by sequence.
+  `peptide_match = "range"` pairs every peptide over the same residues, another protein's too
+  (each protein's own numbering: meaningful only where the numbering lines up);
+  `"sequence"` pairs identical sequences only.
 - Regions and sites (`[[analysis.regions]]`, `[[analysis.sites]]`): regions are drawn, tabled,
   and tested; sites are only drawn (see [Regions and sites](#regions-and-sites)). *hxex* derives
   none itself.

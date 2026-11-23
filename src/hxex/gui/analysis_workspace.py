@@ -226,21 +226,15 @@ class AnalysisWorkspace(QWidget):
         top.addWidget(self.busy)
         top.addWidget(self.status, 1)
 
-        # no reference with two samples or more: said loudly, with the choice at hand (owner,
-        # 2026-11-13: the comparisons were off and only the list's "off" lines said why)
+        # no reference with two samples or more: said loudly, pointing at the list that
+        # chooses one (owner, 2026-11-13: the comparisons were off and only the list's "off"
+        # lines said why; 2026-11-23: the list above replaces a second choice here)
         self.no_reference = QWidget()
         bar = QHBoxLayout(self.no_reference)
         bar.setContentsMargins(0, 0, 0, 0)
         self.no_reference_text = QLabel()
         self.no_reference_text.setWordWrap(True)
         self.no_reference_text.setStyleSheet(f"color: {ERROR_COLOUR};")
-        self.choose_reference = QComboBox()
-        self.choose_reference.setToolTip(tip(
-            "writes [analysis] reference to the project file: the sample the others are "
-            "compared with; \"every sample in turn\" writes reference = \"all\" (an analysis "
-            "for each)"))
-        self.choose_reference.activated.connect(self._reference_chosen)
-        bar.addWidget(self.choose_reference)
         bar.addWidget(self.no_reference_text, 1)
         self.no_reference.hide()
 
@@ -660,7 +654,7 @@ class AnalysisWorkspace(QWidget):
 
     def _show_no_reference(self) -> None:
         """The warning that the samples are not compared: results with two samples or more and
-        no ``[analysis] reference``; with the project file open, a list to choose one."""
+        no ``[analysis] reference``, pointing at the comparisons-against list."""
         samples: list[str] = []
         if self.results is not None:
             try:
@@ -675,20 +669,9 @@ class AnalysisWorkspace(QWidget):
             return
         project = self._project() is not None
         self.no_reference_text.setText(
-            "Reference needed for comparison plots" if project else
+            "Reference needed for comparison plots: tick one under comparisons against"
+            if project else
             "Reference needed for comparison plots: open the project file to choose one")
-        self.choose_reference.setVisible(project)
-        items = ["choose a reference…", *samples, "every sample in turn"]
-        if [self.choose_reference.itemText(i)
-                for i in range(self.choose_reference.count())] != items:
-            self.choose_reference.blockSignals(True)
-            self.choose_reference.clear()
-            self.choose_reference.addItem(items[0], None)
-            for name in samples:
-                self.choose_reference.addItem(name, name)
-            self.choose_reference.addItem(items[-1], "all")
-            self.choose_reference.blockSignals(False)
-        self.choose_reference.setCurrentIndex(0)
         self.no_reference.show()
 
     def _write(self, project, changes, what: str) -> None:
@@ -701,29 +684,6 @@ class AnalysisWorkspace(QWidget):
             writer(changes, what)
         else:
             set_settings(project, changes, unfinished=True)
-
-    def _reference_chosen(self, index: int) -> None:
-        """Write the reference chosen to the project file; the analysis then compares."""
-        from ..project_edit import ProjectError
-        from .project_editor import _quoted
-
-        name = self.choose_reference.itemData(index)
-        project = self._project()
-        if name is None or project is None:
-            return
-        problem = None
-        try:
-            # as TOML text, quoted: a sample named like a number or a date would be read as one,
-            # or refused (audit of 2026-11-15, E-8)
-            self._write(project, [("analysis.reference", _quoted(str(name)))],
-                        f"[analysis] reference: {name}")
-            log.info("[analysis] reference set to %s", name)
-        except (ProjectError, OSError, ValueError, TypeError) as exc:
-            problem = str(exc)
-            log.error("the reference was not set: %s", exc)
-        self.refresh()
-        if problem is not None:  # after the refresh, which writes the line too
-            self.status.setText(f"The reference was not set: {problem}")
 
     def _set_fit_rates(self, on: bool) -> None:
         """Write ``[analysis.fragments] fit_rates`` (true or false) to the project file; the

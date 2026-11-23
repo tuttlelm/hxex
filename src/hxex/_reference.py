@@ -269,10 +269,12 @@ _DESCRIPTIONS: dict[str, str] = {
                             'samples have two; the default without the test) or "bootstrap" '
                             "(the residue's K=2 positions "
                             'and their bootstrap errors, with [analysis.choice]\'s limits)',
-    "analysis.peptide_match": 'which peptides are compared: "range" (the same residues, mutated '
-                              'or not) or "sequence" (identical sequences); "auto": sequence '
-                              'for pooled data (two sequences at one range are different '
-                              'proteins), else range',
+    "analysis.peptide_match": 'which peptides are compared: "auto" pairs peptides over the same '
+                              'residues when they are one protein\'s (identical, or a mutant: '
+                              'a third of positions or fewer differ), and only identical '
+                              'sequences for pooled data; "range" pairs every peptide over the '
+                              'same residues, even another protein\'s (with a warning); '
+                              '"sequence" pairs identical sequences only',
     "analysis.head_to_head": 'pooled data: the ranges of the head-to-head figure and '
                              'compare_sequences.csv: "auto" (every range with several '
                              "sequences of one class, and every isoform's sequence on its "

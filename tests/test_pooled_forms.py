@@ -446,7 +446,7 @@ def test_a_pools_candidates_go_with_its_instrument_files(tmp_path):
     run = SimpleNamespace(settings=SimpleNamespace(spectra_source=spectra.source))
     assert resolve_match("auto", {"": run}) == "sequence"
     plain = SimpleNamespace(settings=SimpleNamespace(spectra_source={"reader": "mzml"}))
-    assert resolve_match("auto", {"": plain}) == "range"
+    assert resolve_match("auto", {"": plain}) == "similar"
     folder = tmp_path / "folder.toml"
     folder.write_text('project = "p"\n\n[input]\nformat = "specexport"\ndata_dir = "."\n'
                       'pooled_fasta = "pool.fasta"\n')

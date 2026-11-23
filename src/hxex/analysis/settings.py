@@ -261,8 +261,10 @@ class AnalysisConfig:
     - ``peptide_match``: which peptides the peptide comparisons pair, ``'range'`` (the same
       residues, mutated or not) or ``'sequence'`` (identical sequences only;
       :func:`compare_peptides`); ``'auto'`` (the default): ``'sequence'`` for pooled data,
-      where two sequences at one range are different proteins, else ``'range'``
-      (:func:`resolve_match`).
+      where two sequences at one range are different proteins, else by range where the two
+      peptides are one protein's (mutants: a third of positions or fewer differ), never two
+      different proteins' by position (:func:`resolve_match`); ``'range'`` set by hand pairs
+      those too.
     - ``head_to_head``: pooled data only: which ranges the head-to-head figure and
       ``compare_sequences`` show, ``'auto'`` (the default: every range with several sequences
       of one class, and every isoform's sequence alone), a list of ranges (``'27-52'``), or
@@ -433,7 +435,8 @@ class AnalysisConfig:
             ControlConfig(**self.controls)  # the values must be valid on their own
         if self.modified_peptides not in MODIFIED:
             raise ValueError(f"modified_peptides must be one of {', '.join(MODIFIED)}")
-        if self.peptide_match not in ("auto", *MATCHES):
+        # "similar" is what "auto" resolves to (resolve_match), not a value to write
+        if self.peptide_match not in ("auto", *MATCHES, "similar"):
             raise ValueError(f"peptide_match must be one of auto, {', '.join(MATCHES)}")
         if self.head_to_head is True:
             object.__setattr__(self, "head_to_head", "auto")
@@ -641,7 +644,9 @@ def resolve_match(match: str, runs) -> str:
     ``'sequence'`` when any of ``runs`` (Results, by run name) was read as pooled data or with a
     pool's candidates (``[input] pooled_fasta``, also from scan files): two sequences at one
     range are then different proteins, never to be paired silently (docs/ANALYSIS.md "Pooled
-    samples: possible identities"); else ``'range'``."""
+    samples: possible identities"); else ``'similar'``: by range where the two peptides are one
+    protein's, differing at a third of positions or fewer
+    (:func:`hxex.analysis.compare.different_sequences`)."""
     from ..io.pooled import CANDIDATES_RECORD
 
     if match != "auto":
@@ -649,7 +654,9 @@ def resolve_match(match: str, runs) -> str:
     sources = [getattr(r.settings, "spectra_source", None) or {} for r in runs.values()
                if getattr(r, "settings", None) is not None]
     pooled = any(s.get("reader") == "pooled" or s.get(CANDIDATES_RECORD) for s in sources)
-    return "sequence" if pooled else "range"
+    # else by range where the two peptides are one protein's (mutants), never two different
+    # proteins' by position (owner, 2026-11-23; "range" set by hand still pairs those)
+    return "sequence" if pooled else "similar"
 
 
 def _summary_items(items) -> dict:

@@ -791,9 +791,8 @@ file), so what you see here is what the command writes.
 - A pool's forms (`[input] pooled_fasta`) are placed as samples are, each class of forms
   standing for a group: under Summary each class's residue fDavg of its forms and its tiers,
   under Single samples and Comparisons each class, then each sample's form.
-- With two samples or more and no `[analysis] reference`, a red line above the list says
-  *Reference needed for comparison plots*, with **choose a reference…** beside it: the sample
-  chosen is written to the project file (**every sample in turn** writes `reference = "all"`).
+- With two samples or more and no `[analysis] reference`, a red line above the tree says
+  *Reference needed for comparison plots: tick one under comparisons against*.
 - With groups of samples (`[analysis.groups]`) each part of the tree has a branch per
   group: each group's analysis is its own, its comparisons against its own reference (said
   beside the group), and nothing is shared between groups. **Compute** makes every group's

@@ -553,6 +553,7 @@ def _peptide_outputs(results, config: AnalysisConfig, base, up, cancel=None, sha
               "set_averages": set_average_ks(up)}
         comparisons["K=1 fD"] = compare_peptides(results, ref, **kw)
         k1_raw = comparisons["K=1 fD"]
+        _say_dissimilar(up, ref, config.peptide_match)
         if 2 in config.ks:
             comparisons["K=2 rank 1 (low D) fD"] = compare_peptides(results, ref, K=2, rank=1,
                                                                     **kw)
@@ -964,6 +965,31 @@ def _single_sample_jobs(single: dict, residues, coverage, regions, on_residues: 
             if ((regions.time == t) & (np.asarray(regions.sample) == s)).any():
                 mine.append((f"regions_{s}_{_time_label(t, scale)}", lambda s=s, t=t:
                              plot_region_bars(regions, t, samples=[s], styles=styles, **when)))
+
+
+def _say_dissimilar(up, reference: str, match: str) -> None:
+    """A warning naming the samples whose peptides over a range the ``reference`` also has are
+    another protein's (more than a third of positions differ): left unpaired by ``'similar'``
+    (``peptide_match = "auto"``), compared by position under ``'range'`` (set by hand)."""
+    if match not in ("similar", "range"):
+        return
+    from ..analysis.compare import dissimilar_ranges
+
+    found = dissimilar_ranges(up, reference)
+    if not found:
+        return
+    counts = ", ".join(f"{s} {len(r)}" for s, r in found.items())
+    start, end, a, b = next(iter(found.values()))[0]
+    example = f"e.g. {start}-{end} {a} / {b}"
+    if match == "similar":
+        log.warning("peptides of other proteins than the reference %s's are not compared at "
+                    "the same residues (more than a third of positions differ; %s): ranges "
+                    "left out per sample: %s. [analysis] peptide_match = \"range\" compares "
+                    "them by position", reference, example, counts)
+    else:
+        log.warning("[analysis] peptide_match = \"range\" compares peptides of other "
+                    "proteins than the reference %s's by position (more than a third of "
+                    "positions differ; %s): ranges per sample: %s", reference, example, counts)
 
 
 def _compared_sample_jobs(compared: dict, residues, res_cmp, reference: str, others: list,

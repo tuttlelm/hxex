@@ -2369,6 +2369,46 @@ Planned, not built:
      the ladder figure's business. The MS1 parent: the closure figure's reference, a peptide
      series in Results.
 
+42. **Comparing different sequences on a numbering the user sets** (owner, 2026-11-23: a plan
+   item, nothing designed). Today peptides of two samples are paired by their ranges in each
+   sample's own numbering (`[analysis] peptide_match = "range"`) or by identical sequence
+   (`"sequence"`); residue comparisons and overlays put residue *n* of one sample beside
+   residue *n* of the other. That is right for mutants, which share the numbering, and wrong
+   for different proteins: on the private three-protein heterooligomer dataset the
+   all-against-all analysis paired residues 1-12 of two different proteins (MDIAIHHPWIRR
+   against MEIPVPVQPSWL). Measured on the tutorial and that dataset: mutant pairs differ at
+   0.02-0.14 of positions, different proteins at 0.50-1.00, so `"auto"` now pairs by range
+   only where peptides differ at a third of positions or fewer, with a warning naming what it
+   left unpaired; `"range"` set by hand still pairs whatever the sequences, with a warning
+   (built 2026-11-23, HISTORY 442). What this item adds is the case where comparing different sequences is
+   meant:
+   - *Homologous domains.* The heterooligomer's proteins share an alpha-crystallin domain of
+     different sequence, sometimes of the same length but at different positions in each
+     protein; overlaying their uptake over that domain is a natural figure.
+   - *Chimeras.* A protein whose N- and C-terminal parts differ but whose core is another's,
+     numbered differently.
+   The idea: the user gives each sample's numbering on a common scale, and every comparison
+   by position (peptide pairing by range, residue comparisons, overlays, regions and sites)
+   uses the common numbering, keeping each sample's own numbers in the tables beside it.
+   Forms to choose between (none decided):
+   - *Offsets by segment*, written in the project file: for a sample, residues 1-80 are
+     common 11-90, residues 81-160 common 101-180 (a table per sample, or per pair of
+     samples). Enough for chimeras and for domains of equal length; gaps are left
+     unnumbered.
+   - *An alignment file* (FASTA alignment or Clustal, made by the user's own tool), each
+     record a sample's sequence with gaps; the common numbering is the alignment's columns.
+     Handles insertions and deletions inside a domain; *hxex* only reads it.
+   - *An alignment made by hxex* (pairwise, global or local) and shows for the user to
+     confirm or edit, written as either form above. Convenient, but an automatic alignment
+     is a judgement the user must check, so never used unconfirmed.
+   Open: whether a peptide pairs only where both ends map into the same common range (no
+   gap inside), or residue by residue; how figures show that the compared residues differ
+   (each sample's own residue letter and number in the tooltips and data tabs, a mark where
+   the residues differ); whether the common numbering belongs to `[analysis.groups]` (a
+   group of samples of different proteins compared over a shared domain) or stands on its
+   own; regions and sites given in the common numbering. Related: item 38 (groups), and
+   `peptide_match` above.
+
 ## Risks and open decisions
 
 - **Back-exchange correction of fragment ions.** Fragment series are not corrected for now
