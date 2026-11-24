@@ -207,6 +207,31 @@ def test_processes_give_what_one_process_gives(monkeypatch):
     np.testing.assert_array_equal(one.fit_offset_ppm, many.fit_offset_ppm)
 
 
+def test_a_script_without_a_main_guard_fits_in_processes(tmp_path):
+    """A script that picks at its top (no ``if __name__ == "__main__":``) is not run again by
+    the processes (each would pick and start its own processes)."""
+    import subprocess
+    import sys
+    import textwrap
+    from pathlib import Path
+
+    tests = Path(__file__).resolve().parent
+    script = tmp_path / "pick.py"
+    script.write_text(textwrap.dedent(f"""
+        import sys
+        sys.path[:0] = [{str(tests.parent / "src")!r}, {str(tests)!r}]
+        from test_profile_fit import CFG, run_set
+        from hxex.picking import pick_spectra, profile
+        profile.PARALLEL_FROM, profile.CHUNK = 1, 5
+        s = run_set(n_controls=20, labelled=((3.0, 0.0), (5.0, 2.0)))
+        print("picked", len(pick_spectra(s, CFG, workers=2).intensity) > 0)
+    """))
+    done = subprocess.run([sys.executable, script.name], cwd=tmp_path, capture_output=True,
+                          text=True, timeout=300)
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert done.stdout.strip() == "picked True"
+
+
 def test_the_setting_is_a_choice_of_pick():
     assert PickerConfig.from_dict(CFG.to_dict()) == CFG
     with pytest.raises(ValueError, match="resolving_power"):

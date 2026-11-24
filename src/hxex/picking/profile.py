@@ -615,9 +615,13 @@ def fit_all(jobs: list, measure, shape: PeakShape, search: OffsetSearch, *,
             done += len(c)
             report(progress, done, len(jobs))
         return out
+    from ..io._parallel import _main_left_out
+
     with _single_threaded_children(), ProcessPoolExecutor(
             max_workers=workers, mp_context=multiprocessing.get_context("spawn")) as pool:
-        futures = [pool.submit(_fit_chunk, task(c)) for c in chunks]
+        with _main_left_out():  # the processes start here, without the main script: a script
+            # that picks at its top (no main guard) would pick again in each of them
+            futures = [pool.submit(_fit_chunk, task(c)) for c in chunks]
         try:
             for f in futures:
                 check_cancel(cancel)

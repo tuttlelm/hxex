@@ -11918,7 +11918,7 @@ CSVs or mzML if wanted.
     then replaced its failing processes forever): the processes are started with the main script
     hidden from them (`_main_left_out`), and `ProcessPoolExecutor` stops with an error when a
     process dies. The profile fit's pool (picking/profile.py) has the same unguarded-script trap;
-    left alone here (picking code). (3) `READER` (the reading code's fingerprint) holds the picking
+    left alone here (picking code), fixed in HISTORY 446. (3) `READER` (the reading code's fingerprint) holds the picking
     modules the readers use (config, pick, mz_check, measure, screen), not the whole package: a
     change of the claims, envelopes, binned spectra or profile fit no longer reads every file
     again (a test checks every name the readers import from picking is from one of them).
@@ -11958,3 +11958,12 @@ CSVs or mzML if wanted.
     labelled file; a control whose drift range stays or moves; find_peak's search kept or
     redone), test_stored_read.py (hxex run and hxex check after one changed row), test_stages.py
     unchanged (one file of one: a full read). Guide: outputs.md.
+446. **The profile fit's processes start without the main script** (2026-11-23; owner: "can we
+    fix profile fit here?"). `pick = "profile_fit"` fits in spawned processes
+    (`picking.profile.fit_all`); a script that picks at its top without `if __name__ ==
+    "__main__":` was run again by each process before its first task, as the reader's pool was
+    (HISTORY 444). The processes now start inside `hxex.io._parallel._main_left_out` (imported
+    when the pool starts: picking cannot import hxex.io at its top); its pool already stopped
+    with an error when a process died (`ProcessPoolExecutor`). The picking code changed, so every
+    bundle picks its spectra again on its next run (no file is read again). Test:
+    test_profile_fit.py (such a script fits in two processes; it failed without the change).
