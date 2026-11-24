@@ -11988,3 +11988,27 @@ CSVs or mzML if wanted.
     (446) in the two main-guard tests only: the lowest brainpy prints that its compiled part is
     missing when imported, in every process, so the scripts' output was not one line; the tests
     now read its last line (reproduced and passing in a lowest-versions venv).
+
+448. **The reference datasets refitted with 5939748; the noise floor measured** (2026-11-24;
+    scratch only, no code change). The five private reference datasets (the tutorial data, the
+    intact-peptide benchmark, the private noisy unimodal dataset, the known-answer set, and the
+    Orbitrap digest) refitted with the code of 5939748 and compared with the 48abc2c reruns,
+    model-free yardsticks first. Known answer: K correct 82.9 % (83.2 % at efda847); nine
+    workbooks hold one spectrum at two times, which the run now refuses (HISTORY 411), so those
+    copies are excluded. Tutorial and benchmark: unchanged or slightly better (labelled replicate
+    sd q90 0.247 -> 0.235 and 0.366 -> 0.369 D; undeuterated controls with K > 1 8.1 -> 0.4 %
+    and 4.2 -> 3.6 %); the peptide verdicts that changed sit at the significance limit. Noisy
+    set: worse from K alone (replicate sd q90 0.567 -> 0.686 D with the sticks unchanged): the
+    per-bin noise fits small populations onto stray sticks in the tail, where the floor (0.5 %
+    of the spectrum's top) binds over the counting term; the constant noise of 48abc2c was
+    about five times larger there. Orbitrap: worse (q90 0.550 -> 0.627 D) from the counting term
+    read from residuals (HISTORY 294) and from sticks moved by the m/z calibration (HISTORY 306;
+    1,572 of 16,596 matched spectra). The floor: replicate pairs put an absolute floor at about
+    0 (HISTORY 187) but used only bins at 5 % of the top or above. The undeuterated controls'
+    bins far past the natural envelope, by brightness fifth (share of the top, dimmest to
+    brightest): tutorial 1.1 to 1.3 %, benchmark 1.0 to 0.7 %, noisy 2.0 to 0.5 %, Orbitrap
+    5.0 to 1.0 %: the Q-TOF tail follows the top, the noisy set has an absolute part, the
+    Orbitrap's is mostly absolute (the tail includes other species, not only noise). Proposed,
+    not built: a floor with an absolute and a relative part measured per run from those tails;
+    for the Orbitrap a counting term measured within one run (owner: undeuterated replicate
+    injections are expensive and often missing; scans within a run may serve, pairs as a check).
