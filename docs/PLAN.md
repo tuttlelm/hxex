@@ -1168,8 +1168,9 @@ Planned, not built:
    FIRST SCOPE BUILT 2026-11-06 (HISTORY 308: `[input.scans] scan_cut`, fragments at K = 1,
    Thermo raw files and mzML converted with `-N`; the response curve measured, not the Gaussian
    hard cut below; variance unchanged). DEFAULT 2026-11-07 (owner; HISTORY 314): `"auto"`
-   for the reduced files that record their noise; flag `below_noise` (< 4 x noise). Next: the
-   mixture weights below, then MS1 peptides.
+   for the reduced files that record their noise; flag `below_noise` (< 4 x noise). The mixture
+   weights below were settled 2026-11-07 with nothing to build (HISTORY 316, 318). Next: MS1
+   peptides.
    - *The data.* Reduced profile scans (HISTORY 299-300): in each scan a peak whose top is
      below about 2-3 x the recorded noise is deleted (softened by the noise: deleted in 50 % of
      scans at 2-3 x, 21 % at 3-5 x, 1-2 % above 10 x), the survivors near the cut read high
@@ -1191,10 +1192,21 @@ Planned, not built:
      on the targeted dataset (2026-11-06): the weights belong to the fragment (most fragments
      one ion type, a minority real mixtures, not predicted by length or charge, different
      between precursors) and agree between its MS2 and MS3 (difference 0.00); in dim series they
-     drift to the heavier component, which is the cut, not chemistry. So: share each fragment's
-     weights across its conditions, fitted from its brightest references; for a fragment dim
-     everywhere, take the typical weights (pure c for the c-1 label, pure z-dot) with the
-     cut-aware fit rather than fitting the weights.
+     drift to the heavier component. The proposal then was to share each fragment's weights
+     across its conditions, fitted from its brightest references, and to give a fragment dim
+     everywhere the typical weights (pure c for the c-1 label, pure z-dot) with the cut-aware
+     fit. SETTLED 2026-11-07, nothing to build:
+     - The cut's drift is real only below 4 x the noise, where spectra are already flagged
+       `below_noise` (HISTORY 316: on bright scrambling standards MS2 and MS3 weights agree,
+       median difference 0.000; summed tails read heavy by +0.41 H below 1 x, +0.12 at 1-4 x,
+       0.00 from 4 x). Pooling MS2 with MS3 by brightness would remove it, and typical weights
+       are 0.3-0.7 H wrong for real mixtures. Not built (owner): no fallbacks for data below
+       the noise.
+     - The heavier weights at middle brightness (5-10 x) are chemistry, not the cut (HISTORY
+       318): hydrogen-transfer ion types (z-dot -> z+1, c -> c+1) of particular fragments,
+       which within a parent tend to be the dimmer ones. The extra peaks sit at +H, not +D, and
+       co-elute; one fragment read bright in one channel and dim in the other has the same
+       weights. So the weights stay fitted per series as today.
    - *Usable brightness* (simulation, one z-dot envelope of 8 sites over 90 scans; brightness =
      the apex scan's tallest expected peak / recorded noise): below ~4 x neither fit recovers the
      deuteration; at 4-8 x only the cut-aware fit (<= 0.13 D off); today's fit needs ~30 x for
