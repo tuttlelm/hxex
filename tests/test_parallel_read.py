@@ -82,6 +82,26 @@ def test_find_peak_in_parallel_gives_the_same_spectra(tmp_path, caplog):
     assert seen[-1] == (3, 3)
 
 
+def test_the_retention_search_of_controls_read_in_parallel_finds_the_same(tmp_path, caplog):
+    """With find_peak the retention search ("suggest") looks at the undeuterated controls: each
+    control file is read and searched in its own process, with the spectra, record (the
+    search's suggestions included), and log lines of one process (a file's search lines come
+    after its read lines, so lines may be ordered otherwise)."""
+    paths = [write_mzml(tmp_path / f"lc{k}.mzML", lc_run(apex=30.0 + k, seed=k))
+             for k in range(4)]
+    runs = [MzmlRun(str(paths[0]), "S", role="undeut"),
+            MzmlRun(str(paths[1]), "S", rep=2, role="undeut"),
+            MzmlRun(str(paths[2]), "S", time=60.0), MzmlRun(str(paths[3]), "S", time=120.0)]
+    targets = [MzmlTarget(_with_rt(ENTRY, 30.5 / 60, z)) for z in (2, 3)]
+    config = MzmlConfig(find_peak=True, peak_search=30.0)
+    (one, lines_one), (two, lines_two) = _both(caplog, runs, targets, project="p",
+                                               config=config)
+    _same(one, two)
+    assert len(one.source["retention_search"]["files"]) == 2  # both controls searched
+    assert sum("retention search: 2 series" in m for _, _, m in lines_two) == 2
+    assert sorted(lines_one) == sorted(lines_two)
+
+
 def test_how_many_processes_read(tmp_path, monkeypatch):
     """One file, a format that cannot be opened elsewhere, or small files: this process; never
     more processes than files; as many as the memory holds."""
@@ -134,4 +154,5 @@ def test_a_script_without_a_main_guard_reads_in_parallel(tmp_path):
     done = subprocess.run([sys.executable, script.name], cwd=tmp_path, capture_output=True,
                           text=True, timeout=300)
     assert done.returncode == 0, done.stderr[-2000:]
-    assert done.stdout.strip() == "spectra 2"
+    # the last line: an old brainpy says on its import that its compiled part is missing
+    assert done.stdout.strip().splitlines()[-1] == "spectra 2"

@@ -11967,3 +11967,24 @@ CSVs or mzML if wanted.
     with an error when a process died (`ProcessPoolExecutor`). The picking code changed, so every
     bundle picks its spectra again on its next run (no file is read again). Test:
     test_profile_fit.py (such a script fits in two processes; it failed without the change).
+447. **The undeuterated controls the retention search looks at, read in parallel too**
+    (2026-11-23; owner: "let's handle main process and 39a next"). Profiling the main process of
+    two large parallel reads after HISTORY 444: the intact-peptide benchmark's did about 8 s of
+    its own work (the rest waiting for its workers); the Orbitrap digest's spent 48 s reading its
+    two undeuterated control files itself, one after the other: with find_peak, the retention
+    search ("suggest", the default) searches each control file while it is open, so those files
+    were read in this process before the others. Each control file is now read and searched in
+    a worker (`mzml._search_group_task`: the read of `_read_group`, each run's spectra numbered
+    on their own as the search takes them, then `RetentionSearch.search_file` on the open file,
+    which changes nothing in the search object); what each found is added in the runs' order,
+    as before. "automatic" still reads the controls in one process (it numbers their series over
+    every file before searching). A file's search lines now follow its read lines (they followed
+    every control's read before). The Orbitrap digest's read, the same spectra and record as
+    main's: 173 to 154 s; what is left is each worker's time per file (find_peak's sums), not the
+    main process. PLAN Next steps 39 (a) found already done by HISTORY 433 (the noise curve
+    kept when b1 moved by less than 1 %, whatever controls made it); PLAN text corrected. Test:
+    test_parallel_read.py (two searched controls in two processes: same spectra, record, and
+    lines). CI's lowest-versions job failed for fb7eb11 (HISTORY 444) and would have for d2c9291
+    (446) in the two main-guard tests only: the lowest brainpy prints that its compiled part is
+    missing when imported, in every process, so the scripts' output was not one line; the tests
+    now read its last line (reproduced and passing in a lowest-versions venv).

@@ -1614,6 +1614,28 @@ def _read_group_task(task) -> _GroupRead:
                            extra=fmt.extra if want else None, **kwargs)
 
 
+def _search_group_task(task) -> tuple[_GroupRead, dict]:
+    """:func:`_read_group_task` for undeuterated controls that the retention search
+    (``find_retention_time = "suggest"``) looks at, followed by the search of the file while it
+    is open: each run's spectra numbered on their own, as the search takes them; returns what
+    the file gave and, per run position, what the search found (``task``: the read task and
+    the search)."""
+    spec, path, args, kwargs, search = task
+    fmt = _format_from(spec)
+    want = kwargs.pop("want_extra")
+    with fmt.open(path) as opened_file:
+        got = _read_group(_SharedFile(opened_file, args[3]), *args,
+                          extra=fmt.extra if want else None, **kwargs)
+        members, member_runs = args[0], args[1]
+        controls = []
+        for n, run in zip(members, member_runs, strict=True):
+            own: list = []
+            _number_series(got.made[n][0], {}, own)
+            controls.append((run, own, got.made[n][1]))
+        found = search.search_file(opened_file, controls)
+    return got, dict(zip(members, found, strict=True))
+
+
 def _drift_group(f, members, runs, member_targets, windows, gated, kwargs, each=None) -> dict:
     """:func:`_drift_found` of each undeuterated control ``members`` (positions; ``runs`` and
     ``member_targets`` theirs) in the open file ``f`` (a :class:`_SharedFile` made with
@@ -1848,7 +1870,7 @@ def _read_runs(
         undeut = [s for n, run in enumerate(runs) if search.reads(run) for s in per_run[n]]
         return search.decide(undeut, by_target())
 
-    def read(numbers, only=None, kept=None, files=None):
+    def read(numbers, only=None, kept=None, files=None, searched=None):
         """Per run in ``numbers``: its spectra before their series are numbered, and its peak
         width (:func:`_run_spectra`). Each file is opened once and its scans decoded once for
         all of its runs (:class:`_SharedFile`: a control file listed by several samples). With
@@ -1856,7 +1878,11 @@ def _read_runs(
         file's record (instrument, profile scans, scan cut) is taken for each of its runs.
         ``kept`` (an ExitStack): the files are left open in it (their scans not kept), each
         in ``files`` under the position of every run that reads it. Files are read in
-        parallel (``workers``) when nothing is kept open and every target is read."""
+        parallel (``workers``) when nothing is kept open and every target is read.
+        ``searched`` (a dict): the undeuterated controls are read in parallel and each file
+        searched by the retention search ("suggest") in its process, what it found added to
+        ``searched`` by run position; returns None when they cannot be (one process): the caller
+        then reads them with ``kept``."""
         nonlocal done
         out = {}
         groups = _same_file(numbers, opened)
@@ -1889,6 +1915,23 @@ def _read_runs(
 
         n_workers = (1 if kept is not None or only is not None else
                      read_workers([opened[m[0]] for m in groups], workers, fmt.spec is not None))
+        if searched is not None and n_workers <= 1:
+            return None
+        if searched is not None:
+            def got_searched(i, result):
+                nonlocal done
+                take(groups[i], result[0])
+                searched.update(result[1])
+                done += len(groups[i])
+                report(progress, done, len(runs))
+
+            map_tasks(_search_group_task, [
+                (fmt.spec, opened[members[0]],
+                 (members, [runs[n] for n in members], member_targets[i], windows, common),
+                 dict(want_extra=fmt.extra is not None and not extra and i == 0,
+                      fragments=fragments, calibrate=calibrate), search)
+                for i, members in enumerate(groups)], n_workers, got_searched, cancel)
+            return out
         if n_workers > 1:
             def got(i, result):
                 nonlocal done
@@ -1986,18 +2029,27 @@ def _read_runs(
                                        .get("elution_cut") or ()) if i in kept_ids)
     else:
         first = 0 if search is None else sum(map(search.reads, runs))
-        with ExitStack() as kept:
-            files: dict[int, object] = {}  # the searched controls' files, open until searched
-            made = read(order[:first], kept=kept, files=files)
-            if search is None or automatic:
-                number(order[:first], made)
-                spectra_of = per_run
-            else:
-                spectra_of = {n: [] for n in order[:first]}
-                for n in order[:first]:
-                    _number_series(made[n][0], {}, spectra_of[n])
-            if search is not None:
-                search_controls(order[:first], made, files, spectra_of)
+        found_by_run: dict[int, object] = {}
+        # "suggest": each control file read and searched in its own process, when they are
+        # read in parallel (each run's spectra numbered on their own either way)
+        made = (read(order[:first], searched=found_by_run)
+                if search is not None and not automatic and first else None)
+        if made is not None:
+            search.files.extend(found_by_run[n] for n in order[:first]
+                                if found_by_run[n] is not None)
+        else:
+            with ExitStack() as kept:
+                files: dict[int, object] = {}  # the searched controls' files, open until
+                made = read(order[:first], kept=kept, files=files)  # searched
+                if search is None or automatic:
+                    number(order[:first], made)
+                    spectra_of = per_run
+                else:
+                    spectra_of = {n: [] for n in order[:first]}
+                    for n in order[:first]:
+                        _number_series(made[n][0], {}, spectra_of[n])
+                if search is not None:
+                    search_controls(order[:first], made, files, spectra_of)
         if automatic:
             moved = decide()
             if moved:

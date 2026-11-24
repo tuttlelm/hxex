@@ -229,7 +229,8 @@ def test_a_script_without_a_main_guard_fits_in_processes(tmp_path):
     done = subprocess.run([sys.executable, script.name], cwd=tmp_path, capture_output=True,
                           text=True, timeout=300)
     assert done.returncode == 0, done.stderr[-2000:]
-    assert done.stdout.strip() == "picked True"
+    # the last line: an old brainpy says on its import that its compiled part is missing
+    assert done.stdout.strip().splitlines()[-1] == "picked True"
 
 
 def test_the_setting_is_a_choice_of_pick():

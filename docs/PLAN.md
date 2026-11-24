@@ -2270,7 +2270,9 @@ Planned, not built:
    `stored_read`) holds the whole elution-window table, so one changed row reads every file
    again (about 5.5 min there). Option: read again only the files whose rows changed and
    take the others' spectra from the bundle (needs the plan per file). (a) is small; (b) is
-   about a session. (b) rules AGREED (owner, 2026-11-23): only elution-window rows or data
+   about a session. (a) DONE by HISTORY 433 (2026-11-20): the earlier curve, and the fits,
+   are kept when b1 moved by less than 1 % (`reuse.CURVE_SHARE`), whatever controls made it;
+   the counts are no longer compared (the example above, b1 12.6 both times, keeps its fits). (b) rules AGREED (owner, 2026-11-23): only elution-window rows or data
    files changed -> read those files again and take the others' spectra from the bundle; the
    series numbered again over every run as a full read numbers them (results identical to a
    full read); a changed undeuterated control with ion-mobility bins -> the drift ranges again,
