@@ -1523,18 +1523,23 @@ def cmd_run(args) -> int:
     stop = _Stop()
     threads = args.threads if args.threads is not None else project.threads
     with stop.installed(), _threads(threads):
-        spectra = None
+        spectra = again = None
         if stored is None and not fresh and exists:
-            # the spectra of the bundle being replaced, when a read would give them again
-            # (hxex.stored_read; owner, 2026-11-16)
-            from .stored_read import stored_spectra_for
+            # the spectra of the bundle being replaced, when a read would give them again, or
+            # those of the files whose part of the read did not change (hxex.stored_read;
+            # owner, 2026-11-16 and 2026-11-23)
+            from .stored_read import stored_or_again
 
-            spectra = stored_spectra_for(project, bundle)
+            taken = stored_or_again(project, bundle)
+            if taken is not None and taken[1] is None:
+                spectra = taken[0]
+            elif taken is not None:
+                again = taken
         if spectra is None:
             if stored is None:
                 log.info("reading the %s input of %s", project.input.format, project.project)
             with _progress(args, name="read") as progress:
-                spectra = read_input(project, progress=progress, cancel=stop)
+                spectra = read_input(project, progress=progress, cancel=stop, again=again)
             log.info("%d spectra read", len(spectra))
         with _progress(args) as progress:
             result = run(

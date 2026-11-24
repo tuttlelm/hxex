@@ -75,6 +75,7 @@ from .drift_gate import (
     drift_times,
     isotope_peaks,
     scan_profile,
+    unclear_series,
 )
 from .elution_windows import ElutionWindow, by_key, by_peptide, peptide_label, window_for
 from .errors import ReadError
@@ -1364,6 +1365,7 @@ def read_mzml(
     cancel: CancelHook | None = None,
     elution_windows: Sequence | None = None,
     workers: int | None = None,
+    again: tuple | None = None,
 ) -> SpectrumSet:
     """Raw spectra of every target in its runs (see the module docstring for the two layouts):
     a target whose entry names a sample is read from the runs of that sample only, one with an
@@ -1401,13 +1403,16 @@ def read_mzml(
 
     ``workers``: how many processes read files at once (None: up to
     :data:`hxex.io._parallel.MAX_READ_WORKERS` when the files are large enough to be worth it;
-    1: this process only). The spectra are the same whatever it is.
+    1: this process only). The spectra are the same whatever it is. ``again`` (stored spectra
+    of this read, the names of the files to read again): only those files are read, the other
+    runs' spectra taken from the stored ones, with the spectra and record of a full read
+    (:func:`hxex.stored_read.stored_or_again`; a full read where that cannot be, logged).
     """
     opened, recorded = _run_paths(runs, data_root, record_paths)
     return _read_runs(_MZML, runs, opened, recorded, None, record_paths, targets,
                       project=project, config=config, picker=picker, registry=registry,
                       progress=progress, cancel=cancel, elution_windows=elution_windows,
-                      workers=workers)
+                      workers=workers, again=again)
 
 
 # the record's mark that targets are tied to runs by their entry's sample (reads recorded
@@ -1621,6 +1626,105 @@ def _drift_group(f, members, runs, member_targets, windows, gated, kwargs, each=
     return out
 
 
+def _stored_spectrum(stored: SpectrumSet, i: int, data_id: int) -> Spectrum:
+    """Spectrum ``i`` of the stored spectra ``stored`` as the read made it, in series
+    ``data_id`` (:meth:`SpectrumSet.from_spectra` gives back what it took)."""
+    a, b = int(stored.offsets[i]), int(stored.offsets[i + 1])
+    entry = PeptideEntry(str(stored.file[i]), str(stored.sample[i]), str(stored.peptide[i]),
+                         str(stored.peptide_range[i]), int(stored.start_seq[i]),
+                         int(stored.end_seq[i]), int(stored.charge[i]),
+                         str(stored.modification[i]))
+    return Spectrum(
+        stored.mz[a:b], stored.intensity[a:b], entry, float(stored.time[i]),
+        int(stored.rep[i]), data_id=data_id, label=str(stored.label[i]),
+        spectrum_id=str(stored.spectrum_id[i]), rt=float(stored.rt[i]),
+        resolving_power=float(stored.resolving_power[i]),
+        resolving_power_mz=float(stored.resolving_power_mz[i]), role=str(stored.role[i]),
+        rt_start=float(stored.rt_start[i]), rt_end=float(stored.rt_end[i]),
+        drift_start=float(stored.drift_start[i]), drift_end=float(stored.drift_end[i]),
+        mz_calibration_ppm=float(stored.mz_calibration_ppm[i]), scans=stored.scans[i])
+
+
+def _stored_runs(stored: SpectrumSet, runs, opened, keep) -> dict | None:
+    """Per run position in ``keep``: the spectra the stored ``stored`` hold for it, as
+    :func:`_run_spectra` makes them (``(series key, unclear, makers)`` in the order read, each
+    maker giving the spectrum in the series it is called with), and the run's peak width (NaN:
+    not needed again). None when the stored spectra cannot be told apart by run (a spectrum
+    whose sample and file name no run or two runs give) or a series holds no spectrum (its
+    place in the numbering is not known)."""
+    source = stored.source or {}
+    series_of = {int(r["data_id"]): (str(r["sample"]), int(r["target"]))
+                 for r in source.get("series") or ()}
+    if set(series_of) != {int(d) for d in np.unique(stored.data_id)}:
+        return None
+    unclear = set(unclear_series(source.get("drift_gate")))
+    by_sample: dict[str, list[int]] = {}
+    for n, run in enumerate(runs):
+        by_sample.setdefault(run.sample, []).append(n)
+    owner = np.full(len(stored), -1)
+    for i, sid in enumerate(stored.spectrum_id):
+        local = split_spectrum_id(str(sid))[1]
+        sample = str(stored.sample[i])
+        found = [n for n in by_sample.get(sample, ())
+                 if local.startswith(f"{sample}/{Path(opened[n]).name}/")]
+        if len(found) != 1:
+            return None
+        owner[i] = found[0]
+    out: dict[int, tuple[list, float]] = {}
+    for n in keep:
+        made: list = []
+        for i in np.flatnonzero(owner == n):
+            d = int(stored.data_id[i])
+            maker = partial(_stored_spectrum, stored, int(i))  # called with data_id=
+            if made and made[-1][0] == series_of[d]:
+                made[-1][2].append(maker)
+            else:
+                made.append((series_of[d], d in unclear, [maker]))
+        out[n] = (made, float("nan"))
+    return out
+
+
+def _kept_part(again: tuple, runs, opened, recorded, search, gates, config
+               ) -> tuple[dict | None, dict]:
+    """For a read of only some files (:func:`_read_runs`' ``again``: the stored spectra and the
+    names of the files to read again): the stored runs kept (:func:`_stored_runs`; None: every
+    file is read, logged with the reason) and the stored read record."""
+    stored, names = again
+    source = dict(stored.source or {})
+    reading = [n for n in range(len(runs))
+               if Path(opened[n]).name in names or Path(recorded[n]).name in names]
+    why = None
+    needed = ("runs", "files", "series", "instruments", "profile") + (
+        ("mz_calibration",) if config.mz_calibration == "auto" else ())
+    if not reading:
+        why = "none of the files named is read by a run"
+    elif any(k not in source for k in needed) or any(
+            len(source[k]) != len(runs) for k in ("runs", "files", "instruments", "profile")):
+        why = "the stored record does not say what each file gave"
+    elif search is not None and search.mode == "automatic":
+        why = 'find_retention_time = "automatic" decides from every undeuterated control'
+    elif search is not None and any(search.reads(runs[n]) for n in reading):
+        why = "find_retention_time searches an undeuterated control read again"
+    elif (gates is None) != ("drift_gate" not in source):
+        why = "the drift ranges were not found the same way"
+    elif gates is not None and json.dumps(drift_record(gates, ())["ranges"], sort_keys=True) != (
+            json.dumps(source["drift_gate"].get("ranges"), sort_keys=True)):  # NaN as text
+        why = "the drift ranges measured again differ from the stored ones"
+    if why is None:
+        kept = _stored_runs(stored, runs, opened,
+                            [n for n in range(len(runs)) if n not in reading])
+        if kept is None:
+            why = "the stored spectra cannot be told apart by file"
+    if why is not None:
+        log.info("reading every file: %s", why)
+        return None, source
+    shown = sorted({Path(recorded[n]).name for n in reading})
+    log.info("reading again %d of %d files (%s%s); the other files' spectra are those stored",
+             len(set(map(str, (opened[n] for n in reading)))), len(set(map(str, opened))),
+             ", ".join(shown[:4]), ", ..." if len(shown) > 4 else "")
+    return kept, source
+
+
 def _drift_group_task(task) -> dict:
     """:func:`_drift_group` in a process of a pool (``task``: the format's spec, the file's
     path, and the arguments)."""
@@ -1647,12 +1751,20 @@ def _read_runs(
     tie: bool = True,
     elution_windows: Sequence | None = None,
     workers: int | None = None,
+    again: tuple | None = None,
 ) -> SpectrumSet:
     """:func:`read_mzml` (or another format's read) with the files to open (``opened``), the
     paths to record, and the file identities when they are already known (else they are
     computed). ``tie``: targets are read from their sample's runs only (:func:`target_applies`).
     ``workers``: the processes that read files at once (:func:`hxex.io._parallel.read_workers`;
-    None: as many as are worth it, 1: this process only); the spectra are the same."""
+    None: as many as are worth it, 1: this process only); the spectra are the same.
+    ``again`` (stored spectra of this read, the names of the files to read again; PLAN Next
+    steps 39): only those files are read, every other run's spectra taken from the stored ones,
+    and the series numbered over every run as a full read numbers them, so the spectra and the
+    record are a full read's. A full read is made instead (logged) when a file read again is an
+    undeuterated control searched by ``find_retention_time``, the search is "automatic", the
+    drift ranges measured again differ from the stored ones, or the stored spectra cannot be
+    told apart by run."""
     qualify_spectrum_id(project, "")
     if not runs or not targets:
         raise ValueError(f"read_{fmt.reader} needs at least one run and one target")
@@ -1849,30 +1961,54 @@ def _read_runs(
     # the controls' spectra grouped by series, so it takes them numbered on their own)
     done = 0
     no_noise_runs: set[int] = set()
-    first = 0 if search is None else sum(map(search.reads, runs))
-    with ExitStack() as kept:
-        files: dict[int, object] = {}  # the searched controls' files, open until searched
-        made = read(order[:first], kept=kept, files=files)
-        if search is None or automatic:
-            number(order[:first], made)
-            spectra_of = per_run
-        else:
-            spectra_of = {n: [] for n in order[:first]}
-            for n in order[:first]:
-                _number_series(made[n][0], {}, spectra_of[n])
-        if search is not None:
-            search_controls(order[:first], made, files, spectra_of)
-    if automatic:
-        moved = decide()
-        if moved:
-            reread(moved)
-    rest = read(order[first:])
-    if search is None or automatic:
-        number(order[first:], rest)
-    else:
-        made.update(rest)
+    kept_runs, stored_source = None, {}
+    if again is not None:
+        kept_runs, stored_source = _kept_part(again, runs, opened, recorded, search, gates,
+                                              config)
+    if kept_runs is not None:
+        # only the files read again; the other runs as the stored spectra hold them
+        for n in kept_runs:
+            targets_of(runs[n])  # the elution-window rows they use
+            instruments[n] = stored_source["instruments"][n]
+            profiles[n] = stored_source["profile"][n]
+            cut = stored_source.get("scan_cut") or {}
+            cut_by_run[n] = Path(recorded[n]).name in (cut.get("files") or ())
+            if Path(recorded[n]).name in (cut.get("no_noise") or ()):
+                no_noise_runs.add(n)
+            if config.find_peak:
+                aligned[n] = ((stored_source.get("find_peak") or {}).get("runs") or {})[n]
+        made = read([n for n in range(len(runs)) if n not in kept_runs])
+        made.update(kept_runs)
         number(range(len(runs)), made)
-        decide()
+        report(progress, len(runs), len(runs))
+        kept_ids = {s.spectrum_id for n in kept_runs for s in per_run[n]}
+        elution_cut.update(i for i in ((stored_source.get("fragment_peaks") or {})
+                                       .get("elution_cut") or ()) if i in kept_ids)
+    else:
+        first = 0 if search is None else sum(map(search.reads, runs))
+        with ExitStack() as kept:
+            files: dict[int, object] = {}  # the searched controls' files, open until searched
+            made = read(order[:first], kept=kept, files=files)
+            if search is None or automatic:
+                number(order[:first], made)
+                spectra_of = per_run
+            else:
+                spectra_of = {n: [] for n in order[:first]}
+                for n in order[:first]:
+                    _number_series(made[n][0], {}, spectra_of[n])
+            if search is not None:
+                search_controls(order[:first], made, files, spectra_of)
+        if automatic:
+            moved = decide()
+            if moved:
+                reread(moved)
+        rest = read(order[first:])
+        if search is None or automatic:
+            number(order[first:], rest)
+        else:
+            made.update(rest)
+            number(range(len(runs)), made)
+            decide()
     table_rows = [*edited.values(), *edited_peptides.values()]
     unused = [w for w in table_rows if w.key not in used]
     if unused:
@@ -1883,8 +2019,19 @@ def _read_runs(
                     w.file, w.sample)
     calibration = None
     if config.mz_calibration == "auto":
-        calibration = file_offsets(per_run, targets, series, picker=picker, registry=registry,
-                                   known=known_offsets)
+        if kept_runs is None:
+            calibration = file_offsets(per_run, targets, series, picker=picker,
+                                       registry=registry, known=known_offsets)
+        else:  # the stored spectra were calibrated when they were read
+            read_again = [n for n in range(len(runs)) if n not in kept_runs]
+            found = dict(zip(read_again, file_offsets(
+                [per_run[n] for n in read_again], targets, series, picker=picker,
+                registry=registry, known=known_offsets), strict=True))
+            stored_calibration = stored_source.get("mz_calibration") or []
+            calibration = [found[n] if n in found else (
+                float("nan") if stored_calibration[n]["offset_ppm"] is None
+                else float(stored_calibration[n]["offset_ppm"]),
+                int(stored_calibration[n]["n_spectra"])) for n in range(len(runs))]
         _calibration_text(calibration, recorded, picker)
     spectra = [s for part in per_run for s in part]
     origin = [n for n, part in enumerate(per_run) for _ in part]  # the run of each spectrum
@@ -1892,6 +2039,11 @@ def _read_runs(
     if not spectra:
         raise fmt.error("no spectra: no scan matched any target in any run")
     _check_unique_ids(fmt, spectra, origin, runs, opened)
+    if kept_runs is not None:  # the stored identities of the files not read again
+        identities = [stored_source["files"][n] if n in kept_runs else file_identity(p)
+                      for n, p in enumerate(opened)]
+        if fmt.extra is not None and not extra:
+            extra = {k: stored_source[k] for k in ("thermo_reader",) if k in stored_source}
     source = {
         "reader": fmt.reader,
         "project": project,
@@ -1918,7 +2070,9 @@ def _read_runs(
     if text := reduced_profile_text(profiles, cut=source["scan_cut"], setting=config.scan_cut,
                                     fragments=_has_fragments(targets)):
         log.warning("%s", text)
-    if search is not None and search.record is not None:
+    if kept_runs is not None and "retention_search" in stored_source:
+        source["retention_search"] = stored_source["retention_search"]  # the controls' own
+    elif search is not None and search.record is not None:
         found = by_target()
         for row in search.record["series"]:  # a series first read at its found time
             if row["data_id"] is None:

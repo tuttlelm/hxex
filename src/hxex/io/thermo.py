@@ -468,18 +468,19 @@ def read_thermo(
     cancel: CancelHook | None = None,
     elution_windows: Sequence | None = None,
     workers: int | None = None,
+    again: tuple | None = None,
 ) -> SpectrumSet:
     """Raw spectra of every target in every run of Thermo raw files: :func:`~hxex.io.read_mzml`
     for ``.raw`` files (the same arguments, layouts, spectrum ids and record), plus
     ``thermo_dir``, the directory of Thermo's assemblies (else ``HXEX_THERMO_DIR``; not
     recorded). The record's ``reader`` is ``'thermo'`` and ``thermo_reader`` names the
-    RawFileReader version. ``workers``: as :func:`~hxex.io.read_mzml`'s (each process starts
-    its own .NET runtime)."""
+    RawFileReader version. ``workers`` and ``again``: as :func:`~hxex.io.read_mzml`'s (each
+    process starts its own .NET runtime)."""
     opened, recorded = _run_paths(runs, data_root, record_paths)
     return _read_runs(_format(thermo_dir), runs, opened, recorded, None, record_paths, targets,
                       project=project, config=config, picker=picker, registry=registry,
                       progress=progress, cancel=cancel, elution_windows=elution_windows,
-                      workers=workers)
+                      workers=workers, again=again)
 
 
 def read_thermo_source(

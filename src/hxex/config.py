@@ -1755,9 +1755,12 @@ def read_input(
     *,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
+    again: tuple | None = None,
 ) -> SpectrumSet:
     """The raw spectra the project's ``[input]`` names (recorded, so the read can be
-    repeated), with the retention times of ``retention_times`` when it names a table. With
+    repeated), with the retention times of ``retention_times`` when it names a table.
+    ``again`` (scan formats: stored spectra of this read and the names of the files to read
+    again, :func:`hxex.stored_read.stored_or_again`): only those files are read. With
     ``spectra`` they are the spectra stored by an earlier run (:func:`load_stored_spectra`):
     the read is skipped, and the settings of the read itself (files, targets, scans) stay in
     the project file as the description of the data. The read record
@@ -1777,7 +1780,7 @@ def read_input(
         from .stored_read import PLAN_KEY, read_plan
 
         plan = read_plan(project)  # before the read: what it depends on (hxex.stored_read)
-        spectra = _read_input(project, progress=progress, cancel=cancel)
+        spectra = _read_input(project, progress=progress, cancel=cancel, again=again)
         if plan is not None:
             spectra = replace(spectra, source={**(spectra.source or {}), PLAN_KEY: plan})
     return after_read(spectra, inp, stored=inp.spectra is not None)
@@ -1820,7 +1823,7 @@ def _with_candidates(spectra: SpectrumSet, inp: InputSettings) -> SpectrumSet:
         raise ProjectError(str(exc)) from exc
 
 
-def _read_input(project: Project, *, progress=None, cancel=None) -> SpectrumSet:
+def _read_input(project: Project, *, progress=None, cancel=None, again=None) -> SpectrumSet:
     inp = project.input
     if inp.format in FOLDER_FORMATS:
         from .io import read_spectra
@@ -1843,10 +1846,11 @@ def _read_input(project: Project, *, progress=None, cancel=None) -> SpectrumSet:
     if inp.format == "mzml":
         from .io import read_mzml
 
-        return read_mzml(list(inp.runs), targets, **common)
+        return read_mzml(list(inp.runs), targets, again=again, **common)
     from .io import read_thermo
 
-    return read_thermo(list(inp.runs), targets, thermo_dir=inp.thermo_dir, **common)
+    return read_thermo(list(inp.runs), targets, thermo_dir=inp.thermo_dir, again=again,
+                       **common)
 
 
 # --- the template -------------------------------------------------------------------------------

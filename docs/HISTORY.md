@@ -11932,3 +11932,29 @@ CSVs or mzML if wanted.
     which fails without `_main_left_out`), test_stored_read.py (measure/area_fwhm keep the stored
     spectra; READER holds the readers' picking imports). Guide: inputs.md (several files at once),
     outputs.md (picker settings the read does not use).
+445. **Reading again only the files that changed** (2026-11-23; PLAN Next steps 39 (b),
+    rules agreed by the owner the same day). `hxex run` replacing a bundle, when the read plan
+    (HISTORY 397) differs only in the elution-window table's rows and/or some data files
+    changed, reads only the files named by rows added, removed, or changed and the changed
+    files (`stored_read.stored_or_again`, `files_again`; every file read when they cover every
+    run's file), and takes every other run's spectra from the bundle (`mzml._read_runs` with
+    `again`: `_stored_runs` rebuilds each kept run's spectra as `_run_spectra` makes them, series
+    key and `drift_unclear` from the stored record, so the series are numbered over every run as
+    a full read numbers them; each kept run's instrument, profile, scan cut, find_peak record,
+    m/z calibration, file identity, and fragment elution cuts are the stored ones; the
+    calibration measures only the files read). Every file is read (logged with the reason) when
+    find_retention_time is "automatic" or searches an undeuterated control read again (its
+    "suggest" record is kept otherwise), when the drift ranges, always measured again from the
+    undeuterated controls on ion-mobility data, differ from the stored ones (compared as JSON
+    text: a NaN peak position made equal records differ), or when the stored spectra cannot be
+    told apart by run or a series has no spectrum. The agreed rule "read again in every file
+    the ions whose range moved" is built as reading every file: an ion is in every file, so it
+    is nearly the same work. `hxex check`, `hxex info`, and the window's stage row say "reads N
+    data files again (names)". Checked on scratch copies of the window tables of two private
+    projects, one row moved by 0.05 min, the partial read against a full read of the same
+    settings: identical spectra and record (pooled ion-mobility mzML, a labelled file 14 s
+    instead of 28 s, an undeuterated control 17 s, its drift ranges unchanged; targeted Thermo
+    fragments, an undeuterated control 11 s instead of 28 s). Tests: test_partial_read.py (a
+    labelled file; a control whose drift range stays or moves; find_peak's search kept or
+    redone), test_stored_read.py (hxex run and hxex check after one changed row), test_stages.py
+    unchanged (one file of one: a full read). Guide: outputs.md.

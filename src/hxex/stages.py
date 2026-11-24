@@ -470,6 +470,12 @@ def _input_causes(project, bundle: Path, manifest, causes, notes, facts) -> None
             else:
                 causes["read"] += plan_differences(stored, now)
             files = changed_files(project, source)
+            if now is not None:
+                from .stored_read import files_again
+
+                again = files_again(project, stored, now, files)
+                if again:
+                    facts["read_again"] = sorted(again)
             if files:
                 n = len(files)
                 causes["read"].append(
@@ -618,6 +624,11 @@ def plan_parts(project, manifest: Mapping, standing_: Standing,
           and not facts.get("read_unknown")):
         say("read", f"reads spectra stored in {Path(project.output.bundle).name}")
         taken = True
+    elif facts.get("read_again"):
+        names = facts["read_again"]
+        say("read", f"reads {len(names)} data file{'s' if len(names) > 1 else ''} again ("
+            + ", ".join(names[:3]) + (", ..." if len(names) > 3 else "") + ")")
+        taken = False
     else:
         say("read", "reads the data files")
         taken = False

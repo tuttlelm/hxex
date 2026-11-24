@@ -171,6 +171,13 @@ same, and every data file still has the size and checksum it had when it was rea
 preset or of the fitting settings is not such a change, so the run goes straight to fitting.
 Nor is a change of `[run.picker] measure`, `area_fwhm`, or `pick`: the read does not use them,
 so the stored spectra are picked again without reading the files.
+
+When only some rows of the elution-window table changed, or only some data files, `hxex run`
+reads just those files again and takes the other files' spectra from the bundle; the spectra
+are the same as those of a full read. `hxex check` says so (`hxex run  reads 1 data file again
+(run1.mzML), ...`). Every file is read instead when the file read again is an undeuterated
+control whose drift ranges (ion-mobility data) come out differently, since those ranges apply
+to every file, or one that `find_retention_time` searches; the log says why.
 The log says either `taking the raw spectra stored in results` or why the input is read
 (`reading the input: [input] scans changed ...`), and `hxex info results` says `read  not
 repeated` when the read was skipped. A newer *hxex* whose readers changed reads again by

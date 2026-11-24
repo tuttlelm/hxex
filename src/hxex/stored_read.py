@@ -170,9 +170,26 @@ def stored_spectra_for(project, bundle):
     """The raw spectra stored in ``bundle`` (the bundle a run of ``project`` replaces), when
     reading the input again would give them: the read plan recorded with them is the project's
     now, and every data file is unchanged (see the module). They come with the steps taken after
-    a read (:func:`hxex.config.after_read`). None otherwise, with one log line saying why the
-    input is read."""
-    from .config import ProjectError, after_read, load_stored_spectra, stored_spectra_source
+    a read (:func:`hxex.config.after_read`). None otherwise (a read of only some files
+    included), with one log line saying why the input is read."""
+    taken = stored_or_again(project, bundle)
+    return None if taken is None or taken[1] is not None else taken[0]
+
+
+def stored_or_again(project, bundle):
+    """What a run of ``project`` replacing ``bundle`` takes from it: ``(spectra, None)``, the
+    stored spectra as :func:`stored_spectra_for` gives them; ``(stored, names)``, the raw
+    spectra stored and the names of the files to read again, when only some files' part of the
+    read changed (PLAN Next steps 39 b: the rows of the elution-window table naming them, or the
+    files themselves) and the input is a scan format (:func:`hxex.config.read_input` with
+    ``again``; the read itself may still read every file, and says why); None: the input is
+    read, with one log line saying why."""
+    from .config import (
+        ProjectError,
+        after_read,
+        load_stored_spectra,
+        stored_spectra_source,
+    )
 
     try:
         source = stored_spectra_source(bundle)
@@ -191,17 +208,41 @@ def stored_spectra_for(project, bundle):
         log.info("reading the input: what it depends on could not be worked out from the "
                  "settings alone")
         return None
-    if differ := plan_differences(stored, now):
-        log.info("reading the input: %s changed since the spectra stored in %s were read",
-                 _listed(differ), bundle)
+    differ = plan_differences(stored, now)
+    changed = changed_files(project, source)
+    if not differ and not changed:
+        log.info("taking the raw spectra stored in %s: the input settings and files are those "
+                 "they were read from (hxex run --fresh reads the input again)", bundle)
+        return after_read(load_stored_spectra(bundle), project.input, stored=True), None
+    names = files_again(project, stored, now, changed)
+    if names:
+        log.info("reading again the files whose part of the read changed since the spectra "
+                 "stored in %s were read (%s)", bundle, _listed(differ + changed))
+        return load_stored_spectra(bundle), frozenset(names)
+    log.info("reading the input: %s changed since the spectra stored in %s were read",
+             _listed(differ + changed), bundle)
+    return None
+
+
+def files_again(project, stored: dict, now: dict, changed: list[str]) -> set[str] | None:
+    """The names of the files a run of ``project`` reads again when only they changed (read
+    plans ``stored`` and ``now``; ``changed``, :func:`changed_files`): those named by
+    elution-window rows added, removed, or changed, and the data files that changed; None when
+    anything else of the plan changed, the input is a folder format, a data file is missing,
+    the record of the files cannot be compared, or every file is to be read again."""
+    from .config import FOLDER_FORMATS
+
+    parts = {k for k in set(stored) | set(now) if stored.get(k) != now.get(k)}
+    if not parts <= {"elution_windows"} or project.input.format in FOLDER_FORMATS:
         return None
-    if changed := changed_files(project, source):
-        log.info("reading the input: %s changed since the spectra stored in %s were read",
-                 _listed(changed), bundle)
+    if any(c.endswith("(not found)") or c == "the record of the files read" for c in changed):
         return None
-    log.info("taking the raw spectra stored in %s: the input settings and files are those "
-             "they were read from (hxex run --fresh reads the input again)", bundle)
-    return after_read(load_stored_spectra(bundle), project.input, stored=True)
+    rows = lambda plan: {json.dumps(r, sort_keys=True) for r in plan.get("elution_windows") or ()}  # noqa: E731
+    moved = rows(stored) ^ rows(now)
+    names = {json.loads(r)["file"] for r in moved} | {Path(c).name for c in changed}
+    if {Path(r.path).name for r in project.input.runs} <= names:
+        return None  # every file: a read of them all
+    return names
 
 
 def _listed(items: list[str], most: int = 4) -> str:

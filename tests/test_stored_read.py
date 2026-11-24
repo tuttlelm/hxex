@@ -188,3 +188,61 @@ def test_the_reading_code_holds_what_the_readers_import_from_picking():
                     continue  # the processes' thread setting, not what a read gives
                 name = module.removeprefix("hxex.").replace(".", "/") + ".py"
                 assert name in READER, f"{path.name} imports {alias.name} from {name}"
+
+
+def test_a_changed_window_row_reads_its_file_again_only(tmp_path, capsys):
+    """One row of the elution-window table changed: hxex run reads that file again and takes
+    the other file's spectra from the bundle (PLAN Next steps 39 b); the spectra are those of
+    a fresh run."""
+    from hxex.io.elution_windows import peptide_label
+    from hxex.spectra import PeptideEntry
+    from test_cli import FAST_RUN
+    from test_mzml import time_course, write_mzml
+
+    for k in (1, 2):
+        write_mzml(tmp_path / f"run{k}.mzML", time_course(n=6, step=0.5 + 0.01 * k))
+    (tmp_path / "peptides.csv").write_text(
+        "file,sample,peptide,peptide_range,start_seq,end_seq,charge,rt_start,rt_end\n"
+        f"x,,{PEPTIDE},0001-0010,1,10,2,0,10\n")
+    label = peptide_label(PeptideEntry("x", "WT", PEPTIDE, "0001-0010", 1, 10, 2))
+    windows = tmp_path / "windows.csv"
+    windows.write_text(f"sample,file,peptide,rt_start,rt_end\nWT,run1.mzML,{label},0.5,2.0\n")
+    path = tmp_path / "hxex.toml"
+    path.write_text(f"""
+project = "cli"
+
+[input]
+format = "mzml"
+peptides = "peptides.csv"
+rt_elution_windows = "windows.csv"
+
+[[input.runs]]
+path = "run1.mzML"
+sample = "WT"
+time = "60 s"
+
+[[input.runs]]
+path = "run2.mzML"
+sample = "WT"
+time = "120 s"
+
+[output]
+bundle = "out"
+figures = false
+{FAST_RUN}
+""")
+    assert cli.main(["run", str(path)]) == 0
+    windows.write_text(f"sample,file,peptide,rt_start,rt_end\nWT,run1.mzML,{label},1.0,2.0\n")
+    assert cli.main(["check", str(path)]) == 0
+    assert "reads 1 data file again (run1.mzML)" in capsys.readouterr().out
+    log = _run(path, capsys)
+    assert "reading again 1 of 2 files (run1.mzML)" in log and TAKEN not in log
+    with open_bundle(tmp_path / "out") as b:
+        part = b.spectra()
+    assert cli.main(["run", str(path), "--fresh"]) == 0
+    with open_bundle(tmp_path / "out") as b:
+        fresh = b.spectra()
+    assert list(part.spectrum_id) == list(fresh.spectrum_id)
+    np.testing.assert_array_equal(part.intensity, fresh.intensity)
+    np.testing.assert_array_equal(part.mz, fresh.mz)
+    assert part.source["elution_windows"] == fresh.source["elution_windows"]

@@ -2276,6 +2276,9 @@ Planned, not built:
    full read); a changed undeuterated control with ion-mobility bins -> the drift ranges again,
    and the ions whose range moved read again in every file; the retention search on, or any
    other change -> a full read. The read itself is faster since HISTORY 444 (files in parallel).
+   (b) BUILT 2026-11-23 (HISTORY 445): the
+   ions whose drift range moved are read again by reading every file (an ion is in every file,
+   so this is nearly the same work, and simpler).
 40. **Where a project stands, and one command that brings it up to date** (owner, 2026-11-20:
    be intentional about run versus resume; design agreed in outline, nothing built).
    - *Why.* `hxex resume` was built to add the bootstrap after the fits; each addition since
