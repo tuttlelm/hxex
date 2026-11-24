@@ -635,6 +635,14 @@ instead, with a warning naming it; converting the file again makes it fast again
 start time or MS level is empty is refused naming the scan: the file is damaged, so convert it
 again.
 
+Several files are read at once, each in a process of its own: up to 8, never more than the
+computer has processors, and only as many as its free memory holds (each process needs about
+six times the size of the file it reads). Files of less than 100 MB in all are read one after
+the other. The spectra are the same either way. Measured on this machine: 17 Thermo raw files
+of a targeted experiment read in 35 s instead of about 3 minutes, 45 Orbitrap raw files in 3
+minutes instead of 22, and 100 ion-mobility mzML files in under 1.5 minutes instead of 12. The
+processes together may need several GB of memory (up to 10 GB on these datasets).
+
 ### The peptide table
 
 A CSV file (UTF-8; the rules under [Tables](#things-every-format-shares) apply). Required

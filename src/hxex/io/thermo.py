@@ -449,6 +449,7 @@ def _format(thermo_dir: str | Path | None) -> _ScanFormat:
     return _ScanFormat(
         "thermo", "a Thermo raw", lambda p: ThermoFile(p, thermo_dir=thermo_dir), ThermoError,
         extra=lambda f: {"thermo_reader": f.reader_version},
+        spec=(__name__, "_format", (None if thermo_dir is None else str(thermo_dir),)),
     )
 
 
@@ -466,16 +467,19 @@ def read_thermo(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
     elution_windows: Sequence | None = None,
+    workers: int | None = None,
 ) -> SpectrumSet:
     """Raw spectra of every target in every run of Thermo raw files: :func:`~hxex.io.read_mzml`
     for ``.raw`` files (the same arguments, layouts, spectrum ids and record), plus
     ``thermo_dir``, the directory of Thermo's assemblies (else ``HXEX_THERMO_DIR``; not
     recorded). The record's ``reader`` is ``'thermo'`` and ``thermo_reader`` names the
-    RawFileReader version."""
+    RawFileReader version. ``workers``: as :func:`~hxex.io.read_mzml`'s (each process starts
+    its own .NET runtime)."""
     opened, recorded = _run_paths(runs, data_root, record_paths)
     return _read_runs(_format(thermo_dir), runs, opened, recorded, None, record_paths, targets,
                       project=project, config=config, picker=picker, registry=registry,
-                      progress=progress, cancel=cancel, elution_windows=elution_windows)
+                      progress=progress, cancel=cancel, elution_windows=elution_windows,
+                      workers=workers)
 
 
 def read_thermo_source(
@@ -487,10 +491,11 @@ def read_thermo_source(
     thermo_dir: str | Path | None = None,
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
+    workers: int | None = None,
 ) -> SpectrumSet:
     """Repeat the read recorded in the ``source`` of spectra made by :func:`read_thermo`, as
     :func:`~hxex.io.read_mzml_source` (files found by name in ``directory`` or at their
     recorded paths, identities checked, ``on_change``), with ``thermo_dir`` as for
-    :func:`read_thermo`."""
+    :func:`read_thermo` (and ``workers``)."""
     return _repeat_read(_format(thermo_dir), source, directory=directory, data_root=data_root,
-                        on_change=on_change, progress=progress, cancel=cancel)
+                        on_change=on_change, progress=progress, cancel=cancel, workers=workers)

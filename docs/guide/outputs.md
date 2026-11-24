@@ -169,6 +169,8 @@ again. Nothing has changed when the `[input]` settings, the peptide table, the e
 table, the FASTA files, and, for mzML and Thermo files, the `[run.picker]` settings are the
 same, and every data file still has the size and checksum it had when it was read. A change of
 preset or of the fitting settings is not such a change, so the run goes straight to fitting.
+Nor is a change of `[run.picker] measure`, `area_fwhm`, or `pick`: the read does not use them,
+so the stored spectra are picked again without reading the files.
 The log says either `taking the raw spectra stored in results` or why the input is read
 (`reading the input: [input] scans changed ...`), and `hxex info results` says `read  not
 repeated` when the read was skipped. A newer *hxex* whose readers changed reads again by

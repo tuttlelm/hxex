@@ -80,7 +80,7 @@ def read_plan(project) -> dict | None:
                 plan["fasta"] = [file_identity(p) for p in _fasta_files(Path(inp.data_dir))]
         else:
             plan["targets"] = [t.to_dict() for t in scan_targets(project)]
-            plan["picker"] = project.run.picker.to_dict()
+            plan["picker"] = read_picker(project.run.picker)
             plan["registry"] = project.run.registry.to_dict()
             plan["data_root"] = _resolved(inp.data_root)
             if inp.rt_elution_windows is not None:
@@ -97,6 +97,22 @@ def read_plan(project) -> dict | None:
     except Exception as exc:  # noqa: BLE001 - the read reports the problem itself
         log.debug("no read plan: %s", exc)
         return None
+
+
+def read_picker(picker) -> dict:
+    """The ``[run.picker]`` settings a scan read uses (as :meth:`PickerConfig.to_dict`): not the
+    bin value (``measure``, ``area_fwhm``: the read picks one spectrum's peaks, for the file's
+    m/z offset, by their heights) nor which of the picks that take each window's tallest apex
+    (``pick``: ``'peak'`` and ``'profile_fit'`` read alike, written ``'apex'``). A change of
+    these picks the stored spectra again, without reading the files."""
+    from .picking.config import APEX_PICKS
+
+    out = picker.to_dict()
+    for key in ("measure", "area_fwhm"):
+        out.pop(key, None)
+    if out.get("pick") in APEX_PICKS:
+        out["pick"] = "apex"
+    return out
 
 
 def plan_differences(stored: dict, now: dict) -> list[str]:

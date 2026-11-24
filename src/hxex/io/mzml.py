@@ -42,7 +42,7 @@ import re
 import zlib
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import ExitStack
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from functools import partial
 from pathlib import Path, PureWindowsPath
 from xml.etree import ElementTree as ET
@@ -65,6 +65,7 @@ from ..spectra import (
     split_spectrum_id,
     time_point,
 )
+from ._parallel import map_tasks, read_workers
 from .drift_gate import (
     SECOND_PEAK,
     DriftProfiles,
@@ -860,11 +861,10 @@ def _resample(mz: np.ndarray, y: np.ndarray, grid: np.ndarray, gap_factor: float
     if len(mz) < 2:
         return np.zeros(len(grid))
     out = np.interp(grid, mz, y, left=0.0, right=0.0)
-    step = np.diff(mz)
     is_gap = _gaps(mz, gap_factor)
     if is_gap.any():
         j = np.searchsorted(mz, grid, side="right") - 1  # interval of each grid point
-        inside = (j >= 0) & (j < len(step))
+        inside = (j >= 0) & (j < len(mz) - 1)
         hit = np.zeros(len(grid), dtype=bool)
         hit[inside] = is_gap[j[inside]] & (grid[inside] > mz[j[inside]]) & (
             grid[inside] < mz[j[inside] + 1])
@@ -874,10 +874,16 @@ def _resample(mz: np.ndarray, y: np.ndarray, grid: np.ndarray, gap_factor: float
 
 def _gaps(mz: np.ndarray, gap_factor: float) -> np.ndarray:
     """For each interval of ``mz``, whether it is a left-out stretch (see :func:`_resample`)."""
-    step = np.diff(mz)
-    before = np.concatenate([[np.inf], step[:-1]])
-    after = np.concatenate([step[1:], [np.inf]])
-    return (step > gap_factor * before) & (step > gap_factor * after)
+    step = mz[1:] - mz[:-1]
+    if gap_factor <= 0:  # the first and last intervals can be gaps too (not a setting's value)
+        before = np.concatenate([[np.inf], step[:-1]])
+        after = np.concatenate([step[1:], [np.inf]])
+        return (step > gap_factor * before) & (step > gap_factor * after)
+    out = np.zeros(len(step), dtype=bool)  # the first and last have no neighbour on one side
+    if len(step) > 2:
+        mid = step[1:-1]
+        out[1:-1] = (mid > gap_factor * step[:-2]) & (mid > gap_factor * step[2:])
+    return out
 
 
 def _common_grid(grids: Sequence[np.ndarray], gap_factor: float) -> np.ndarray:
@@ -885,21 +891,28 @@ def _common_grid(grids: Sequence[np.ndarray], gap_factor: float) -> np.ndarray:
     the points of the others where it has no data (outside its range or inside its left-out
     stretches). Scans of one acquisition have the same spacing but grids offset by up to half a
     step, so the union of their points would be several times denser than any scan (which
-    changes how many points a picking window holds); one grid keeps the original spacing."""
+    changes how many points a picking window holds); one grid keeps the original spacing.
+    The grids are sorted (every reader gives sorted m/z)."""
     order = sorted(range(len(grids)), key=lambda i: -len(grids[i]))
     grid = np.asarray(grids[order[0]], float)
+    gaps = None  # the grid's left-out stretches, measured again only when the grid grows
     for i in order[1:]:
         x = np.asarray(grids[i], float)
         if len(grid) < 2:
             grid = np.unique(np.concatenate([grid, x]))
+            gaps = None
             continue
+        if gaps is None:
+            gaps = _gaps(grid, gap_factor)
         j = np.searchsorted(grid, x)
         inside = (j > 0) & (j < len(grid))
         covered = np.zeros(len(x), dtype=bool)
-        covered[inside] = ~_gaps(grid, gap_factor)[j[inside] - 1]
-        covered |= np.isin(x, grid)
-        if (~covered).any():
+        covered[inside] = ~gaps[j[inside] - 1]
+        on = j < len(grid)  # a point the grid has already (j is where it would go)
+        covered[on] |= grid[j[on]] == x[on]
+        if not covered.all():
             grid = np.unique(np.concatenate([grid, x[~covered]]))
+            gaps = None
     return grid
 
 
@@ -1272,10 +1285,18 @@ def _sample_log(times: np.ndarray, n: int) -> np.ndarray:
     return np.array(picks[:n] if len(picks) > n else picks, dtype=np.int64)
 
 
-def _target_window(target: MzmlTarget, picker: PickerConfig, registry, margin: float):
+def _target_window(target: MzmlTarget, picker: PickerConfig, registry, margin: float,
+                   plans: dict | None = None):
+    """The m/z a target's scans are cut to: its predicted bins plus ``margin`` either side.
+    ``plans``: the bin plans already made, by ion (kept for the next target)."""
     e = target.entry
-    plan = plan_bins(e.peptide, e.charge, modification=e.modification, config=picker,
-                     registry=registry)
+    key = (e.peptide, e.charge, e.modification)
+    plan = None if plans is None else plans.get(key)
+    if plan is None:
+        plan = plan_bins(e.peptide, e.charge, modification=e.modification, config=picker,
+                         registry=registry)
+        if plans is not None:
+            plans[key] = plan
     return float(plan.pred_mz.min()) - margin, float(plan.pred_mz.max()) + margin
 
 
@@ -1342,6 +1363,7 @@ def read_mzml(
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
     elution_windows: Sequence | None = None,
+    workers: int | None = None,
 ) -> SpectrumSet:
     """Raw spectra of every target in its runs (see the module docstring for the two layouts):
     a target whose entry names a sample is read from the runs of that sample only, one with an
@@ -1376,11 +1398,16 @@ def read_mzml(
     find_fragment_peak, and stay in their series. The rows used are recorded
     (``elution_windows``); a row that names no peptide or ion read from its file is warned
     about.
+
+    ``workers``: how many processes read files at once (None: up to
+    :data:`hxex.io._parallel.MAX_READ_WORKERS` when the files are large enough to be worth it;
+    1: this process only). The spectra are the same whatever it is.
     """
     opened, recorded = _run_paths(runs, data_root, record_paths)
     return _read_runs(_MZML, runs, opened, recorded, None, record_paths, targets,
                       project=project, config=config, picker=picker, registry=registry,
-                      progress=progress, cancel=cancel, elution_windows=elution_windows)
+                      progress=progress, cancel=cancel, elution_windows=elution_windows,
+                      workers=workers)
 
 
 # the record's mark that targets are tied to runs by their entry's sample (reads recorded
@@ -1435,16 +1462,31 @@ class _ScanFormat:
     """A format of scan files read with runs and targets: the ``reader`` name recorded in the
     spectra's source, ``what`` (for messages), ``open`` (path -> a context manager with
     ``path``, ``scans()`` and ``read_scans()``, as :class:`MzmlFile`), the ``error`` raised, and
-    ``extra`` (open file -> more for the record, called for the first file)."""
+    ``extra`` (open file -> more for the record, called for the first file). ``spec`` (module,
+    function name, arguments): how a process of a pool makes the format again, to read files in
+    parallel (:mod:`hxex.io._parallel`); None: files are read in this process only."""
 
     reader: str
     what: str
     open: object
     error: type
     extra: object = None
+    spec: tuple | None = None
 
 
-_MZML = _ScanFormat("mzml", "an mzML", MzmlFile, MzmlError)
+def _mzml_format() -> _ScanFormat:
+    return _MZML
+
+
+_MZML = _ScanFormat("mzml", "an mzML", MzmlFile, MzmlError, spec=(__name__, "_mzml_format", ()))
+
+
+def _format_from(spec: tuple) -> _ScanFormat:
+    """The format a :attr:`_ScanFormat.spec` names (in a process of a pool)."""
+    import importlib
+
+    module, name, args = spec
+    return getattr(importlib.import_module(module), name)(*args)
 
 
 class _SharedFile:
@@ -1490,6 +1532,103 @@ def _same_file(numbers: Sequence[int], opened: Sequence[Path]) -> list[list[int]
 SCAN_READERS = ("mzml", "thermo")
 
 
+@dataclass
+class _GroupRead:
+    """What one file gives for its runs (:func:`_read_group`): per run position, its spectra
+    before their series are numbered and its peak width (``made``); the file's record
+    (instrument, profile scans, whether its fragments are fitted through the per-scan cut,
+    whether it is reduced without recorded noise; None when only some targets were read
+    again); the format's ``extra`` for the record when asked for; per run, what find_peak's
+    search did (``aligned``); and the spectra whose fragment peak the acquisition cut."""
+
+    made: dict = field(default_factory=dict)
+    record: tuple | None = None
+    extra: dict | None = None
+    aligned: dict = field(default_factory=dict)
+    elution_cut: set = field(default_factory=set)
+    offsets: dict = field(default_factory=dict)  # the m/z calibration's, by spectrum
+
+
+def _read_group(f, members, runs, member_targets, windows, common, *, only=None,
+                scan_cuts=None, extra=None, fragments: bool = False, each=None,
+                calibrate=None) -> _GroupRead:
+    """The spectra of the runs ``members`` (positions; ``runs`` and ``member_targets`` theirs),
+    which all read the open file ``f`` (a :class:`_SharedFile` made with ``windows``):
+    :func:`_run_spectra` of each, in order, with ``common`` (its keyword arguments shared by
+    every run). With ``only`` (per run, the target positions read again) the file's record is
+    not taken and each run's scan cut is ``scan_cuts``'s; else the record is taken first.
+    ``extra``: the format's, called on the file. ``each(n, stage)``: called before
+    (``'start'``) and after (``'done'``) each run. ``calibrate`` (the read's targets, with
+    ``mz_calibration = "auto"``): each MS1 peptide spectrum's m/z offset is measured as the
+    file is read (:func:`_spectrum_offset`, for :func:`file_offsets`)."""
+    config = common["config"]
+    out = _GroupRead()
+    if extra is not None:
+        out.extra = extra(f)
+    cut = None
+    if only is None:
+        instrument, profile = instrument_record(f), profile_record(f)
+        cut, unrecorded = config.scan_cut is True, False
+        if config.scan_cut == "auto" and (profile or {}).get("reduced") and fragments:
+            cut = records_noise(f)
+            unrecorded = not cut
+        out.record = (instrument, profile, cut, unrecorded)
+    for n, run, targets in zip(members, runs, member_targets, strict=True):
+        if each is not None:
+            each(n, "start")
+        alignment = {} if only is None and config.find_peak else None
+        out.made[n] = _run_spectra(
+            f, run, targets, windows, only=None if only is None else only[n],
+            scan_cut=cut if only is None else scan_cuts[n], memo=f.memo, alignment=alignment,
+            elution_cut=out.elution_cut if config.find_fragment_peak else None, **common)
+        if alignment is not None:
+            out.aligned[n] = alignment
+        if calibrate is not None:
+            picker, registry = common["picker"], common["registry"]
+            plans: dict[tuple, object] = {}
+            measured: dict[tuple, float | None] = {}
+            for key, _, mine in out.made[n][0]:
+                if _gated_kind(calibrate[key[1]]):
+                    for make in mine:
+                        spectrum = make(data_id=-1)
+                        out.offsets[_offset_key(spectrum)] = _spectrum_offset(
+                            spectrum, picker, registry, plans, measured)
+        if each is not None:
+            each(n, "done")
+    return out
+
+
+def _read_group_task(task) -> _GroupRead:
+    """:func:`_read_group` in a process of a pool: ``task`` is the format's spec, the file's
+    path, and the arguments (with ``want_extra``: whether to call the format's ``extra``)."""
+    spec, path, args, kwargs = task
+    fmt = _format_from(spec)
+    want = kwargs.pop("want_extra")
+    with fmt.open(path) as opened_file:
+        return _read_group(_SharedFile(opened_file, args[3]), *args,
+                           extra=fmt.extra if want else None, **kwargs)
+
+
+def _drift_group(f, members, runs, member_targets, windows, gated, kwargs, each=None) -> dict:
+    """:func:`_drift_found` of each undeuterated control ``members`` (positions; ``runs`` and
+    ``member_targets`` theirs) in the open file ``f`` (a :class:`_SharedFile` made with
+    ``windows``), in order; ``each(n)`` is called before each."""
+    out = {}
+    for n, run, targets in zip(members, runs, member_targets, strict=True):
+        if each is not None:
+            each(n)
+        out[n] = _drift_found(f, run, targets, windows, gated, **kwargs)
+    return out
+
+
+def _drift_group_task(task) -> dict:
+    """:func:`_drift_group` in a process of a pool (``task``: the format's spec, the file's
+    path, and the arguments)."""
+    spec, path, args = task
+    with _format_from(spec).open(path) as opened_file:
+        return _drift_group(_SharedFile(opened_file, args[3]), *args)
+
+
 def _read_runs(
     fmt: _ScanFormat,
     runs: Sequence[MzmlRun],
@@ -1507,10 +1646,13 @@ def _read_runs(
     cancel: CancelHook | None,
     tie: bool = True,
     elution_windows: Sequence | None = None,
+    workers: int | None = None,
 ) -> SpectrumSet:
     """:func:`read_mzml` (or another format's read) with the files to open (``opened``), the
     paths to record, and the file identities when they are already known (else they are
-    computed). ``tie``: targets are read from their sample's runs only (:func:`target_applies`)."""
+    computed). ``tie``: targets are read from their sample's runs only (:func:`target_applies`).
+    ``workers``: the processes that read files at once (:func:`hxex.io._parallel.read_workers`;
+    None: as many as are worth it, 1: this process only); the spectra are the same."""
     qualify_spectrum_id(project, "")
     if not runs or not targets:
         raise ValueError(f"read_{fmt.reader} needs at least one run and one target")
@@ -1518,7 +1660,9 @@ def _read_runs(
         number_replicates(runs)  # two replicates of one sample and point with one rep
     except ValueError as exc:
         raise fmt.error(str(exc)) from None
-    windows = [_target_window(t, picker, registry, config.mz_margin) for t in targets]
+    window_plans: dict[tuple, object] = {}
+    windows = [_target_window(t, picker, registry, config.mz_margin, window_plans)
+               for t in targets]
     series: dict[tuple[str, int], int] = {}  # (sample, series target) -> data_id
     joins = series_targets(targets, runs, tie)
     per_run: list[list[Spectrum]] = [[] for _ in runs]
@@ -1560,15 +1704,18 @@ def _read_runs(
             MzmlFile(p).ion_mobility for p in dict.fromkeys(opened)):
         gates, gate_notes = _drift_profiles(fmt, runs, opened, targets, windows, config=config,
                                             tie=tie, picker=picker, registry=registry,
-                                            cancel=cancel, targets_of=targets_of)
+                                            cancel=cancel, targets_of=targets_of,
+                                            workers=workers)
     unclear: set[int] = set()
     unclear_of = None  # the set the series without a clear drift range are added to
     if gates is not None:
         common.update(gates=gates)
         unclear_of = unclear
-    elution_cut: set[str] = set()
-    if config.find_fragment_peak:
-        common.update(elution_cut=elution_cut)
+    elution_cut: set[str] = set()  # the spectra whose fragment peak the acquisition cut
+    fragments = _has_fragments(targets)
+    # the m/z calibration's offsets, measured as each file is read (file_offsets)
+    calibrate = list(targets) if config.mz_calibration == "auto" else None
+    known_offsets: dict[tuple, float | None] = {}
     # finding retention times from the exact m/z (find_retention_time): the undeuterated
     # controls are read first and searched while they are open, wherever the project lists
     # them; "automatic" then reads the other runs' series found elsewhere at their found time
@@ -1596,39 +1743,64 @@ def _read_runs(
         ``only`` (per run, the target positions read again) nothing else is taken; else each
         file's record (instrument, profile scans, scan cut) is taken for each of its runs.
         ``kept`` (an ExitStack): the files are left open in it (their scans not kept), each
-        in ``files`` under the position of every run that reads it."""
-        nonlocal extra, done
+        in ``files`` under the position of every run that reads it. Files are read in
+        parallel (``workers``) when nothing is kept open and every target is read."""
+        nonlocal done
         out = {}
-        for members in _same_file(numbers, opened):
+        groups = _same_file(numbers, opened)
+        member_targets = [[targets_of(runs[n]) for n in members] for members in groups]
+        scan_cuts = (None if only is None
+                     else {n: cut_by_run.get(n, config.scan_cut is True) for n in numbers})
+
+        def take(members, got):
+            nonlocal extra
+            if got.extra is not None and not extra:
+                extra = got.extra
+            if got.record is not None:
+                instrument, profile, cut, unrecorded = got.record
+                for n in members:
+                    instruments[n], profiles[n], cut_by_run[n] = instrument, profile, cut
+                    if unrecorded:
+                        no_noise_runs.add(n)
+            out.update(got.made)
+            aligned.update(got.aligned)
+            elution_cut.update(got.elution_cut)
+            known_offsets.update(got.offsets)
+
+        def each(n, stage):
+            nonlocal done
+            if stage == "start":
+                check_cancel(cancel)
+            elif only is None:
+                done += 1
+                report(progress, done, len(runs))
+
+        n_workers = (1 if kept is not None or only is not None else
+                     read_workers([opened[m[0]] for m in groups], workers, fmt.spec is not None))
+        if n_workers > 1:
+            def got(i, result):
+                nonlocal done
+                take(groups[i], result)
+                done += len(groups[i])
+                report(progress, done, len(runs))
+
+            map_tasks(_read_group_task, [
+                (fmt.spec, opened[members[0]],
+                 (members, [runs[n] for n in members], member_targets[i], windows, common),
+                 dict(want_extra=fmt.extra is not None and not extra and i == 0,
+                      fragments=fragments, calibrate=calibrate))
+                for i, members in enumerate(groups)], n_workers, got, cancel)
+            return out
+        for i, members in enumerate(groups):
             with ExitStack() as group:
                 opened_file = (kept or group).enter_context(fmt.open(opened[members[0]]))
                 if files is not None:
                     files.update(dict.fromkeys(members, opened_file))
-                f = _SharedFile(opened_file, windows)
-                if only is None:
-                    if fmt.extra is not None and not extra:
-                        extra = fmt.extra(f)
-                    instrument, profile = instrument_record(f), profile_record(f)
-                    cut, unrecorded = config.scan_cut is True, False
-                    if (config.scan_cut == "auto" and (profile or {}).get("reduced")
-                            and _has_fragments(targets)):
-                        cut = records_noise(f)
-                        unrecorded = not cut
-                for n in members:
-                    check_cancel(cancel)
-                    if only is None:
-                        instruments[n], profiles[n], cut_by_run[n] = instrument, profile, cut
-                        if unrecorded:
-                            no_noise_runs.add(n)
-                    out[n] = _run_spectra(f, runs[n], targets_of(runs[n]), windows,
-                                          only=None if only is None else only[n],
-                                          scan_cut=cut_by_run.get(n, config.scan_cut is True),
-                                          memo=f.memo, alignment=(
-                                              aligned.setdefault(n, {}) if only is None
-                                              and config.find_peak else None), **common)
-                    if only is None:
-                        done += 1
-                        report(progress, done, len(runs))
+                take(members, _read_group(
+                    _SharedFile(opened_file, windows), members, [runs[n] for n in members],
+                    member_targets[i], windows, common, only=only, scan_cuts=scan_cuts,
+                    extra=(fmt.extra if fmt.extra is not None and not extra and only is None
+                           else None), fragments=fragments, each=each, calibrate=calibrate))
         return out
 
     aligned: dict[int, dict] = {}  # per run: what find_peak's search did (find_peaks)
@@ -1711,7 +1883,8 @@ def _read_runs(
                     w.file, w.sample)
     calibration = None
     if config.mz_calibration == "auto":
-        calibration = file_offsets(per_run, targets, series, picker=picker, registry=registry)
+        calibration = file_offsets(per_run, targets, series, picker=picker, registry=registry,
+                                   known=known_offsets)
         _calibration_text(calibration, recorded, picker)
     spectra = [s for part in per_run for s in part]
     origin = [n for n, part in enumerate(per_run) for _ in part]  # the run of each spectrum
@@ -2264,13 +2437,14 @@ def _summed(scans, lo: float, hi: float, gate, config: MzmlConfig):
     for s in scans:
         if s.binned is not None and gate is not None:  # its drift range only
             m, y, d = s.binned
-            d = drift_times(d)
-            inside = (m >= lo) & (m <= hi) & (d >= gate[0]) & (d <= gate[1])
+            near = np.flatnonzero((m >= lo) & (m <= hi))
+            dn = drift_times(d[near])
+            inside = near[(dn >= gate[0]) & (dn <= gate[1])]
             parts.append(sum_mobility_bins(m[inside], y[inside]))
             gated = True
             continue
-        inside = (s.mz >= lo) & (s.mz <= hi)
-        parts.append((s.mz[inside], s.intensity[inside]))
+        cut = _between(s.mz, lo, hi)
+        parts.append((s.mz[cut], s.intensity[cut]))
     centroid = all(s.centroid for s in scans)
     if len(parts) == 1:
         mz, y = parts[0]
@@ -2282,6 +2456,14 @@ def _summed(scans, lo: float, hi: float, gate, config: MzmlConfig):
     mz, y = np.asarray(mz, float)[order_mz], np.asarray(y, float)[order_mz]
     weight = np.array([float(np.sum(p[1])) for p in parts])
     return mz, y, weight, gated
+
+
+def _between(mz: np.ndarray, lo: float, hi: float) -> slice:
+    """The points of the sorted ``mz`` from ``lo`` to ``hi`` (inclusive) as a slice: the
+    points ``(mz >= lo) & (mz <= hi)`` selects, compared in ``mz``'s own type as that is."""
+    lo, hi = mz.dtype.type(lo), mz.dtype.type(hi)
+    return slice(int(np.searchsorted(mz, lo, side="left")),
+                 int(np.searchsorted(mz, hi, side="right")))
 
 
 def _number_series(made, series: dict[tuple[str, int], int], spectra: list,
@@ -2385,7 +2567,8 @@ def _scans_offset(f, items, targets, windows, *, config, picker, registry,
 
 def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[Path],
                     targets, windows, *, config, tie, picker, registry, cancel,
-                    targets_of=None) -> tuple[dict[tuple, DriftRange], dict]:
+                    targets_of=None, workers: int | None = None
+                    ) -> tuple[dict[tuple, DriftRange], dict]:
     """The drift range of every peptide ion with an undeuterated control and signal
     (``drift_gate``, :mod:`hxex.io.drift_gate`): its scans in every undeuterated control (a run
     with a fixed time), as its spectra would take them, read with their drift times, on m/z
@@ -2396,21 +2579,32 @@ def _drift_profiles(fmt: _ScanFormat, runs: Sequence[MzmlRun], opened: Sequence[
     the scans of the window the spectrum is read with (a find_peak target's: those around its
     ``rt``, :func:`_drift_found`); None: ``targets`` as they are. Also
     returns what the read record keeps beside the ranges: the run's
-    position scatter and the files' offsets (:func:`hxex.io.drift_gate.drift_record`)."""
+    position scatter and the files' offsets (:func:`hxex.io.drift_gate.drift_record`).
+    ``workers``: as :func:`_read_runs`'s (the files are read in parallel when it is worth it)."""
     gated = {i for i, t in enumerate(targets) if _gated_kind(t)}
     profiles = DriftProfiles()
     controls = [n for n, run in enumerate(runs) if run.role == UNDEUT and run.fixed]
     found_in: dict[int, list] = {}  # per run: (key, profile) in the order of its targets
     offsets: dict[str, float] = {}
-    for members in _same_file(controls, opened):
-        with fmt.open(opened[members[0]]) as opened_file:
-            f = _SharedFile(opened_file, windows)
-            for n in members:
-                check_cancel(cancel)
-                found_in[n], offsets[_run_file_name(opened[n])] = _drift_found(
-                    f, runs[n], targets if targets_of is None else targets_of(runs[n]),
-                    windows, gated, config=config, tie=tie, picker=picker,
-                    registry=registry)
+    groups = _same_file(controls, opened)
+    kwargs = dict(config=config, tie=tie, picker=picker, registry=registry)
+    args = [(members, [runs[n] for n in members],
+             [targets if targets_of is None else targets_of(runs[n]) for n in members],
+             windows, gated, kwargs) for members in groups]
+
+    def take(i, got):
+        for n in groups[i]:
+            found_in[n], offsets[_run_file_name(opened[n])] = got[n]
+
+    n_workers = read_workers([opened[m[0]] for m in groups], workers, fmt.spec is not None)
+    if n_workers > 1:
+        map_tasks(_drift_group_task, [(fmt.spec, opened[m[0]], a) for m, a in
+                                      zip(groups, args, strict=True)], n_workers, take, cancel)
+    else:
+        for i, members in enumerate(groups):
+            with fmt.open(opened[members[0]]) as opened_file:
+                take(i, _drift_group(_SharedFile(opened_file, windows), *args[i],
+                                     each=lambda n: check_cancel(cancel)))
     for n in controls:
         for key, found in found_in[n]:
             profiles.add(key, *found, file=str(opened[n]))
@@ -2440,9 +2634,38 @@ MIN_CALIBRATION_SPECTRA = 10  # a file with fewer MS1 peptide spectra with signa
 NEAR_WINDOW_EDGE = 0.9  # an offset beyond this share of the picker's window may be cut short
 
 
+def _offset_key(s: Spectrum) -> tuple:
+    """A spectrum as :func:`file_offsets` knows it: its id and its points' count and sums."""
+    return (s.spectrum_id, len(s.mz), float(np.sum(s.mz)), float(np.sum(s.intensity)))
+
+
+def _spectrum_offset(s: Spectrum, picker: PickerConfig, registry, plans: dict,
+                     measured: dict) -> float | None:
+    """One MS1 peptide spectrum's m/z offset for :func:`file_offsets` (None: not measured):
+    the picker's, with the bin plans already made (``plans``, by ion) and the spectra already
+    picked (``measured``: the same spectrum read for several samples, a shared file, is picked
+    once)."""
+    e = s.entry
+    key = (e.peptide, e.charge, e.modification)
+    if key not in plans:
+        plans[key] = plan_bins(e.peptide, e.charge, modification=e.modification,
+                               config=picker, registry=registry)
+    same = (key, np.array([s.resolving_power, s.resolving_power_mz]).tobytes(),
+            np.asarray(s.mz).tobytes(), np.asarray(s.intensity).tobytes())
+    if same not in measured:
+        picked = pick_spectrum(
+            s.mz, s.intensity, e.peptide, e.charge, modification=e.modification,
+            config=picker, registry=registry, plan=plans[key],
+            resolving_power=s.resolving_power, resolving_power_mz=s.resolving_power_mz)
+        measured[same] = (None if picked.no_signal or not np.isfinite(picked.mz_offset_ppm)
+                          else picked.mz_offset_ppm)
+    return measured[same]
+
+
 def file_offsets(per_run: list[list[Spectrum]], targets: Sequence[MzmlTarget],
                  series: Mapping[tuple[str, int], int], *, picker: PickerConfig,
-                 registry: chem.ModificationRegistry) -> list[tuple[float, int]]:
+                 registry: chem.ModificationRegistry, known: Mapping | None = None
+                 ) -> list[tuple[float, int]]:
     """Each file's m/z offset (``mz_calibration``), taken out of its MS1 peptide spectra in
     place (``per_run``: the spectra read from each file): the median, over the file's spectra
     with signal, of the picker's offset (:func:`hxex.picking.pick.mz_offset_ppm`: the
@@ -2454,33 +2677,23 @@ def file_offsets(per_run: list[list[Spectrum]], targets: Sequence[MzmlTarget],
     cannot be measured fully (:func:`_calibration_text` warns). Measured on an intact-peptide
     dataset of Q-TOF files (HISTORY 306): within 0.5 ppm of the per-file correction HDExaminer
     applied plus what remained on its axis, alike for undeuterated, labelled and fully
-    deuterated files."""
+    deuterated files. ``known``: offsets measured as the files were read
+    (:func:`_read_group`), by :func:`_offset_key`; the others are measured here."""
     of_data = {d: t_i for (_, t_i), d in series.items()}
     plans: dict[tuple, object] = {}
     measured: dict[tuple, float | None] = {}  # a spectrum's offset (None: not measured)
+    known = known or {}
     out = []
     for part in per_run:
         mine = [k for k, s in enumerate(part) if _gated_kind(targets[of_data[int(s.data_id)]])]
         offsets = []
         for k in mine:
             s = part[k]
-            e = s.entry
-            key = (e.peptide, e.charge, e.modification)
-            if key not in plans:
-                plans[key] = plan_bins(e.peptide, e.charge, modification=e.modification,
-                                       config=picker, registry=registry)
-            # the same spectrum read for several samples (a shared file) is picked once
-            same = (key, np.array([s.resolving_power, s.resolving_power_mz]).tobytes(),
-                    np.asarray(s.mz).tobytes(), np.asarray(s.intensity).tobytes())
-            if same not in measured:
-                picked = pick_spectrum(
-                    s.mz, s.intensity, e.peptide, e.charge, modification=e.modification,
-                    config=picker, registry=registry, plan=plans[key],
-                    resolving_power=s.resolving_power, resolving_power_mz=s.resolving_power_mz)
-                measured[same] = (None if picked.no_signal or not np.isfinite(
-                    picked.mz_offset_ppm) else picked.mz_offset_ppm)
-            if measured[same] is not None:
-                offsets.append(measured[same])
+            key = _offset_key(s)
+            offset = (known[key] if key in known
+                      else _spectrum_offset(s, picker, registry, plans, measured))
+            if offset is not None:
+                offsets.append(offset)
         if len(offsets) < MIN_CALIBRATION_SPECTRA:
             out.append((float("nan"), len(offsets)))
             continue
@@ -2600,18 +2813,36 @@ def _chromatogram(scans, pred: np.ndarray, half: np.ndarray, gate=None) -> np.nd
     With ``gate`` (a drift range, ms), a scan with ion mobility bins counts only its points in
     that range, summed over the drift bins as its spectrum is (:func:`_summed`)."""
     out = np.zeros(len(scans))
+    low = np.asarray(pred - half, dtype=float)
+    high = np.asarray(pred + half, dtype=float)
+    if not len(low):
+        return out
+    span = (float(low.min()), float(high.max()))
+    margin = 1e-6 * max(1.0, abs(span[1]))  # wider than any rounding of the bins' edges
     for n, s in enumerate(scans):
         mz, y = s.mz, s.intensity
         if gate is not None and s.binned is not None:
             m, v, d = s.binned
-            d = drift_times(d)
-            inside = (d >= gate[0]) & (d <= gate[1])
+            near = np.flatnonzero((m >= span[0] - margin) & (m <= span[1] + margin))
+            dn = drift_times(d[near])
+            inside = near[(dn >= gate[0]) & (dn <= gate[1])]
             mz, y = sum_mobility_bins(m[inside], v[inside])
         if not len(mz):
             continue
-        a = np.searchsorted(mz, pred - half)
-        z = np.searchsorted(mz, pred + half)
-        out[n] = sum(float(y[i:j].max()) for i, j in zip(a, z, strict=True) if j > i)
+        a = np.searchsorted(mz, low)
+        z = np.searchsorted(mz, high)
+        full = z > a
+        if not full.any():
+            continue
+        a, z = a[full], z[full]
+        first, last = int(a.min()), int(z.max())
+        part = np.empty(last - first + 1, dtype=np.asarray(y).dtype)
+        part[:-1] = y[first:last]
+        part[-1] = 0  # never inside a bin: only lets the last bin end be an index
+        edges = np.empty(2 * len(a), dtype=np.intp)
+        edges[0::2], edges[1::2] = a - first, z - first
+        tallest = np.maximum.reduceat(part, edges)[0::2]
+        out[n] = sum(tallest.tolist())
     return out
 
 
@@ -3349,6 +3580,7 @@ def read_mzml_source(
     on_change: str = "warn",
     progress: ProgressHook | None = None,
     cancel: CancelHook | None = None,
+    workers: int | None = None,
 ) -> SpectrumSet:
     """Repeat the read recorded in the ``source`` of spectra made by :func:`read_mzml` (from the
     spectra themselves, a spectra file or a results bundle).
@@ -3360,9 +3592,10 @@ def read_mzml_source(
     between runs) is read with a warning (``on_change='warn'``, the default) or refused
     (``'error'``, :class:`MzmlError`); either way the new spectra's ``source`` records the file
     as it is now, with the identity it had before under ``previous``, so the change stays
-    visible in their spectra files and bundles. Unchanged, the record stays as it was."""
+    visible in their spectra files and bundles. Unchanged, the record stays as it was.
+    ``workers``: as :func:`read_mzml`'s."""
     return _repeat_read(_MZML, source, directory=directory, data_root=data_root,
-                        on_change=on_change, progress=progress, cancel=cancel)
+                        on_change=on_change, progress=progress, cancel=cancel, workers=workers)
 
 
 def _repeat_read(
@@ -3374,6 +3607,7 @@ def _repeat_read(
     on_change: str,
     progress: ProgressHook | None,
     cancel: CancelHook | None,
+    workers: int | None = None,
 ) -> SpectrumSet:
     """:func:`read_mzml_source` for the format ``fmt``."""
     if source.get("reader") != fmt.reader:
@@ -3415,4 +3649,5 @@ def _repeat_read(
         progress=progress, cancel=cancel, tie=bool(source.get(SAMPLES_TIE, False)),
         elution_windows=[ElutionWindow.from_dict(w) for w in source.get("elution_windows")
                          or []],
+        workers=workers,
     )

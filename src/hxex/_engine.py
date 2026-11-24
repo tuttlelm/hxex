@@ -19,13 +19,16 @@ from pathlib import Path
 # under src/hxex: the modules (or packages) that decide a fit, given its input
 ENGINE = ("fit", "model", "noise.py", "bootstrap.py", "population_test.py")
 # under src/hxex: the modules (or packages) that decide what a read gives, given its settings
-# and files: the readers, the shared spectrum types, the chemistry, and the picking the scan
-# readers use (m/z windows, calibration, retention search). ``hxex run`` takes the stored
-# spectra of the bundle it replaces in place of a read only when this is unchanged
+# and files: the readers, the shared spectrum types, the chemistry, and the picking modules the
+# scan readers use (m/z windows, one spectrum's pick for the files' m/z offsets, the m/z check
+# for the retention search; not the picking of the read spectra, the claims, the envelopes or
+# the profile fit, which no read calls). ``hxex run`` takes the stored spectra of the bundle it
+# replaces in place of a read only when this is unchanged
 READER = ("io/read.py", "io/specexport.py", "io/hxexpress.py", "io/pooled.py", "io/entries.py",
           "io/mzml.py", "io/thermo.py", "io/drift_gate.py", "io/elution_windows.py",
-          "io/retention_search.py", "io/times.py", "io/_common.py", "spectra.py", "chem",
-          "picking")
+          "io/retention_search.py", "io/times.py", "io/_common.py", "io/_parallel.py",
+          "spectra.py", "chem", "picking/config.py", "picking/pick.py", "picking/mz_check.py",
+          "picking/measure.py", "picking/screen.py")
 # what decides the picking, given the read spectra and the settings (the bins, the peak
 # measure, the envelopes): a run keeps the picking stored in a bundle only when this is
 # unchanged (the version number alone stays the same between commits)

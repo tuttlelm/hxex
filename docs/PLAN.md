@@ -2270,7 +2270,12 @@ Planned, not built:
    `stored_read`) holds the whole elution-window table, so one changed row reads every file
    again (about 5.5 min there). Option: read again only the files whose rows changed and
    take the others' spectra from the bundle (needs the plan per file). (a) is small; (b) is
-   about a session.
+   about a session. (b) rules AGREED (owner, 2026-11-23): only elution-window rows or data
+   files changed -> read those files again and take the others' spectra from the bundle; the
+   series numbered again over every run as a full read numbers them (results identical to a
+   full read); a changed undeuterated control with ion-mobility bins -> the drift ranges again,
+   and the ions whose range moved read again in every file; the retention search on, or any
+   other change -> a full read. The read itself is faster since HISTORY 444 (files in parallel).
 40. **Where a project stands, and one command that brings it up to date** (owner, 2026-11-20:
    be intentional about run versus resume; design agreed in outline, nothing built).
    - *Why.* `hxex resume` was built to add the bootstrap after the fits; each addition since

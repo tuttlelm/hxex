@@ -11874,3 +11874,61 @@ CSVs or mzML if wanted.
     suggestion, by `hxex check` and by the helper on the bundle. Guide: project-file.md "How the
     file works", comparing-runs.md. Tests: test_analysis.py, test_cli.py, test_gui_sequence.py,
     test_gui_analysis.py.
+444. **Reading scan files faster, and less often** (2026-11-23; owner: "let's optimize read
+    run times. there's two sides - the time it takes to read ... and how much we re-read";
+    agreed order: faster code with the same results, a narrower reading-code fingerprint and
+    read plan, files in parallel, then reading only changed files, PLAN Next steps 39 (b), not built here). Measured first (cProfile,
+    one process) on five private projects: the time went into hxex's own summing and searching,
+    not into decoding the files (Orbitrap digest, 45 Thermo files: 60 % summing profile scans,
+    most of it inside find_peak's per-file m/z offset, and 6 min in the elution traces' per-bin
+    maxima, a Python loop over 97 million bins; reading the raw files under 10 %; pooled
+    ion-mobility mzML: half in the drift profiles, which masked every point of every scan per
+    peak; SpecExport 6.7 s, left as it is). Built, every change giving the same spectra (each
+    project's SpectrumSet compared field by field, NaN equal to NaN, with the read before the
+    change: identical on all five, only the reading-code fingerprint differs):
+    (1) `_common_grid` measures the grid's gaps again only when the grid grows and finds points
+    already on it by searchsorted (was `np.isin`); `_gaps` without concatenations (same values
+    for any gap factor, checked on random spacings); `_summed` cuts each sorted scan by
+    searchsorted (in the array's own type, as the mask compared) and rounds drift times only
+    of the points in the m/z window; `_chromatogram` takes each bin's tallest point with one
+    `np.maximum.reduceat` per scan (summed with Python's `sum` as before) and gates drift only
+    within the bins' m/z span; `scan_profile` keeps only the points near the ion's peaks (a
+    margin wider than any rounding) and finds every drift time of the scans from where the drift
+    time changes (each bin's points follow one another), not by sorting every point. One process:
+    pooled 245 to 126 s, targeted 168 to 142 s. (2) Files in parallel (`hxex.io._parallel`):
+    each file with every run that reads it is one task (`mzml._read_group`, also what one process
+    runs, so both paths are one code), for the drift profiles and for the read; spawned processes
+    with one thread of linear algebra each; up to `MAX_READ_WORKERS` = 8, the CPUs, and as many as
+    60 % of the available memory holds at 6 x the largest file plus 300 MB each (measured: 5.5 x
+    for ion-mobility mzML, 3 x for Thermo raw); only when the files hold 100 MB or more together
+    (tests and small projects stay in one process); results and log lines taken in file order
+    (a process's lines are kept and written by the main process after its results, so the log
+    reads as a read file by file); the cancel hook looked at every 0.5 s, cancelling or an error
+    stops the processes; `read_mzml`/`read_thermo` and their `_source` forms take `workers`
+    (None: as above; 1: this process). The retention search's first part (files kept open for
+    the search) and targets read again stay in one process. Each spectrum's m/z offset for the
+    calibration is measured in the process that read its file (`_spectrum_offset`, one function
+    for both places; the main process measures any it was not given). The targets' m/z windows
+    make each ion's bin plan once. Two traps met on the way: read-only mappings (a peptide
+    entry's extra columns, a modification's composition) cannot be pickled, so the pool's pickler
+    (multiprocessing's own) sends each as a new view of a copy, leaving spectra.py and chem alone
+    (they are in the picking fingerprint: changing them would pick every bundle again); and a
+    spawned process runs the main script again before its first task, so a script that reads at
+    its top without `if __name__ == "__main__":` started pools inside pools (`multiprocessing.Pool`
+    then replaced its failing processes forever): the processes are started with the main script
+    hidden from them (`_main_left_out`), and `ProcessPoolExecutor` stops with an error when a
+    process dies. The profile fit's pool (picking/profile.py) has the same unguarded-script trap;
+    left alone here (picking code). (3) `READER` (the reading code's fingerprint) holds the picking
+    modules the readers use (config, pick, mz_check, measure, screen), not the whole package: a
+    change of the claims, envelopes, binned spectra or profile fit no longer reads every file
+    again (a test checks every name the readers import from picking is from one of them).
+    (4) The read plan's `[run.picker]` leaves out `measure` and `area_fwhm` and writes `pick` as
+    `"apex"` for both project picks: the read picks one spectrum's peaks by their heights for the
+    file's m/z offset, so a change of these picks the stored spectra again without reading.
+    Every bundle reads its files once more (the reading code changed). Times (wall, this machine,
+    one project at a time; before -> after; peak memory of all processes after): SpecExport tutorial 6.7 s (one process, unchanged); targeted Orbitrap fragments, 17 Thermo files, 168 -> 35 s (3.7 GB); pooled ion-mobility mzML, 54 runs in 39 files, 245 -> 31 s (9.0 GB); intact-peptide benchmark ion-mobility mzML 737 -> 82 s (10.0 GB); Orbitrap digest, 45 Thermo files, 1,317 -> 175 s (7.3 GB). The main process still spends 30-56 s of these (the series numbering, the record, the pickles). Tests: test_parallel_read.py (two
+    processes give one's spectra, record, and log lines with drift ranges, a file shared by two
+    samples, and find_peak; how many processes; a worker's error; a script without a main guard,
+    which fails without `_main_left_out`), test_stored_read.py (measure/area_fwhm keep the stored
+    spectra; READER holds the readers' picking imports). Guide: inputs.md (several files at once),
+    outputs.md (picker settings the read does not use).

@@ -110,13 +110,28 @@ def scan_profile(scans, peaks: np.ndarray, half: np.ndarray, offset_ppm: float =
     parts = [s.binned for s in scans if s.binned is not None]
     if not parts:
         return None
-    mz = np.concatenate([p[0] for p in parts])
-    y = np.concatenate([p[1] for p in parts])
-    d = drift_times(np.concatenate([p[2] for p in parts]))
     peaks = np.atleast_1d(np.asarray(peaks, dtype=float))
     if np.isfinite(offset_ppm) and offset_ppm:
         peaks = peaks * (1.0 + offset_ppm * 1e-6)
     half = np.broadcast_to(np.asarray(half, dtype=float), peaks.shape)
+    # only the points near the peaks count (a point elsewhere adds nothing to any sum), but
+    # every drift time of the scans is in the profile: each drift bin's points follow one
+    # another, so the distinct times are among the values where the drift time changes
+    reach = np.concatenate([half, np.maximum(half[:-1], half[1:])])
+    centres = np.concatenate([peaks, 0.5 * (peaks[:-1] + peaks[1:])])
+    lo, hi = float((centres - reach).min()), float((centres + reach).max())
+    margin = 1e-6 * max(1.0, abs(hi))  # wider than any rounding of |mz - p| <= h
+    starts, kept = [], []
+    for m, v, t in parts:
+        t = np.asarray(t)
+        if len(t):
+            starts.append(t[np.concatenate([[0], np.flatnonzero(t[1:] != t[:-1]) + 1])])
+        keep = np.flatnonzero((m >= lo - margin) & (m <= hi + margin))
+        kept.append((m[keep], v[keep], t[keep]))
+    mz = np.concatenate([k[0] for k in kept])
+    y = np.concatenate([k[1] for k in kept])
+    d = drift_times(np.concatenate([k[2] for k in kept]))
+    every = drift_times(np.concatenate(starts)) if starts else np.empty(0)
     near = np.zeros(len(mz), dtype=bool)
     for p, h in zip(peaks, half, strict=True):
         near |= np.abs(mz - p) <= h
@@ -124,7 +139,8 @@ def scan_profile(scans, peaks: np.ndarray, half: np.ndarray, offset_ppm: float =
     for p, h in zip(0.5 * (peaks[:-1] + peaks[1:]), np.maximum(half[:-1], half[1:]), strict=True):
         between |= np.abs(mz - p) <= h
     between &= ~near
-    values, where = np.unique(d, return_inverse=True)
+    values = np.unique(every)
+    where = np.searchsorted(values, d)
     n = len(values)
     out = (values, np.bincount(where, weights=np.where(near, y, 0.0), minlength=n),
            np.bincount(where, weights=np.where(between, y, 0.0), minlength=n))

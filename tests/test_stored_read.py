@@ -70,9 +70,13 @@ def test_reread_reads_the_input(project, capsys):
 
 
 def test_settings_beside_the_read_keep_the_stored_spectra(project, capsys):
-    """A change of the fit (a preset, k_max) needs no read; the picker does for scan files (the
-    readers cut the scans by its windows)."""
+    """A change of the fit (a preset, k_max) needs no read, nor one of the picker's settings the
+    read does not use (the bin value, which apex pick); the rest of the picker does for scan
+    files (the readers cut the scans by its windows)."""
     project.write_text(project.read_text().replace("k_max = 1", "k_max = 2"))
+    assert TAKEN in _run(project, capsys)
+    project.write_text(project.read_text().replace(
+        "zero_filling = 3", 'zero_filling = 3\nmeasure = "height"\narea_fwhm = 2.0'))
     assert TAKEN in _run(project, capsys)
     project.write_text(project.read_text().replace("zero_filling = 3", "zero_filling = 4"))
     log = _run(project, capsys)
@@ -155,3 +159,32 @@ def test_a_folder_format_compares_its_folders_and_fasta_files(tmp_path, caplog):
     fasta.write_text(f">WT another name\n{PEPTIDE}\n")  # the same sequence
     assert stored_spectra_for(project, stored) is None
     assert "the FASTA files" in caplog.text
+
+
+def test_the_reading_code_holds_what_the_readers_import_from_picking():
+    """READER (the reading code's fingerprint) names the picking modules only: each name a
+    reader imports from hxex.picking must be defined in one of them, or a change there would
+    not read the input again."""
+    import ast
+    from pathlib import Path
+
+    import hxex
+    import hxex.picking
+    from hxex._engine import READER
+
+    root = Path(hxex.__file__).parent
+    readers = [root / name for name in READER if name.startswith("io/")]
+    for path in readers:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.ImportFrom) or not (node.module or "").startswith(
+                    "picking") or node.level != 2:
+                continue
+            for alias in node.names:
+                if node.module == "picking":
+                    module = getattr(hxex.picking, alias.name).__module__
+                else:
+                    module = f"hxex.{node.module}"
+                if path.name == "_parallel.py" and module == "hxex.picking.profile":
+                    continue  # the processes' thread setting, not what a read gives
+                name = module.removeprefix("hxex.").replace(".", "/") + ".py"
+                assert name in READER, f"{path.name} imports {alias.name} from {name}"
