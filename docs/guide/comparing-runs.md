@@ -46,7 +46,8 @@ d2o_fraction = 0.9
 ```
 
 A nested table whose name is not one of your runs is refused, so a misspelt run name is
-caught.
+caught. A sample name that is not a sample of its run (or, outside a nested table, of any run)
+is warned about by `hxex analyse` and the window, as its value would not be used.
 
 **Merging runs.** When the same sample was measured in two runs and you want them pooled
 (replicates across days), give the two a common label with `[analysis.merge]`:

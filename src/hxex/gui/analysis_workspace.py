@@ -717,9 +717,36 @@ class AnalysisWorkspace(QWidget):
         return self._nodes.get(item.data(0, NODE)) if item is not None else None
 
     def _settings_note(self) -> str:
-        return ("" if self._project() is not None else
-                " (a bundle opened alone: the default [analysis] settings; open the project "
-                "file for its own)")
+        if self._project() is None:
+            return (" (a bundle opened alone: the default [analysis] settings; open the project "
+                    "file for its own)")
+        unused = self.unused_keys()
+        if not unused:
+            return ""
+        return (f" Not used: {unused[0]}" + (f" (and {len(unused) - 1} more: Messages)"
+                                            if len(unused) > 1 else "") + ".")
+
+    def unused_keys(self) -> list[str]:
+        """The keys of per-sample settings that name no sample of the results shown
+        (:func:`hxex.report.setting_key_warnings`), worked out once per results and project
+        file."""
+        from ..report import setting_key_warnings
+
+        if self.results is None:
+            return []
+        try:
+            config, _, text = self._settings()
+        except Exception:  # noqa: BLE001 - the project file does not read: said elsewhere
+            return []
+        key = (id(self.results), text)
+        if getattr(self, "_unused", (None, None))[0] != key:
+            try:
+                found = setting_key_warnings(self.results, config)
+            except Exception as exc:  # noqa: BLE001 - only a note
+                log.debug("setting keys not checked: %s", exc)
+                found = []
+            self._unused = (key, found)
+        return self._unused[1]
 
     def _placed(self, config):
         """The analyses the tree shows: with groups each group's (and the regions across them),
@@ -1173,6 +1200,8 @@ class AnalysisWorkspace(QWidget):
         self.fit_rates.setEnabled(False)  # the settings stay as computed until it is done
         self._computing_path = path
         log.info("computing the analysis (as hxex analyse, nothing written)")
+        for line in self.unused_keys():  # as hxex analyse warns (a misspelt sample's key)
+            log.warning("%s", line)
         if several:  # every reference ticked not computed yet or out of date, in turn
             todo = [r for r in self._ticked if r not in self._analyses
                     or self.why_out_of_date(self._analyses[r][1])] or list(self._ticked)

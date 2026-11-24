@@ -11849,3 +11849,28 @@ CSVs or mzML if wanted.
     template comment. Tests: test_analysis.py (mutant paired, another protein not under
     "similar", paired under "range"; dissimilar_ranges; resolve_match), test_pooled_forms.py,
     test_gui_analysis.py (the reference ticked in the list, names written as text).
+443. **A per-sample key that names no sample is said** (2026-11-23; owner's TODO of
+    2026-11-19: "plan on adding the warning"). Found on the private targeted Orbitrap dataset's
+    demo: `[analysis.fasta]` keyed by a shortened sample name gave its Sequence tab row no
+    coverage and the analysis no FASTA, without a word (`sample_setting` finds the value for no
+    sample). Per-sample tables cannot refuse unknown keys (any name could be a sample), so the
+    disagreement is a warning (memory: disagreements are warnings), naming the key, the samples
+    present, and the closest one (difflib, cutoff 0.6), never a refusal: the value is only
+    unused. One shared check, `hxex.analysis.unknown_setting_keys` (`SAMPLE_KEYED`): the keys of
+    `[analysis.fasta]`, `[analysis.labelling]`, `[analysis.fragments.exchange]`, a per-sample
+    item of `[analysis.summary]` (which also takes a `run:sample` label, as its table does) and,
+    against the fragment conditions, `[analysis.fragments.labels]`; a run's own nested table is
+    checked against that run's unmerged samples (a nested table naming no run was already
+    refused). `[analysis.colours]` already warned (`_sample_styles`). Callers: `hxex check`
+    (every sample of the data, whatever `[input] samples` says, from `config.data_samples`;
+    conditions from `[[input.fragments]]` as `_condition` names them; warnings after the status
+    block, the check still passes; skipped with `[analysis.runs]` or stored spectra, whose
+    samples are in other bundles), `hxex analyse` (once, against the results' states and their
+    fragment targets' conditions: `hxex.report.setting_key_warnings`, 0.04 s on the targeted
+    bundle), the window's Analysis page (the first one on its status line, "Not used: ...",
+    all of them to Messages at Compute; cached per results and settings) and its Sequence tab
+    (a note for `[analysis.fasta]` keys). Checked on a scratch copy of the demo project with the
+    shortened key restored and one fragment label misspelt: both named, with the right
+    suggestion, by `hxex check` and by the helper on the bundle. Guide: project-file.md "How the
+    file works", comparing-runs.md. Tests: test_analysis.py, test_cli.py, test_gui_sequence.py,
+    test_gui_analysis.py.

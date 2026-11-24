@@ -1067,6 +1067,47 @@ def test_sample_settings_resolve_by_run_then_sample():
     assert sample_setting("one", "A", "S") == "one" and sample_setting(None, "A", "S") is None
 
 
+def test_a_per_sample_key_naming_no_sample_is_said(two_sample_bundle):
+    """A misspelt sample in a per-sample setting is otherwise silently unused (owner,
+    2026-11-19: [analysis.fasta] ProtA for the sample ProtA_S12A gave no sequence): one
+    warning per key, naming the samples present and the closest, for every setting read
+    through sample_setting; fragment labels are checked against the conditions."""
+    from hxex.analysis import AnalysisConfig, FragmentAnalysis, unknown_setting_keys
+    from hxex.io import open_bundle
+    from hxex.report import setting_key_warnings
+
+    cfg = AnalysisConfig(fasta={"WT": "wt.fasta", "ProtA": "u.fasta"},
+                         summary={"Replicates": {"WT": "three", "A:WT": "two", "B:XX": "one"},
+                                  "Quench": "every sample"},
+                         fragments=FragmentAnalysis(labels={"gentle": "G", "gentel": "G2"}))
+    lines = unknown_setting_keys(cfg, ["WT", "ProtA_S12A"], runs={"A": ["WT"]},
+                                 conditions=["gentle", "harsh"])
+    assert ("[analysis.fasta] ProtA: no sample ProtA (samples: ProtA_S12A, WT; did you mean "
+            "ProtA_S12A?), so its value is not used") in lines
+    assert ("[analysis.fragments.labels] gentel: no condition gentel (conditions: gentle, harsh;"
+            " did you mean gentle?), so its value is not used") in lines
+    # [analysis.summary] takes a run:sample label of a run that has that sample
+    assert [x for x in lines if x.startswith("[analysis.summary")] == [
+        "[analysis.summary.Replicates] B:XX: no sample B:XX (samples: ProtA_S12A, WT), so its "
+        "value is not used"]
+    assert len(lines) == 3
+    assert unknown_setting_keys(cfg, ["WT"], conditions=None, settings=("fragments.labels",)) \
+        == []  # conditions unknown: labels not checked
+    assert unknown_setting_keys(cfg, ["WT", "ProtA"], settings=("fasta",)) == []
+    # a run's own table: its samples checked against the run's
+    nested = AnalysisConfig(runs={"A": "a.zip"}, fasta={"A": {"WT": "a.fasta", "M2": "x.fasta"}})
+    assert unknown_setting_keys(nested, ["WT"], runs={"A": ["WT"]}) == [
+        "[analysis.fasta.A] M2: run A has no sample M2 (samples: WT), so its value is not used"]
+    # one value for every sample: nothing to check
+    assert unknown_setting_keys(AnalysisConfig(fasta="all.fasta"), ["WT"]) == []
+    # from the results, as hxex analyse and the window check them
+    with open_bundle(two_sample_bundle) as b:
+        r = Results.from_bundle(b)
+    assert setting_key_warnings(r, AnalysisConfig(fasta={"S": "s.fasta", "V": "v.fasta"})) == []
+    assert setting_key_warnings(r, AnalysisConfig(fasta={"s": "s.fasta"})) == [
+        "[analysis.fasta] s: no sample s (samples: S, V), so its value is not used"]
+
+
 def test_write_analysis_writes_tables_and_figures(two_sample_bundle, tmp_path):
     import dataclasses
 

@@ -123,6 +123,15 @@ The tables in this example, in the settings reference: [top level](settings.md#t
 - **Unknown keys are refused**, with the table and key named, so a misspelt setting does not pass
   silently. Settings that were renamed or removed are refused with a message saying what replaces
   them.
+- **Sample names in tables are checked against your data.** A table with one entry per sample
+  (`[analysis.fasta]`, `[analysis.labelling]`, `[analysis.fragments.exchange]`, or an item of
+  `[analysis.summary]` given per sample) or per fragment condition
+  (`[analysis.fragments.labels]`) cannot refuse a name it does not know, since any name could
+  be a sample. An entry whose name is not a sample of your data is never used, so `hxex
+  check`, `hxex analyse`, and the window (the Analysis page and the Sequence tab) warn about
+  it, naming the samples there and the closest one: `[analysis.fasta] WT1: no sample WT1
+  (samples: M1, WT; did you mean WT?), so its value is not used`. A sample that `[input]
+  samples` leaves out still counts as one of your samples.
 - **`hxex set`** changes one setting without a text editor: `hxex set hxex.toml
   run.bootstrap.n_boot 50` switches the line on (and its heading, when that is off), gives it the
   value, and keeps the comments and the rest of the file. The value is checked as `hxex check`

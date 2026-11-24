@@ -295,6 +295,47 @@ def _check_names(results, config: AnalysisConfig) -> None:
         resolve_sample(run_names, sample_names, s)
 
 
+def setting_key_warnings(results, config: AnalysisConfig) -> list[str]:
+    """The keys of per-sample settings (``[analysis.fasta]``, ``[analysis.labelling]``,
+    ``[analysis.summary]`` tables, ``[analysis.fragments.exchange]``) that name no sample of the
+    results, and those of ``[analysis.fragments.labels]`` that name no fragment condition, so
+    their values are never used (:func:`hxex.analysis.unknown_setting_keys`): one warning each,
+    for ``hxex analyse`` and the window. Empty for results that do not list their samples."""
+    from ..analysis import unknown_setting_keys
+
+    states = _sample_states(results)
+    if states is None:
+        return []
+    runs: dict[str, set[str]] = {}
+    for run, sample in states:
+        if run:
+            runs.setdefault(run, set()).add(sample)
+    each = results.runs if isinstance(results, RunSet) else {"": results}
+    labels = getattr(config.fragments, "labels", None)
+    found = ({name: _fragment_conditions(r) for name, r in each.items()}
+             if isinstance(labels, Mapping) and labels else {})  # read only when needed
+    known = None if not found or any(c is None for c in found.values()) else found
+    return unknown_setting_keys(
+        config, {s for _, s in states}, runs,
+        None if known is None else set().union(*known.values()),
+        None if known is None else {n: c for n, c in known.items() if n})
+
+
+def _fragment_conditions(results) -> set[str] | None:
+    """The conditions of the fragment series of ``results`` (empty without fragments); None
+    when its read record does not list its series."""
+    from ..analysis.fragments import _condition
+    from ..io.mzml import SCAN_READERS, mzml_series_targets
+
+    source = results.settings.spectra_source if results.settings is not None else None
+    if not source or source.get("reader") not in SCAN_READERS:
+        return set()
+    if "series" not in source:
+        return None
+    return {_condition(t) for t in mzml_series_targets(source).values()
+            if "fragment" in dict(t.entry.extra)}
+
+
 def ungrouped_samples(results, config: AnalysisConfig) -> list[str]:
     """The samples of ``results`` in none of ``config``'s groups (``[analysis.groups]``):
     not analysed. Empty without groups, or for results that do not list their samples."""

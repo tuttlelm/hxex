@@ -11,6 +11,7 @@ from .analysis import (
     AnalysisOutputs,
     analysis_outputs,
     analysis_references,
+    setting_key_warnings,
     ungrouped_samples,
     write_analysis,
 )
@@ -188,6 +189,7 @@ __all__ = [
     "AnalysisOutputs",
     "analysis_outputs",
     "analysis_references",
+    "setting_key_warnings",
     "ungrouped_samples",
     "series_kinds",
     "series_figures",

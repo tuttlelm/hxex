@@ -162,6 +162,7 @@ def project_sequences(project) -> tuple[list[SequenceRow], object, str]:
         for name, value in made.items():
             if ":" in name or name == EVERY or read(name):
                 found[name] = value
+        notes += _unused_fasta_keys(loaded)
         for name, file in gone:
             if name == EVERY:  # one file for every sample: each sample's stored copy
                 if stored:
@@ -264,6 +265,28 @@ def project_sequences(project) -> tuple[list[SequenceRow], object, str]:
 
 
 EVERY = "every sample"  # the row name of one [analysis] fasta file for every sample
+
+
+def _unused_fasta_keys(loaded) -> list[str]:
+    """The ``[analysis.fasta]`` keys that name no sample of the data, so the analysis never
+    uses their sequence (:func:`hxex.analysis.unknown_setting_keys`); the row is shown under
+    the key's name all the same, with no coverage. Not checked when comparing runs (the runs'
+    bundles hold the samples) or when the data do not say which samples they hold."""
+    from collections.abc import Mapping
+
+    from ..analysis import unknown_setting_keys
+    from ..config import data_samples
+
+    config = loaded.analysis
+    if config is None or config.runs or not isinstance(config.fasta, Mapping):
+        return []
+    try:
+        samples = data_samples(loaded)
+    except Exception:  # noqa: BLE001 - only a note
+        return []
+    if not samples:
+        return []
+    return [line + "." for line in unknown_setting_keys(config, samples, settings=("fasta",))]
 
 
 def _analysis_fasta(fasta, base: Path) -> tuple[dict, list[tuple[str, str]]]:

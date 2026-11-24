@@ -355,6 +355,24 @@ def test_a_reference_set_shows_no_warning(qtbot, tmp_path, project):
     assert not window.analysis_page.no_reference.isVisibleTo(window.analysis_page)
 
 
+def test_a_per_sample_key_naming_no_sample_is_on_the_status_line(qtbot, tmp_path,
+                                                                   two_sample_bundle):  # noqa: F811
+    """A misspelt sample in [analysis.fasta] (owner, 2026-11-19) is named on the Analysis
+    page's status line, as hxex analyse warns about it."""
+    path = tmp_path / "hxex.toml"
+    path.write_text(f'project = "gui"\n\n[output]\nbundle = "{two_sample_bundle.as_posix()}"\n'
+                    '\n[analysis]\nreference = "S"\n\n[analysis.fasta]\nSS = "s.fasta"\n',
+                    encoding="utf-8")
+    window = _window(qtbot, tmp_path / "gui.ini")
+    window.open_project(path)
+    qtbot.waitUntil(lambda: not window.loading, timeout=30000)
+    page = window.analysis_page
+    page.refresh()
+    assert page.unused_keys() == ["[analysis.fasta] SS: no sample SS (samples: S, V; did you "
+                                  "mean S?), so its value is not used"]
+    assert "Not used: [analysis.fasta] SS: no sample SS" in page.status.text()
+
+
 def _held_analysis(monkeypatch, *, listens: bool = True):
     """hxex.report.analysis_outputs (as the window imports it) held until released; returns
     (started, release, outcome), outcome["end"] = "done" / "cancelled" once it ended."""

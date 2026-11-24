@@ -706,6 +706,12 @@ def cmd_check(args) -> int:
     if project.output.bundle is not None:
         for key, text in _stage_rows(project, project.output.bundle):
             _say(f"{key:14s} {text}")
+    warned = _setting_key_lines(project)
+    if warned:  # warnings, not problems (owner, 2026-11-19): the values are only unused
+        sys.stdout.flush()
+        for line in warned:
+            log.warning("%s", line)
+        sys.stderr.flush()
     if problems:  # after the status block, and the verdict last, whatever the terminal buffers
         sys.stdout.flush()
         for p in problems:
@@ -715,6 +721,32 @@ def cmd_check(args) -> int:
         return EXIT_ERROR
     _say("ok")
     return 0
+
+
+def _setting_key_lines(project) -> list[str]:
+    """The keys of per-sample settings that name no sample of the data (or, for
+    ``[analysis.fragments.labels]``, no condition of ``[[input.fragments]]``), so their values
+    are never used (:func:`hxex.analysis.unknown_setting_keys`). Every sample of the data counts,
+    whatever ``[input] samples`` says (a key for a sample not read now is not a mistake). None
+    checked for a project without input, or comparing runs (``[analysis.runs]``: their bundles
+    hold the samples, and ``hxex analyse`` checks against them)."""
+    from types import SimpleNamespace
+
+    from .analysis import unknown_setting_keys
+    from .analysis.fragments import _condition
+    from .config import data_samples
+
+    config, inp = project.analysis, project.input
+    if config is None or inp is None or config.runs or inp.spectra is not None:
+        return []
+    samples = data_samples(project)
+    if not samples:
+        return []  # the data do not say (a message about them comes from the read)
+    conditions = {_condition(SimpleNamespace(
+        entry=SimpleNamespace(extra={"condition": f.label}), activation=f.activation,
+        preactivation=f.preactivation, filter_contains=f.filter_contains,
+        filter_excludes=f.filter_excludes)) for f in inp.fragments}
+    return unknown_setting_keys(config, samples, conditions=conditions)
 
 
 def _group_lines(analysis, read: list[str] | None) -> list[str]:
@@ -2479,6 +2511,10 @@ def cmd_analyse(args) -> int:
                                                (src.get("sequences") or {}).values()))
                     break
         results = RunSet(opened, merge=config.merge) if several else opened[""]
+        from .report import setting_key_warnings
+
+        for line in setting_key_warnings(results, config):  # a misspelt sample: else silent
+            log.warning("%s", line)
         if not outs:
             from .report import analysis_references
 

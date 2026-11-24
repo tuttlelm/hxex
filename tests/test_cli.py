@@ -2253,6 +2253,27 @@ def test_a_specexport_project_without_analysis_fasta_is_told_where_its_sequences
                                          "M2 (M2.fasta): residues 5-8")
 
 
+def test_check_warns_about_a_per_sample_key_naming_no_sample(tmp_path, capsys):
+    """[analysis.fasta] keyed by a misspelt sample is otherwise silently unused (owner,
+    2026-11-19): hxex check warns, naming the samples of the data and the closest one, and
+    passes (the value is only unused); a sample [input] samples leaves out is not a mistake."""
+    data = tmp_path / "SpecExport"
+    for name in ("ProtA_S12A", "M1"):
+        (data / name / "0002-0005-KVLA").mkdir(parents=True)
+        (data / name / "0002-0005-KVLA" / "Non-1-z2.csv").write_text("300.1,5\n300.2,4\n")
+        (data / f"{name}.fasta").write_text(f">{name}\nMKVLAGHEDW\n")
+    path = tmp_path / "hxex.toml"
+    path.write_text('project = "p"\n[input]\nformat = "specexport"\ndata_dir = "SpecExport"\n'
+                    'samples = ["ProtA_S12A"]\n[analysis.fasta]\n'
+                    'ProtA = "SpecExport/ProtA_S12A.fasta"\nM1 = "SpecExport/M1.fasta"\n')
+    code = cli.main(["check", str(path)])
+    out = capsys.readouterr()
+    assert code == 0 and out.out.rstrip().endswith("ok")
+    assert out.err.count("so its value is not used") == 1
+    assert ("[analysis.fasta] ProtA: no sample ProtA (samples: M1, ProtA_S12A; did you mean "
+            "ProtA_S12A?), so its value is not used") in out.err
+
+
 def test_check_refuses_a_cuda_device_where_pytorch_has_none(tmp_path, capsys, monkeypatch):
     import torch
 

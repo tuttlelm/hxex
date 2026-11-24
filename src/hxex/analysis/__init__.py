@@ -105,6 +105,7 @@ from .runs import (
     resolve_sample,
     sample_setting,
     shared_measurements,
+    unknown_setting_keys,
 )
 from .settings import AnalysisConfig, AnalysisGroup
 from .species import (
@@ -170,6 +171,7 @@ __all__ = [
     "display_labels",
     "resolve_sample",
     "sample_setting",
+    "unknown_setting_keys",
     "shared_measurements",
     "PeptideComparison",
     "PopulationCountComparison",

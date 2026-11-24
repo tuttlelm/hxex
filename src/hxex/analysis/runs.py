@@ -188,6 +188,90 @@ def sample_setting(setting, run: str, sample: str):
     return None if isinstance(value, Mapping) else value
 
 
+# the settings given one value per sample (or per run, then sample), read through
+# sample_setting: their dotted name -> what their keys name
+SAMPLE_KEYED = {"fasta": "sample", "labelling": "sample", "summary": "sample",
+                "fragments.exchange": "sample", "fragments.labels": "condition"}
+
+
+def unknown_setting_keys(config, samples, runs: Mapping | None = None, conditions=None,
+                         run_conditions: Mapping | None = None, *,
+                         settings=None) -> list[str]:
+    """One warning per key of a per-sample setting (:data:`SAMPLE_KEYED`: ``[analysis.fasta]``,
+    ``[analysis.labelling]``, ``[analysis.summary]`` items, ``[analysis.fragments.exchange]``,
+    and the conditions of ``[analysis.fragments.labels]``) that names nothing there, so its
+    value is never used (:func:`sample_setting` finds it for no sample): a misspelt sample is
+    otherwise silently left without its sequence or conditions.
+
+    ``samples``: the sample names a key may give (the data's, or the analysis's states);
+    ``runs``: run name -> the samples a run's own table may name (the unmerged samples of each
+    run of ``[analysis.runs]``; None: no run); ``conditions``: the fragment conditions, None
+    when unknown (``labels`` then not checked), and ``run_conditions`` each run's.
+    ``[analysis.summary]`` also takes a ``run:sample`` label, where that run has that sample.
+    ``settings`` limits the check to some of :data:`SAMPLE_KEYED` (the window's sequence view:
+    ``('fasta',)``)."""
+    runs = {str(k): {str(s) for s in v} for k, v in (runs or {}).items()}
+    run_conditions = {str(k): {str(c) for c in v} for k, v in (run_conditions or {}).items()}
+    samples = {str(s) for s in samples}
+    conditions = None if conditions is None else {str(c) for c in conditions}
+    out: list[str] = []
+    fragments = getattr(config, "fragments", None)
+    tables = {"fasta": config.fasta, "labelling": config.labelling,
+              "fragments.exchange": getattr(fragments, "exchange", None),
+              "fragments.labels": getattr(fragments, "labels", None)}
+    for item, value in (config.summary or {}).items():
+        if isinstance(value, Mapping):
+            tables[f"summary.{item}"] = value
+    for name, table in tables.items():
+        kind_of = name if name in SAMPLE_KEYED else "summary"
+        if settings is not None and kind_of not in settings:
+            continue
+        kind = SAMPLE_KEYED[kind_of]
+        known = samples if kind == "sample" else conditions
+        if known is None or not isinstance(table, Mapping) or "ph_read" in table:
+            continue  # one value for every sample, or nothing to check against
+        where = (f"[analysis.summary.{name.partition('.')[2]}]" if kind_of == "summary"
+                 else f"[analysis.{name}]")
+        out += _unknown_keys(table, where, kind, known,
+                             runs if kind == "sample" else run_conditions,
+                             labels=kind_of == "summary")
+    return out
+
+
+def _unknown_keys(table: Mapping, where: str, kind: str, known: set, runs: dict,
+                  labels: bool) -> list[str]:
+    import difflib
+
+    def listing(names) -> str:
+        return ", ".join(sorted(names)) or "none"
+
+    def close(key: str, names) -> str:
+        found = difflib.get_close_matches(key, sorted(names), n=1, cutoff=0.6)
+        return f"; did you mean {found[0]}?" if found else ""
+
+    out = []
+    plural = "conditions" if kind == "condition" else "samples"
+    for key, value in table.items():
+        key = str(key)
+        if isinstance(value, Mapping) and "ph_read" not in value:  # a run's own values
+            # (a table under a name that is no run is refused when the settings are read)
+            for inner in value if key in runs else ():
+                inner = str(inner)
+                if inner not in runs[key]:
+                    out.append(f"{where[:-1]}.{key}] {inner}: run {key} has no {kind} {inner} "
+                               f"({plural}: {listing(runs[key])}{close(inner, runs[key])}), "
+                               "so its value is not used")
+            continue
+        if key in known:
+            continue
+        run, sep, sample = key.partition(SEPARATOR)
+        if labels and sep and sample in runs.get(run, ()):
+            continue  # a display label, which [analysis.summary] takes
+        out.append(f"{where} {key}: no {kind} {key} ({plural}: {listing(known)}"
+                   f"{close(key, known)}), so its value is not used")
+    return out
+
+
 def display_labels(runs, samples) -> dict[tuple[str, str], str]:
     """The display label of every ``(run, sample)`` in the columns given: ``run:sample`` where
     the same sample name occurs in several runs of the table (an unmerged sample in a

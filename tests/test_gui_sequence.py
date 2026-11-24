@@ -331,6 +331,17 @@ def test_a_missing_analysis_fasta_file_takes_the_stored_copy(tmp_path):
                        "shown.")
 
 
+def test_a_fasta_key_naming_no_sample_is_said(tmp_path):
+    """A [analysis.fasta] key that names no sample (a misspelt one, owner 2026-11-19) is shown
+    under its name with a note that the analysis does not use it."""
+    path = _stored_project(tmp_path, '\n[analysis.fasta]\nWT = "SpecExport/WT.fasta"\n'
+                                     'M = "SpecExport/M1.fasta"\n')
+    rows, _, message = project_sequences(path)
+    assert sorted(s for r in rows for s in r.samples) == ["M", "WT"]
+    assert ("[analysis.fasta] M: no sample M (samples: M1, WT; did you mean M1?), so its value "
+            "is not used.") in message
+
+
 def test_a_fasta_without_its_sample_folder_is_left_out(tmp_path):
     """Open question 7: a SAMPLE.fasta with no sample folder of its name beside it (the reader
     does not read it) is left out of the view, with a note."""
