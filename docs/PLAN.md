@@ -2549,11 +2549,12 @@ Planned, not built:
        check of HISTORY 448's open item); the noisy set's tail (HISTORY 448: an absolute part
        the split now measures as `a2` where the format allows, which the noisy set's SpecExport
        does not).
-     - **Open for the owner:** every spectrum of a file in its curve (recommended) or the
-       controls only; `c2` kept in the fit on the Q-TOF data (2-2.5 %, inside the 9 % model
-       error but noise, not misfit); the per-file table replacing the per-sample one; whether
-       the halves' values are read at the full spectrum's positions (proposed) or picked on
-       their own (the scratch).
+     - **Decided (owner, 2026-11-24), as recommended:** every spectrum of a file makes its
+       curve (labelled, undeuterated, and fully deuterated alike); `c2` kept as measured (the
+       benchmark's 2-2.5 % is scan-to-scan noise; files that measure 0 lose nothing); the
+       per-file table replaces the per-sample one (its warning becomes per file); the halves'
+       values are read at the full spectrum's positions (the built check compares with the
+       scratch's own-pick curves). Next: the build, in its own worktree.
 
 ## Risks and open decisions
 
