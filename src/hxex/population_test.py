@@ -517,7 +517,7 @@ def simulate_null(
     noise = None
     if fit.noise_curve is not None:
         noise = bin_noise([data.observed[i] for i in rows], data.charges()[rows],
-                          fit.noise_curve).scaled(fit.obs_scale[rows])
+                          fit.noise_curve, files=data.files()[rows]).scaled(fit.obs_scale[rows])
         sd = [np.sqrt(v) for v in noise.variances(pred)]
     out = np.full((len(rows), n_sim), np.nan)
     for s in range(n_sim):

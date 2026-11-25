@@ -1571,8 +1571,9 @@ def _read_group(f, members, runs, member_targets, windows, common, *, only=None,
     if extra is not None:
         out.extra = extra(f)
     cut = None
+    profile = profile_record(f)  # a reduced file's spectra take their scans' recorded noise
     if only is None:
-        instrument, profile = instrument_record(f), profile_record(f)
+        instrument = instrument_record(f)
         cut, unrecorded = config.scan_cut is True, False
         if config.scan_cut == "auto" and (profile or {}).get("reduced") and fragments:
             cut = records_noise(f)
@@ -1585,6 +1586,7 @@ def _read_group(f, members, runs, member_targets, windows, common, *, only=None,
         out.made[n] = _run_spectra(
             f, run, targets, windows, only=None if only is None else only[n],
             scan_cut=cut if only is None else scan_cuts[n], memo=f.memo, alignment=alignment,
+            reduced=bool((profile or {}).get("reduced")),
             elution_cut=out.elution_cut if config.find_fragment_peak else None, **common)
         if alignment is not None:
             out.aligned[n] = alignment
@@ -1652,6 +1654,7 @@ def _stored_spectrum(stored: SpectrumSet, i: int, data_id: int) -> Spectrum:
     """Spectrum ``i`` of the stored spectra ``stored`` as the read made it, in series
     ``data_id`` (:meth:`SpectrumSet.from_spectra` gives back what it took)."""
     a, b = int(stored.offsets[i]), int(stored.offsets[i + 1])
+    halves = stored.halves(i)
     entry = PeptideEntry(str(stored.file[i]), str(stored.sample[i]), str(stored.peptide[i]),
                          str(stored.peptide_range[i]), int(stored.start_seq[i]),
                          int(stored.end_seq[i]), int(stored.charge[i]),
@@ -1664,7 +1667,10 @@ def _stored_spectrum(stored: SpectrumSet, i: int, data_id: int) -> Spectrum:
         resolving_power_mz=float(stored.resolving_power_mz[i]), role=str(stored.role[i]),
         rt_start=float(stored.rt_start[i]), rt_end=float(stored.rt_end[i]),
         drift_start=float(stored.drift_start[i]), drift_end=float(stored.drift_end[i]),
-        mz_calibration_ppm=float(stored.mz_calibration_ppm[i]), scans=stored.scans[i])
+        mz_calibration_ppm=float(stored.mz_calibration_ppm[i]), scans=stored.scans[i],
+        intensity_odd=None if halves is None else halves[0],
+        intensity_even=None if halves is None else halves[1],
+        n_scans=int(stored.n_scans[i]), recorded_noise=float(stored.recorded_noise[i]))
 
 
 def _stored_runs(stored: SpectrumSet, runs, opened, keep) -> dict | None:
@@ -2330,6 +2336,54 @@ def kinetics_spectra(source: Mapping | None, spectrum_id: Sequence[str]) -> np.n
     return out
 
 
+def scan_spectrum_keys(source: Mapping | None, spectrum_id: Sequence[str]
+                       ) -> tuple[np.ndarray, np.ndarray]:
+    """The scan file each spectrum (by ``spectrum_id``) was summed from and its target's label,
+    by the read record ``source`` of :func:`read_mzml` or :func:`~hxex.io.read_thermo` (the
+    file's name, as the record's ``files`` name it: one name per file whatever runs read it;
+    the label as :func:`target_label` gives it); both ``''`` for every spectrum without a record
+    or of another reader. The noise stage fits one curve per file, and a kinetics run's from
+    the consecutive scans of one target (:func:`hxex.noise.file_noise`)."""
+    files = np.full(len(spectrum_id), "", dtype=object)
+    targets = np.full(len(spectrum_id), "", dtype=object)
+    if not source or source.get("reader") not in SCAN_READERS:
+        return files.astype(str), targets.astype(str)
+    runs = list(source.get("runs", ()))
+    known_files = list(source.get("files") or [])
+    known_files += [None] * (len(runs) - len(known_files))
+    prefixes = {}
+    for r, known in zip(runs, known_files, strict=True):
+        name = (known or {}).get("name") or _run_file_name(r["path"])
+        prefixes[f"{r['sample']}/{name}/"] = name
+    for i, sid in enumerate(spectrum_id):
+        local = split_spectrum_id(str(sid))[1]
+        for prefix, name in prefixes.items():
+            if local.startswith(prefix):
+                files[i] = name
+                targets[i] = local[len(prefix):].rsplit("/", 1)[0]
+                break
+    return files.astype(str), targets.astype(str)
+
+
+def scan_file_names(source: Mapping | None, spectrum_id: Sequence[str]) -> np.ndarray:
+    """The scan file each spectrum was summed from (:func:`scan_spectrum_keys`)."""
+    return scan_spectrum_keys(source, spectrum_id)[0]
+
+
+def reduced_files(source: Mapping | None) -> set[str]:
+    """The names of the scan files whose profile scans are reduced (:func:`profile_record`),
+    by the read record ``source``; empty without a record."""
+    if not source or source.get("reader") not in SCAN_READERS:
+        return set()
+    runs = list(source.get("runs", ()))
+    files = list(source.get("files") or [])
+    files += [None] * (len(runs) - len(files))
+    profiles = list(source.get("profile") or [])
+    profiles += [None] * (len(runs) - len(profiles))
+    return {(known or {}).get("name") or _run_file_name(r["path"])
+            for r, known, p in zip(runs, files, profiles, strict=True) if (p or {}).get("reduced")}
+
+
 def target_scans(table: ScanTable, run: MzmlRun, target: MzmlTarget,
                  config: MzmlConfig, unstated: list | None = None) -> np.ndarray:
     """Positions (in ``table``, one file's scans) of the scans of ``target`` in ``run``, as
@@ -2526,8 +2580,8 @@ def _run_spectra(f, run: MzmlRun, targets, windows, *, project, config,
                  joins: Mapping[tuple[str, int], int] | None = None,
                  gates: Mapping[tuple, DriftRange] | None = None,
                  elution_cut: set[str] | None = None, scan_cut: bool = False,
-                 memo: dict | None = None, alignment: dict | None = None
-                 ) -> tuple[list, float]:
+                 memo: dict | None = None, alignment: dict | None = None,
+                 reduced: bool = False) -> tuple[list, float]:
     """The spectra of every target of this run (:func:`target_applies`; with ``only``, those
     of the targets at these positions) in the open file ``f``, before their series are numbered
     (:func:`_number_series`): per target with spectra, ``(series key, unclear, spectra)``, the
@@ -2541,6 +2595,11 @@ def _run_spectra(f, run: MzmlRun, targets, windows, *, project, config,
     the fragment spectra's scans for the per-scan cut (decided per file, ``[input.scans]
     scan_cut``). ``memo``: the file's results kept for its other runs (:func:`_run_scans`).
     ``alignment``: filled with what find_peak's search did in this run (:func:`find_peaks`).
+    ``reduced``: the file's profile scans are reduced (:func:`profile_record`), so each
+    spectrum also takes the noise its scans recorded at its window, summed in quadrature
+    (:attr:`~hxex.spectra.Spectrum.recorded_noise`; the floor of the file's noise curve, which the
+    per-scan cut hides from the halves of the sum). Every spectrum summed from two or more
+    scans carries the two halves of that sum (:func:`_summed`).
     Also returns the run's typical peak width (s) when find_peak measured it, else NaN."""
     cut: set[int] = set()
     scanned = _run_scans(f, run, targets, windows, config=config, tie=tie, picker=picker,
@@ -2574,8 +2633,12 @@ def _run_spectra(f, run: MzmlRun, targets, windows, *, project, config,
                 summed = _summed(scans, lo, hi, gate, config)
                 if memo is not None:
                     memo[("spectrum", lo, hi, gate, positions)] = summed
-            mz, y, weight, gated = summed
+            mz, y, weight, gated, halves = summed
             mz, y = mz.copy(), y.copy()  # each spectrum its own arrays
+            if halves is not None:
+                halves = (halves[0].copy(), halves[1].copy())
+            recorded_noise = (_window_noise(f, positions, by_index, lo, hi, noise_cache)
+                              if reduced else float("nan"))
             if (gates is not None and _gated_kind(target)
                     and any(s.binned is not None for s in scans)
                     and (gate is None or gate[2])):
@@ -2628,6 +2691,9 @@ def _run_spectra(f, run: MzmlRun, targets, windows, *, project, config,
                 drift_end=gate[1] if gated else np.nan,
                 scans=(_scan_record(f, table, order, g, traces[t_i], windows[t_i], noise_cache,
                                     by_index) if t_i in traces else None),
+                intensity_odd=None if halves is None else halves[0],
+                intensity_even=None if halves is None else halves[1],
+                n_scans=len(scans), recorded_noise=recorded_noise,
             ))
         made.append((key, unclear, mine))
     return made, width
@@ -2636,8 +2702,10 @@ def _run_spectra(f, run: MzmlRun, targets, windows, *, project, config,
 def _summed(scans, lo: float, hi: float, gate, config: MzmlConfig):
     """One spectrum of :func:`_run_spectra`: the points of ``scans`` from ``lo`` to ``hi``
     (m/z; a scan with ion mobility bins over the drift range ``gate`` only, when given) summed,
-    m/z sorted, with each scan's signal there (the weights of its retention time) and whether
-    a drift range was applied."""
+    m/z sorted, with each scan's signal there (the weights of its retention time), whether a
+    drift range was applied, and the two interleaved halves of the sum (the odd and the even
+    scans, on the same grid, so that odd + even is the sum; None for one scan: the noise stage
+    measures each scan file's noise from them, :func:`hxex.noise.file_noise`)."""
     parts = []
     gated = False
     for s in scans:
@@ -2652,16 +2720,58 @@ def _summed(scans, lo: float, hi: float, gate, config: MzmlConfig):
         cut = _between(s.mz, lo, hi)
         parts.append((s.mz[cut], s.intensity[cut]))
     centroid = all(s.centroid for s in scans)
+    halves = None
     if len(parts) == 1:
         mz, y = parts[0]
     elif centroid:
-        mz, y = sum_centroid(parts, config.sum_ppm)
+        mz, y, halves = _sum_centroid_halves(parts, config.sum_ppm)
     else:
-        mz, y = sum_profile(parts, config.gap_factor)
+        mz, y, halves = _sum_profile_halves(parts, config.gap_factor)
     order_mz = np.argsort(mz, kind="stable")
     mz, y = np.asarray(mz, float)[order_mz], np.asarray(y, float)[order_mz]
+    if halves is not None:
+        halves = (np.asarray(halves[0], float)[order_mz], np.asarray(halves[1], float)[order_mz])
     weight = np.array([float(np.sum(p[1])) for p in parts])
-    return mz, y, weight, gated
+    return mz, y, weight, gated, halves
+
+
+def _sum_profile_halves(parts, gap_factor: float):
+    """:func:`sum_profile` of ``parts`` (two or more scans) with the sums of its odd and even
+    scans on the same grid: ``(mz, total, (odd, even))``."""
+    scans = [(np.asarray(m, float), np.asarray(y, float)) for m, y in parts if len(m)]
+    if not scans:
+        return np.empty(0), np.empty(0), None
+    if len(scans) == 1:
+        return scans[0][0], scans[0][1], None
+    grid = _common_grid([m for m, _ in scans], gap_factor)
+    odd, even = np.zeros(len(grid)), np.zeros(len(grid))
+    for k, (m, y) in enumerate(scans):
+        (odd if k % 2 == 0 else even).__iadd__(_resample(m, y, grid, gap_factor))
+    return grid, odd + even, (odd, even)
+
+
+def _sum_centroid_halves(parts, ppm: float):
+    """:func:`sum_centroid` of ``parts`` (two or more scans) with the sums of its odd and even
+    scans on the same merged peaks: ``(mz, total, (odd, even))``."""
+    mz = np.concatenate([np.asarray(m, float) for m, _ in parts]) if parts else np.empty(0)
+    y = np.concatenate([np.asarray(v, float) for _, v in parts]) if parts else np.empty(0)
+    parity = np.concatenate([np.full(len(m), k % 2) for k, (m, _) in enumerate(parts)]) \
+        if parts else np.empty(0, dtype=int)
+    if len(mz) == 0:
+        return mz, y, None
+    order = np.argsort(mz, kind="stable")
+    mz, y, parity = mz[order], y[order], parity[order]
+    new = np.concatenate([[True], np.diff(mz) > mz[1:] * ppm / 1e6])
+    group = np.cumsum(new) - 1
+    total = np.bincount(group, weights=y)
+    weight = np.where(total > 0, total, 1.0)
+    centre = np.bincount(group, weights=mz * np.where(y > 0, y, 0.0))
+    plain = np.bincount(group, weights=mz) / np.bincount(group)
+    out_mz = np.where(total > 0, centre / weight, plain)
+    n = len(total)
+    odd = np.bincount(group, weights=np.where(parity == 0, y, 0.0), minlength=n)
+    even = np.bincount(group, weights=np.where(parity == 1, y, 0.0), minlength=n)
+    return out_mz, total, (odd, even)
 
 
 def _between(mz: np.ndarray, lo: float, hi: float) -> slice:
@@ -2755,7 +2865,7 @@ def _scans_offset(f, items, targets, windows, *, config, picker, registry,
         lo, hi = windows[t_i]
         known = ("drift offset", lo, hi, tuple(positions), e.peptide, e.charge, e.modification)
         if known not in memo:
-            mz, y, _, _ = _summed(scans, lo, hi, None, config)
+            mz, y, _, _, _ = _summed(scans, lo, hi, None, config)
             recorded = np.array([s.resolution for s in scans], dtype=float)
             recorded = recorded[np.isfinite(recorded)]
             picked = pick_spectrum(
@@ -3514,6 +3624,32 @@ def _scan_record(f, table: ScanTable, order, g, trace, window, noise_cache,
     fill = np.nanmedian(noise, axis=0)
     noise = np.where(np.isnan(noise), fill[None, :], noise)
     return ScanRecord(w, grid, noise)
+
+
+def _window_noise(f, positions, by_index, lo: float, hi: float, noise_cache: dict) -> float:
+    """The noise the scans at ``positions`` recorded at the window ``lo``-``hi`` (its middle;
+    the recorded noise varies slowly with m/z), summed over them in quadrature (the scans add
+    independently); NaN when none records any. ``noise_cache`` (per scan index, as
+    :func:`_scan_record` fills it) is shared by the file's spectra."""
+    at = 0.5 * (lo + hi)
+    total = 0.0
+    found = False
+    for index in positions:
+        if index not in noise_cache:
+            got = _scan_noise(f, by_index[index], index)
+            if got is None:
+                noise_cache[index] = (np.empty(0), np.empty(0))
+            else:
+                nm, nv = got
+                ok = np.isfinite(nv) & (np.asarray(nv) > 0)
+                nm, nv = np.asarray(nm, float)[ok], np.asarray(nv, float)[ok]
+                srt = np.argsort(nm)
+                noise_cache[index] = (nm[srt], nv[srt])
+        nm, nv = noise_cache[index]
+        if len(nm):
+            total += float(np.interp(at, nm, nv)) ** 2
+            found = True
+    return float(np.sqrt(total)) if found else float("nan")
 
 
 def find_fragment_peaks(f, table: ScanTable, run: MzmlRun, targets, plans, find, by_index,

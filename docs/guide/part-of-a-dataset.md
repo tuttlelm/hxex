@@ -95,11 +95,13 @@ dataset, or adding more, changes them:
   at least 20 of them; a project with fewer keeps heights. The peak width used for areas is
   measured from the same controls. Set `measure = "height"` or `"area"` in `[run.picker]` to fix
   the choice ([A peak's height or its area](picking-window.md#a-peaks-height-or-its-area)).
-- **The noise per bin.** By default the counting scale of the noise (`b1`,
-  [The noise model](noise-model.md)) is measured once from all the project's usable
-  undeuterated controls, and needs at least five series of them; a project with fewer uses one
-  noise level per spectrum instead. A project holding part of a dataset measures a slightly
-  different `b1`, and every fit changes a little with it.
+- **The noise per bin.** For scan files (mzML, Thermo raw) each file's noise curve comes from
+  its own scans ([The noise model](noise-model.md)), so a project holding part of a dataset
+  measures the same curves for the files it holds. For pre-summed formats the counting scale
+  of the noise (`b1`) is measured once from all the project's usable undeuterated controls,
+  and needs at least five series of them; a project with fewer uses one noise level per
+  spectrum instead. Such a project holding part of a dataset measures a slightly different
+  `b1`, and every fit changes a little with it.
 - **Some quality flags.** `saturated` and `tails_low` are judged only on the brighter half of the
   project's undeuterated controls, and `mz_shift` compares a series with the project's typical
   offset.

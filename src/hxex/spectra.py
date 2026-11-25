@@ -214,6 +214,17 @@ class Spectrum:
     m/z read divided by 1 + offset; NaN: not calibrated). ``scans`` (:class:`ScanRecord`) holds
     its scans' noise and shares of the signal when they were recorded (``[input.scans]
     scan_cut``), else None.
+
+    A spectrum summed from two or more scans also carries the two interleaved halves of that
+    sum on the same m/z grid, ``intensity_odd`` (the first, third, ... scans) and
+    ``intensity_even`` (the rest; ``intensity`` is their sum): the two see the same peptide, the
+    same co-eluting species, and the same elution, and differ only in their noise, from which
+    the noise stage measures each scan file's own noise curve (:func:`hxex.noise.file_noise`;
+    PLAN Next steps 43). None for a spectrum of one scan or one not summed from scans.
+    ``n_scans`` counts the scans summed (0: not summed from scans). ``recorded_noise`` is the noise
+    the instrument recorded for those scans at the spectrum's m/z window, summed over them in
+    quadrature (NaN: not recorded): the floor of a reduced-profile file's curve, whose per-scan
+    cut hides the floor from the halves.
     """
 
     mz: np.ndarray
@@ -234,9 +245,18 @@ class Spectrum:
     drift_end: float = float("nan")
     mz_calibration_ppm: float = float("nan")
     scans: ScanRecord | None = field(default=None, compare=False)
+    intensity_odd: np.ndarray | None = None
+    intensity_even: np.ndarray | None = None
+    n_scans: int = 0
+    recorded_noise: float = float("nan")
 
     def __post_init__(self):
         object.__setattr__(self, "role", check_role(self.role))
+        if (self.intensity_odd is None) != (self.intensity_even is None):
+            raise ValueError("give both halves of the scans' sum or neither")
+        if self.intensity_odd is not None and not (
+                len(self.intensity_odd) == len(self.intensity_even) == len(self.mz)):
+            raise ValueError("the halves of the scans' sum must have one value per m/z point")
 
 
 def entry_rt(entry: PeptideEntry) -> float:
@@ -312,7 +332,10 @@ class SpectrumSet:
     resolving power recorded with each spectrum's scans and the m/z it is quoted at (NaN when
     not recorded; see :class:`Spectrum`). ``role`` is each spectrum's role (``'undeut'``,
     ``'fulldeut'`` or ``''``; all ``''`` when not given): the controls of a series are the
-    spectra with a role, never a time.
+    spectra with a role, never a time. ``intensity_odd`` and ``intensity_even`` are the two
+    halves of each spectrum's scans summed, parallel to ``intensity`` (NaN throughout a spectrum
+    without them; see :class:`Spectrum`); ``n_scans`` and ``recorded_noise`` are per spectrum (0
+    and NaN when not known).
     """
 
     mz: np.ndarray
@@ -342,12 +365,23 @@ class SpectrumSet:
     drift_end: np.ndarray | None = None
     mz_calibration_ppm: np.ndarray | None = None
     scans: np.ndarray | None = field(default=None, compare=False)  # ScanRecord or None each
+    intensity_odd: np.ndarray | None = None
+    intensity_even: np.ndarray | None = None
+    n_scans: np.ndarray | None = None
+    recorded_noise: np.ndarray | None = None
 
     def __post_init__(self):  # built without retention times or resolving powers: unknown
         for name in ("rt", "resolving_power", "resolving_power_mz", "rt_start", "rt_end",
-                     "drift_start", "drift_end", "mz_calibration_ppm"):
+                     "drift_start", "drift_end", "mz_calibration_ppm", "recorded_noise"):
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
+        if self.n_scans is None:  # not summed from scans
+            object.__setattr__(self, "n_scans", np.zeros(len(self.offsets) - 1, dtype=np.int64))
+        for name in ("intensity_odd", "intensity_even"):  # no halves
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.intensity), np.nan))
+            elif len(getattr(self, name)) != len(self.intensity):
+                raise ValueError(f"{name} must have one value per point of intensity")
         if self.scans is None:  # no scans recorded
             object.__setattr__(self, "scans", _objects([None] * (len(self.offsets) - 1)))
         if self.role is None:  # built without roles: time points only
@@ -366,6 +400,15 @@ class SpectrumSet:
         """(m/z, intensity) views for spectrum ``i``."""
         lo, hi = self.offsets[i], self.offsets[i + 1]
         return self.mz[lo:hi], self.intensity[lo:hi]
+
+    def halves(self, i: int) -> tuple[np.ndarray, np.ndarray] | None:
+        """The two halves of spectrum ``i``'s scans summed (odd, even; views on the same m/z
+        grid as :meth:`spectrum`), or None when it has none."""
+        lo, hi = self.offsets[i], self.offsets[i + 1]
+        odd = self.intensity_odd[lo:hi]
+        if hi == lo or not np.isfinite(odd).all():
+            return None
+        return odd, self.intensity_even[lo:hi]
 
     def find(self, spectrum_id: str) -> int:
         """Position of the spectrum with this ``spectrum_id``; raises KeyError if absent."""
@@ -392,11 +435,14 @@ class SpectrumSet:
         fields = {
             f.name: getattr(self, f.name)
             for f in dataclasses.fields(self)
-            if f.name not in ("mz", "intensity", "offsets", "source")
+            if f.name not in ("mz", "intensity", "offsets", "source", "intensity_odd",
+                              "intensity_even")
         }
         return SpectrumSet(
             mz=self.mz[pts],
             intensity=self.intensity[pts],
+            intensity_odd=self.intensity_odd[pts],
+            intensity_even=self.intensity_even[pts],
             offsets=np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64),
             **{k: v[keep] for k, v in fields.items()},
             source=self.source,
@@ -441,4 +487,16 @@ class SpectrumSet:
                                         dtype=np.float64),
             role=np.array([s.role for s in spectra], dtype="<U8"),
             scans=_objects([s.scans for s in spectra]),
+            intensity_odd=_halves([s.intensity_odd for s in spectra], sizes),
+            intensity_even=_halves([s.intensity_even for s in spectra], sizes),
+            n_scans=np.array([s.n_scans for s in spectra], dtype=np.int64),
+            recorded_noise=np.array([s.recorded_noise for s in spectra], dtype=np.float64),
         )
+
+
+def _halves(parts, sizes) -> np.ndarray:
+    """One flat array of the spectra's half sums (NaN where a spectrum has none)."""
+    if not parts:
+        return np.empty(0, dtype=np.float64)
+    return np.concatenate([np.full(n, np.nan) if p is None else np.asarray(p, dtype=np.float64)
+                           for p, n in zip(parts, sizes, strict=True)])

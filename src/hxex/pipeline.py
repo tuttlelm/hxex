@@ -36,6 +36,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -469,22 +470,95 @@ _MEASURE = object()  # _fit_part's noise_curve when none was measured before it
 
 
 def bundle_noise(picked, meas: Measurements, config: RunConfig, measurement=None,
-                 rejected=None):
-    """The bundle's per-bin noise (``[run.fit.noise] estimate = "controls"``,
-    :func:`hxex.noise.controls_noise`) from the undeuterated controls that every picker screen
-    passes at the loose level (a control not assessed counts as passing) and the review does
-    not reject (``rejected``, per measurement, :func:`hxex.review_table.rejected_spectra`:
-    left out of ``b1`` and of the onset, and named in the curve's ``left_out``), with ``b1`` per
-    sample; a warning names the samples whose own ``b1`` differs from the bundle's (more than
-    three standard errors), which a bundle mixing instruments or settings would show. None when
-    the setting is off or there are too few controls (the fit then uses one sd per
-    spectrum). ``measurement`` (:func:`hxex.picking.same_measurement`; computed from ``picked``
-    when not given): a control file read for several samples counts once."""
+                 rejected=None, source=None):
+    """The bundle's per-bin noise (``[run.fit.noise] estimate = "controls"``): for spectra
+    summed from scan files (``source``, the read record), one curve per file from its own scans
+    (:func:`hxex.noise.file_noise`: the halves of every spectrum's scans, or a kinetics run's
+    neighbouring scans; every spectrum of the file, whatever its role or review status), the
+    bundle's ``b1`` being their median; a warning names the files whose own ``b1`` differs from
+    it (more than three standard errors). For pre-summed spectra (and a bundle with no file
+    curve) ``b1`` comes from the undeuterated controls' residuals
+    (:func:`hxex.noise.controls_noise`): the controls that every picker screen passes at the
+    loose level (a control not assessed counts as passing) and the review does not reject
+    (``rejected``, per measurement, :func:`hxex.review_table.rejected_spectra`: left out of
+    ``b1`` and of the onset, and named in the curve's ``left_out``), with ``b1`` per sample and
+    a warning for a sample whose own ``b1`` differs from the bundle's. None when the setting is
+    off or nothing measures a curve (the fit then uses one sd per spectrum). ``measurement``
+    (:func:`hxex.picking.same_measurement`; computed from ``picked`` when not given): a file read
+    for several samples counts once."""
     from .analysis.screening import THRESHOLDS
-    from .noise import controls_noise
+    from .io.mzml import kinetics_spectra, reduced_files, scan_spectrum_keys
+    from .noise import ControlsNoise, controls_noise, file_noise, median_b1
     noise = config.fit.noise
     if noise.estimate != "controls":
         return None
+    if measurement is None:
+        measurement = same_measurement(picked)
+    files, targets = scan_spectrum_keys(source, meas.spectrum_id)
+    curves, why = [], {}
+    if (files != "").any():
+        offsets = np.asarray(picked.offsets, dtype=np.int64)
+
+        def halves(name: str) -> list:
+            flat = np.asarray(getattr(picked, name), dtype=np.float64)
+            out = []
+            for i in range(len(meas)):
+                part = flat[offsets[i]:offsets[i + 1]]
+                out.append(part if len(part) and np.isfinite(part).all() else None)
+            return out
+
+        curves, why = file_noise(
+            meas.observed, halves("intensity_odd"), halves("intensity_even"), meas.charges(),
+            files, bins=meas.bins, kinetics=kinetics_spectra(source, meas.spectrum_id),
+            target=targets,
+            time=meas.time, recorded_noise=picked.recorded_noise, reduced=reduced_files(source),
+            measurement=measurement)
+        if curves:
+            routes = Counter(c.route for c in curves)
+            log.info("per-bin noise measured per scan file from the files' own scans: %s"
+                     "; b1 median %.3g (%.3g to %.3g)",
+                     ", ".join(f"{n} file{'s' if n > 1 else ''} from "
+                               + ("the odd and even halves of each spectrum's scans"
+                                  if r == "split" else "neighbouring scans")
+                               for r, n in sorted(routes.items())),
+                     median_b1(curves)[0], min(c.b1 for c in curves), max(c.b1 for c in curves))
+        for name, reason in sorted(why.items()):
+            log.warning("per-bin noise: no curve for %s (%s): its spectra take the bundle's b1",
+                        name, reason)
+    controls = None
+    if (files == "").any() or not curves:
+        controls = _controls_route(picked, meas, config, measurement, rejected, THRESHOLDS,
+                                   controls_noise)
+    if not curves:
+        if controls is None:
+            log.info("per-bin noise not measured (fewer than 5 series of usable undeuterated "
+                     "controls, or no counting term found): one sd per spectrum")
+        return controls
+    if controls is not None:  # pre-summed spectra beside scan files: their b1 the controls'
+        curve = dataclasses.replace(controls, by_file=tuple(curves),
+                                    unmeasured=tuple(sorted(why.items())))
+    else:
+        b1, se = median_b1(curves)
+        curve = ControlsNoise(b1=b1, model_error=noise.model_error / 100.0, onset=float("inf"),
+                              n_controls=0, n_series=0, b1_se=se, by_file=tuple(curves),
+                              unmeasured=tuple(sorted(why.items())))
+    odd = curve.disagreeing_files()
+    if odd:
+        log.warning("per-bin noise: %d of %d scan files' own counting scale differs from the "
+                    "bundle's median (%.3g +- %.2g) by more than three standard errors and "
+                    "10 %%: %s%s "
+                    "(files recorded with other settings, or worth a look; hxex info shows "
+                    "every file's)", len(odd), len(curve.by_file), curve.b1, curve.b1_se,
+                    ", ".join(f"{f.file} {f.b1:.3g} +- {f.b1_se:.2g}" for f in odd[:4]),
+                    ", ..." if len(odd) > 4 else "")
+    return curve
+
+
+def _controls_route(picked, meas: Measurements, config: RunConfig, measurement, rejected,
+                    THRESHOLDS, controls_noise):
+    """The per-bin noise from the undeuterated controls' residuals (:func:`bundle_noise`);
+    None when too few controls measure it."""
+    noise = config.fit.noise
     usable = np.ones(len(meas), dtype=bool)
     for rules in THRESHOLDS["loose"].values():
         for name, limit in rules:
@@ -500,18 +574,11 @@ def bundle_noise(picked, meas: Measurements, config: RunConfig, measurement=None
                  int(out.sum()), "" if out.sum() == 1 else "s")
     curve = controls_noise(meas.bins, meas.observed, meas.shapes, role.astype(str),
                            meas.charges(), meas.data_id, model_error=noise.model_error / 100.0,
-                           usable=usable, sample=picked.sample,
-                           measurement=(same_measurement(picked) if measurement is None
-                                        else measurement))
-    if curve is not None:
-        import dataclasses
-
-        curve = dataclasses.replace(curve, left_out=tuple(sorted(
-            str(s) for s in np.asarray(meas.spectrum_id, dtype=str)[out])))
+                           usable=usable, sample=picked.sample, measurement=measurement)
     if curve is None:
-        log.info("per-bin noise not measured (fewer than 5 series of usable undeuterated "
-                 "controls, or no counting term found): one sd per spectrum")
         return None
+    curve = dataclasses.replace(curve, left_out=tuple(sorted(
+        str(s) for s in np.asarray(meas.spectrum_id, dtype=str)[out])))
     log.info("per-bin noise measured from %d series of undeuterated controls (b1 %.3g)",
              curve.n_series, curve.b1)
     for s in curve.disagreeing_samples():
@@ -1539,13 +1606,14 @@ def run(
     picked = binned.select(kept)
     measurement = same_measurement(picked)
     refuse_copies(picked, measurement)
-    from .io.mzml import kinetics_spectra
+    from .io.mzml import kinetics_spectra, scan_file_names
 
     measurements = Measurements.from_binned(
         picked, n_max_factor=config.n_max_factor,
         nterm_subtract=config.picker.nterm_subtract,
         amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes,
         kinetics=None if raw is None else kinetics_spectra(raw.source, picked.spectrum_id),
+        file=None if raw is None else scan_file_names(raw.source, picked.spectrum_id),
     )
     if chosen_k:  # a review table naming scans this run no longer sums (a new window)
         from .review_table import moved_choices
@@ -1560,7 +1628,8 @@ def run(
         ReviewSettings(table=None if review_table is None else str(review_table),
                        exclude=tuple(view_exclude)),
         picked, stored=review, source=None if raw is None else raw.source)
-    noise_curve = bundle_noise(picked, measurements, config, measurement, rejected)
+    noise_curve = bundle_noise(picked, measurements, config, measurement, rejected,
+                               source=None if raw is None else raw.source)
     if reuse and previous is not None:  # a curve hardly moved: the replaced bundle's kept
         from .reuse import kept_curve
 

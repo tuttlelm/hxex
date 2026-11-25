@@ -12,7 +12,7 @@ import numpy as np
 from ..spectra import _check_mask, _objects, ragged_mask, time_index
 from .screen import SCREEN_SCORES
 
-_FLAT = ("mz", "intensity", "n_deut", "offsets", "peak_mz")
+_FLAT = ("mz", "intensity", "n_deut", "offsets", "peak_mz", "intensity_odd", "intensity_even")
 # the m/z check of each spectrum's series (hxex.picking.mz_check)
 MZ_CHECK_COLUMNS = ("envelope_offset_ppm", "envelope_offset_limit_ppm", "window_shift_ppm")
 # the profile fit of each spectrum (hxex.picking.profile; NaN: picked, not fitted)
@@ -58,6 +58,11 @@ class BinnedSet:
     ``unclaimed``, ``no_cluster``; empty: not assessed), ``claim_other`` (the other ion
     named), ``claim_offset_ppm`` and ``claim_other_offset_ppm`` (the two grids' offsets from
     the cluster) and ``claim_by_position`` (no retention window compared them).
+    ``intensity_odd`` and ``intensity_even`` (per bin) are the bin values of the two halves of
+    the spectrum's scans summed, read at the positions the pick found (NaN throughout a spectrum
+    without halves; :class:`~hxex.spectra.Spectrum`), ``n_scans`` the scans summed into each
+    spectrum (0: not summed from scans) and ``recorded_noise`` the noise its scans recorded at its
+    window, in quadrature (NaN: none): the noise stage's input (:func:`hxex.noise.file_noise`).
     Nothing is dropped here; drop flagged spectra with :meth:`select`. The index arrays are
     copied from the :class:`~hxex.spectra.SpectrumSet` that was picked.
     """
@@ -114,8 +119,19 @@ class BinnedSet:
     # per spectrum, its scans' noise at its bins and shares of the signal (ScanCut; None: not
     # recorded): such spectra are fitted through the instrument's per-scan cut
     scan_cut: np.ndarray | None = field(default=None, compare=False)
+    intensity_odd: np.ndarray | None = None
+    intensity_even: np.ndarray | None = None
+    n_scans: np.ndarray | None = None
+    recorded_noise: np.ndarray | None = None
 
     def __post_init__(self):
+        for name in ("intensity_odd", "intensity_even"):  # no halves
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, np.full(len(self.intensity), np.nan))
+        if self.n_scans is None:
+            object.__setattr__(self, "n_scans", np.zeros(len(self.offsets) - 1, dtype=np.int64))
+        if self.recorded_noise is None:
+            object.__setattr__(self, "recorded_noise", np.full(len(self.offsets) - 1, np.nan))
         for name in SCREEN_SCORES:  # not assessed: picked elsewhere, or by an older version
             if getattr(self, name) is None:
                 object.__setattr__(self, name, np.full(len(self.offsets) - 1, np.nan))
@@ -187,6 +203,8 @@ class BinnedSet:
             n_deut=self.n_deut[bins],
             offsets=np.concatenate([[0], np.cumsum(sizes)]).astype(np.int64),
             peak_mz=self.peak_mz[bins],
+            intensity_odd=self.intensity_odd[bins],
+            intensity_even=self.intensity_even[bins],
             **out,
         )
 

@@ -294,10 +294,15 @@ def _prepared(data: Measurements, config: FitConfig, noise_curve: ControlsNoise 
             log.warning("per-bin noise: too few undeuterated controls to measure the noise from "
                         "(at least 5 series are needed); one sd per spectrum is used instead")
         else:
-            noise = bin_noise(data.observed, data.charges(), curve)
-            log.info("per-bin noise: variance = z x %.3g x I + (%g %% of the prediction)^2, "
-                     "from %d undeuterated controls of %d series", curve.b1,
-                     100 * curve.model_error, curve.n_controls, curve.n_series)
+            noise = bin_noise(data.observed, data.charges(), curve, files=data.files())
+            if curve.by_file:
+                log.info("per-bin noise: variance = a2 + z x b1 x I + c2 x I^2 + (%g %% of the "
+                         "prediction)^2 per scan file (%d files, b1 median %.3g)",
+                         100 * curve.model_error, len(curve.by_file), curve.b1)
+            else:
+                log.info("per-bin noise: variance = z x %.3g x I + (%g %% of the prediction)^2, "
+                         "from %d undeuterated controls of %d series", curve.b1,
+                         100 * curve.model_error, curve.n_controls, curve.n_series)
     elif config.noise.estimate == "replicates":
         # series with enough replicates keep the Gaussian loss, with the sd their estimated gain
         # gives at the spectrum's mean bin intensity (variance = gain x intensity, so the

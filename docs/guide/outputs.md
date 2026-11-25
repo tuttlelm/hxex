@@ -150,7 +150,8 @@ before, a data file whose contents changed, or another version of *hxex*'s code 
 stage; "after the fit" means a stage before it is out of date), `not done` (no results yet,
 or stopped partway), or `off` (not asked for, such as the population test without a
 `[run.population_test]` table). The stages are the read of your files, the pick (the peaks
-of each spectrum), the noise (measured from the undeuterated controls), the fit, the
+of each spectrum), the noise (measured from each scan file's own scans, or from the
+undeuterated controls for pre-summed formats), the fit, the
 population test, the correction and flags (the back-exchange correction and the quality
 flags), and the bootstrap. When every stage is `done` or `off`, the last line says `nothing
 to do: the results are up to date`. `hxex run` prints the same lines at its start, before it
@@ -190,13 +191,15 @@ otherwise. It does not fit again the peptides and fragments whose spectra are al
 before: each keeps its fits from the earlier results. Only what changed is fitted, so a run
 after a small change (a retention window edited in the window, one spectrum left out, a
 peptide added) takes minutes rather than the full time. Everything that uses all the spectra
-at once (the controls, the noise measured from the undeuterated controls, the quality flags)
+at once (the controls, the noise curves, the quality flags)
 is worked out again every time, so the results are those a full run would give. The run's log
 says how many spectra kept their fits, and `hxex info results` repeats it (`fits reused`).
-Every spectrum is fitted again when a `[run.fit]` setting other than `k_max` changed, when the
-noise measured from the undeuterated controls moved by more than 1 % (its counting term, b1,
-which every spectrum's noise uses: an undeuterated control edited or added moves it a little,
-and below 1 % the earlier noise is kept, so that the fits can be), or when *hxex*'s fitting code differs from the one that made the earlier fits; the
+Every spectrum is fitted again when a `[run.fit]` setting other than `k_max` changed, or when
+*hxex*'s fitting code differs from the one that made the earlier fits; the spectra of a scan
+file are fitted again when the file's noise curve moved by more than 1 % (an edited window
+moves it a little; below 1 % the earlier curve is kept, so that the fits can be), and every
+spectrum of a pre-summed format when the counting scale measured from the undeuterated
+controls moved by more than 1 % ([The noise model](noise-model.md)); the
 log says which, and names the versions that differ. A newer *hxex* whose changes lie elsewhere
 (the window, the figures, the documentation) keeps them. So does another computer: fits made
 on a graphics card are kept when you run the project again on a laptop without one, and the

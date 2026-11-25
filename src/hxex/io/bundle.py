@@ -59,6 +59,7 @@ from ..population_test import PopulationTest, PopulationTestConfig
 from ..quality import FLAG_NAMES, QualityConfig, QualityFlags
 from ..spectra import FULLDEUT, UNDEUT, SpectrumSet
 from ._arrow import (
+    HALVES,
     ROLE,
     _col,
     _cut_columns,
@@ -158,6 +159,9 @@ def _binned_table(b: BinnedSet) -> pa.Table:
     cols["intensity"] = _flat_ragged(b.intensity, b.offsets, pa.float64())
     cols["n_deut"] = _flat_ragged(b.n_deut, b.offsets, pa.int64())
     cols["peak_mz"] = _flat_ragged(b.peak_mz, b.offsets, pa.float64())
+    for name in HALVES:  # the halves' bin values (NaN: no halves)
+        cols[name] = _flat_ragged(np.asarray(getattr(b, name), dtype=np.float64), b.offsets,
+                                  pa.float64())
     per_spectrum = (
         ("mz_offset_ppm", np.float64),
         ("env_width", np.float64), ("env_symm", np.float64), ("threshold", np.float64),
@@ -1396,8 +1400,17 @@ class Bundle:
                 time=np.asarray(_col(t, "time"), dtype=np.float64),
                 role=self._roles(t), random_id=self._random_id(spectrum_id),
                 charge=self._charges(spectrum_id), scan_cut=_cuts(t, bins),
+                file=self._files(spectrum_id),
             )
         return self._cache["measurements"]
+
+    def _files(self, spectrum_id: np.ndarray) -> np.ndarray | None:
+        """Each fitted spectrum's scan file, from the read record (``''`` where none); None
+        without a record."""
+        from .mzml import scan_file_names
+
+        source = self.spectra_source()
+        return None if source is None else scan_file_names(source, spectrum_id)
 
     def spectrum_ids(self) -> np.ndarray:
         """The ids of the measurements, read without the rest of the table (``hxex check``
@@ -1566,8 +1579,11 @@ class Bundle:
             no_signal=np.asarray(_col(t, "no_signal"), dtype=bool),
             capped=np.asarray(_col(t, "capped"), dtype=bool),
             **{**_index_arrays(t, ("rt", "rt_start", "rt_end", "drift_start", "drift_end",
-                                   "mz_calibration_ppm")),
+                                   "mz_calibration_ppm", "recorded_noise")),
                ROLE: self._roles(t)},
+            # the halves' bin values: absent in bundles picked before them (no halves)
+            **{name: np.asarray(_ragged_read(t, name)[0], dtype=np.float64)
+               for name in HALVES if name in t.column_names},
             peak_mz=peak_mz, mz_offset_ppm=offset,
             **{name: np.asarray(_col(t, name), dtype=np.float64)  # older bundles: not assessed
                for name in SCREEN_SCORES if name in t.column_names},

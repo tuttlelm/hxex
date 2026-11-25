@@ -12096,3 +12096,88 @@ CSVs or mzML if wanted.
     delivered (`Latest._deliver`), so a done closure no longer keeps what it captured until the
     next request; the results page lets go of its fragment table at release; and the test names
     who still holds the results when it fails (`_holders`), as this diagnosis needed.
+451. **The noise of a run from its own scans, built: one curve per scan file** (2026-11-24;
+    PLAN Next steps 43, from item 449's measurements and the owner's decisions; branch
+    `scan-split-build`). Read stage: where a spectrum is summed from two or more scans (mzML,
+    Thermo raw; every MS level and every role) the reader also sums its odd and its even scans
+    on the full sum's m/z grid (`_summed`; profile scans resampled per parity on the common
+    grid, centroided ones per parity on the merged peaks, so odd + even is the sum point for
+    point), kept with the spectrum (`Spectrum.intensity_odd` / `intensity_even`, `n_scans`;
+    `spectra.parquet` float32 list columns, null rows for a spectrum of one scan; a rerun from
+    stored spectra needs no scan file) and, for a reduced-profile file, the noise its scans
+    recorded at the spectrum's window summed in quadrature (`recorded_noise`). Picking stage: the
+    halves are read at the positions the full spectrum's pick found (`half_values`: the half's
+    value at the apex's grid point, or the area about it with an area measure, for every bin
+    the pick found; with `pick = "profile_fit"` one fit of each half with the spectrum's own
+    design, offset, peaks and strays, `fit_spectrum(halves=)`), into `binned.parquet`
+    (`intensity_odd`, `intensity_even`, `n_scans`, `recorded_noise`). Noise stage:
+    `hxex.noise.file_noise` fits `a2 + z b1 I + c2 I^2` per scan file from every spectrum of
+    the file, whatever its role or review status (the halves differ by the noise alone; owner,
+    2026-11-24): bins at 5 % of the top or more and above zero in both halves, `d = odd - r
+    even` with the design of the scratch, up to 14 log-intensity groups of 20 bins, each
+    group's robust variance fitted by NNLS in relative terms, the groups standardised by the
+    current fit and refitted six times (as `_curve_fit` does: a robust spread understates a
+    group whose bins differ in variance), the full-sum conversion (`a2 x 2`, `c2 / 2`), and
+    standard errors from 20 resamplings of the file's spectra; a kinetics run (`group =
+    "each"`) by the second difference of consecutive scans of one target (aligned by bin
+    number, from `usable_from` on, on the scan's own scale). One departure from the scratch,
+    measured on synthetic spectra: the fitted scaling removes from each bin's difference the
+    share `w` of its own noise that the bin holds of the sum, so `d` is inflated per bin by
+    `1 / sqrt(1 - w)` (`n / (n - 1)` for equal bins); with the scratch's flat `n / (n - 1)` a
+    narrow five-bin envelope read `b1` 8 % low (7.4 for 8), with the per-bin rule 7.6 to 8.6
+    for 8 over floors, proportional terms and charges, and 7.8 to 7.9 on a twelve-bin
+    envelope; the kinetics route 5.0 for 5 (3.3 before); owner agreed to the rule and to the
+    10 % condition of the per-file warning below, 2026-11-24). A reduced-profile file takes the
+    larger of its fitted floor and the median of its spectra's recorded scan noise as `a2`
+    (`floor_recorded`); a file read for several samples counts each measurement once. The
+    record (`ControlsNoise.by_file`, manifest `noise_curve.files`; `unmeasured` names the files
+    without a curve and why: too few bins, no counting term): the bundle's `b1` is the median
+    over the files (its error 1.25 x their spread over the root of their number) and serves the
+    spectra without a file curve; a project mixing pre-summed and scan files keeps the
+    controls' route for the former (`routes`: `files`, `controls`, `mixed`); the per-sample
+    table and its warning stay with the controls route, and a file whose `b1` differs from the
+    median by more than three combined standard errors and by more than 10 % is named in one
+    warning instead (a file of a thousand spectra measures `b1` to 2 %, and the files of a run
+    differ by 10 to 20 %).
+    Downstream, each measurement carries its scan file (`Measurements.file`, from the read
+    record by the spectrum id, `scan_spectrum_keys`; the bundle rebuilds it), and `bin_noise`
+    gives it its file's curve in place of `z b1 I`: the fit, the polish, the screen floor, the
+    bootstrap, the population test's null and the window's preview fit all go through it
+    unchanged. The kept-curve rule of item 433 is per file (`a2`, `b1` and `c2` each within
+    1 %; the bundle's `b1` likewise) and the fit reuse per measurement (`same_curve`: a spectrum
+    whose file's curve moved is fitted again, the rest keep their fits). `hxex check` says each
+    scan file's route, `hxex info` the curves (median and range of `b1`, `a`, `c`; the files
+    named when six or fewer, the differing and the unmeasured ones otherwise). The reader and
+    picking fingerprints change: every existing bundle reads its files and picks once more on
+    its next run; a bundle whose stored spectra have no halves measures no file curve (the
+    controls route, as before). Guide: Noise model, "Where the counting noise comes from";
+    BUNDLE.md. Tests: `tests/test_file_noise.py` (the estimator on synthetic halves and
+    kinetics scans, the record, the per-file keep rule, the reader's halves and the picks of
+    them, a run with six scan files kept on the second run). Built check (the private record:
+    analysis_examples/noise_model/scan_split/built_check, README with every number; reruns
+    from a scratch copy of the code, the GPU): the Orbitrap digest's 45 files all measured
+    (route split; every floor the recorded scan noise, 3.1e4 to 3.4e4), `b1` built over the
+    scratch's per file median 1.11 (q10 1.01, q90 1.25; the inflation rule), `c` the same; the
+    read 2m 45s against 175 s before (the halves and the noise lookups cost nothing
+    noticeable), `spectra.parquet` 449 -> 622 MB; against the 5939748 reference it reproduces
+    the scratch's Refit 1 within run-to-run variation (labelled replicate sd q90 0.636 ->
+    0.607 D, replicate calibration 0.68 -> 1.10, K = 1 fits missing the tallest reachable peak
+    1,485 -> 1,094, fully deuterated K > 1 18.7 -> 31.8 %: the per-scan cut read as
+    populations, item 449; PLAN 24's next step). The four kinetics projects: the kinetics
+    files' `b1` 307, 33.2 / 30.2, 36.6, 15.2 per unit charge (the scratch's second differences
+    195, 23.2 / 21.9, 30.9, 11.4: 1.2 to 1.6 times, the inflation on few-bin fragment scans),
+    their floors the recorded noise (2,780, 258 / 235, 401, 149 against 2,750, 260 / 242, 379,
+    142 recorded), the control files barely determined either way. The intact-peptide
+    benchmark's ion-mobility mzML: 102 files, `b1` built over scratch median 0.95 (q10 0.84,
+    q90 1.10), median 7.09 (the scratch 7.5, the residual route 7.53); a clean A/B against main
+    746bb1f with a K = 1 bootstrap: labelled replicate sd q90 0.429 -> 0.420 D, charge spread
+    and undeuterated centroids unchanged (1.03, 0.32), K > 1 undeuterated 10.0 -> 9.8 %, fully
+    deuterated 9.6 -> 8.7 %, labelled 25.9 -> 24.6 %, replicate calibration 1.12 -> 1.05 and
+    charge calibration 1.65 -> 1.54. The pooled raw project: 22 files, `b1` built over scratch
+    median 0.97 (q10 0.87, q90 1.12), median 8.96 (scratch 9.05); five files 15 % from the
+    median with 2 % errors (the reason the warning needs 10 % as well as three standard
+    errors); against its current bundle (older code) the replicate, charge and undeuterated
+    yardsticks all a little better and the undeuterated K > 1 19.5 -> 16.0 %. The tutorial data
+    (SpecExport, the controls route): the same `b1` as the 5939748 reference (31.195, 270
+    controls), the same K for all 3,874 spectra and identical K = 1 means. Full suite 2,275
+    passed, ruff clean, GPU parity 10 passed.

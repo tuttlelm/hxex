@@ -7,11 +7,14 @@ offers, how to switch back to the older one, and what the default's one setting 
 
 ## The two models
 
-- **Noise per bin, measured from your controls (the default).** Each bin gets its own noise,
+- **Noise per bin, measured from your data (the default).** Each bin gets its own noise,
   from two parts:
-  - **Counting noise**, which grows with the bin's intensity and with the ion's charge. *hxex*
-    measures its size once for the whole run from the undeuterated controls (`b1`, the
-    instrument's counting scale), so it needs no information about the instrument.
+  - **Counting noise**, which grows with the bin's intensity and with the ion's charge. For
+    spectra *hxex* sums from scans (mzML and Thermo raw files) it measures the noise curve of
+    every scan file from that file's own scans (see [Where the counting noise comes
+    from](#where-the-counting-noise-comes-from)); for pre-summed formats (SpecExport,
+    HX-Express, pooled folders) it measures one counting scale for the whole run from the
+    undeuterated controls (`b1`). Either way it needs no information about the instrument.
   - **Model error**, a fixed share of the fitted intensity at each bin (`model_error`, 9 % by
     default): an allowance for the ways real envelopes depart from the model's binomial
     populations, which repeat from one replicate to the next and so are not noise in the usual
@@ -36,10 +39,9 @@ often than one level per spectrum on every dataset tried but one (that dataset's
 (85 % against 78 %). Without the population test the picture is mixed: on two datasets more
 undeuterated controls were split (for example 10.6 against 8.3 %), and spectra in general were
 split slightly more often. Neither model fully covers the differences between charge states of
-one injection. On the one Orbitrap dataset tried, the counting scale measured from the
-controls came out about four times too large, so its error bars were about 1.5 times larger than
-the replicates' scatter whatever `model_error` was, and it chose two populations more often than
-one level per spectrum; use it there with care.
+one injection. (Until 24 November 2026 the counting scale came from the undeuterated controls'
+residuals for every format; on an Orbitrap dataset that read it far too large, so the error bars
+were 1.5 times the replicates' scatter. Scan files now take their own curves, below.)
 
 **Comparing samples.** Because the per-bin model fits the replicates of a sample more
 consistently, the scatter between replicates is smaller, and so is the smallest difference that
@@ -49,9 +51,60 @@ differed from the reference. A check that compares two replicates of a sample wi
 where every difference found is false, found false differences in about 1 % of peptides and
 residues with either model, so the extra differences are real gains in sensitivity, not noise.
 
+## Where the counting noise comes from
+
+**Scan files (mzML, Thermo raw).** When *hxex* sums a spectrum from several scans it also sums
+the odd scans and the even scans separately. The two halves see the same peptide, the same
+co-eluting species, and the same elution; only their noise differs. From the halves of every
+spectrum of a scan file, labelled, undeuterated, and fully deuterated alike, *hxex* fits that
+file's own noise curve: a floor, a counting term that grows with the intensity and the charge,
+and a proportional term (`a2 + z b1 I + c2 I^2`). Every spectrum of the file is then fitted with
+its file's curve. The curve needs no replicate injection and no control: a labelled file that has
+no control of its own still gets its own curve, and a file that was recorded with other settings
+shows it. On two Q-TOF datasets the halves give the same counting scale as the undeuterated
+controls' residuals and as replicate injections; on an Orbitrap dataset the controls' residuals
+had read the counting scale fifteen times too large (the instrument's per-scan cut was read as
+noise), and the halves give the scale the replicate injections give, with error bars that match
+the scatter between replicates.
+
+- **Kinetics runs** (`[input.scans] group = "each"`, every scan its own spectrum) have nothing
+  to halve: their curve comes from each scan against its two neighbours (the second difference
+  of consecutive scans of one target, which removes the exchange between them), from
+  `usable_from` on.
+- **Reduced profile files** (Orbitrap scans stored with their weakest peaks deleted,
+  [Inputs](inputs.md)) hide the floor of the curve, so their floor is the noise the instrument
+  recorded for the scans, summed over the spectrum's scans, where that is larger than the
+  fitted one.
+- **A file with too few spectra** for a curve (fewer than about sixty bins with signal in both
+  halves, or no counting term found) is named in the log and in `hxex info`, and its spectra
+  take the run's median curve.
+- The review does not change these curves: a rejected spectrum's halves still differ by its
+  noise alone, and the robust fit absorbs the odd spectrum. So rejecting a spectrum, or editing
+  one elution window, changes one file's curve by at most one spectrum among its hundreds, and
+  the fits of the other spectra are kept ([Running again](outputs.md#running-again)).
+
+**Pre-summed formats.** SpecExport, HX-Express, and pooled folders hold spectra already summed,
+so the halves are not available. There *hxex* measures one counting scale for the run (`b1`)
+from the undeuterated controls' residuals, as described under [What `hxex info`
+shows](#what-hxex-info-shows). A project that mixes both kinds of input gets a curve per scan
+file and the controls' scale for the rest.
+
+`hxex check` says which route each scan file will take, and `hxex info` shows the curves:
+
+```text
+noise     per bin, a2 + z x b1 x I + c2 x I^2 + (9 % of the fit)^2, one curve per scan file (45
+          files: 45 from the odd and even halves of each spectrum's scans); b1 median 783 +- 21
+          (447 to 1.1e+03), a median 2.9e+04 (...; 45 from the recorded scan noise), c median
+          0.2 % (0 to 0.4 %)
+```
+
+The files of one run differ by 10 to 20 % in their counting scale. A file whose own differs
+from the run's median by more than three standard errors and by more than 10 % is named with a
+warning (`differs`): it may come from another instrument or setting, or be worth a look.
+
 ## What `hxex info` shows
 
-`hxex info` shows what was measured, for example:
+For pre-summed formats `hxex info` shows what was measured from the controls, for example:
 
 ```text
 noise     per bin, z x b1 x I + (9 % of the fit)^2 with b1 = 8.16 +- 0.49 (from 2683 undeuterated
@@ -129,7 +182,8 @@ estimate = false
 ```
 
 This is also needed with `model = "poisson"`, which has no per-bin form. Results made before 31
-October 2026 were fitted with one level per spectrum; `hxex info` says which noise a run used.
-Run them again (`hxex run`, which fits every spectrum again here; add `--keep-previous` to
-keep the earlier results beside them) to use the per-bin noise, and compare only runs made with
-the same noise model.
+October 2026 were fitted with one level per spectrum, and results from scan files made before 24
+November 2026 with the controls' counting scale; `hxex info` says which noise a run used. Run
+them again (`hxex run`, which reads the files and fits every spectrum again here; add
+`--keep-previous` to keep the earlier results beside them) to use the per-bin noise, and compare
+only runs made with the same noise model.

@@ -220,14 +220,24 @@ def _settings(config):
 CURVE_SHARE = 0.01
 
 
+def _within(new: float, old: float, share: float = CURVE_SHARE) -> bool:
+    """Whether ``new`` is within ``share`` of ``old`` (two zeros are; NaN never)."""
+    if old == 0 and new == 0:
+        return True
+    return bool(np.isfinite(new) and np.isfinite(old) and old != 0
+                and abs(new - old) / abs(old) <= share)
+
+
 def kept_curve(path: str | Path | None, curve):
     """The per-bin noise a run that updates the bundle at ``path`` fits with: ``curve`` (what
-    the run measured), or the bundle's own when the fits would hardly differ: the same
-    model-error term, and the bundle's ``b1`` (the one number of the curve the fits use; the
-    onset and the per-sample values are only reported) within :data:`CURVE_SHARE` of the new
-    one. Editing a control's window, or another set of undeuterated controls (a changed
-    ``undeut_at``), moves ``b1`` a little, which would otherwise change every spectrum's noise
-    and leave no fit to keep. Logged either way, with the move."""
+    the run measured) with every part the fits would hardly differ by replaced by the bundle's
+    own: the same model-error term, and, per scan file, the bundle's curve when its ``a2``,
+    ``b1`` and ``c2`` are each within :data:`CURVE_SHARE` of the new one (the file's spectra
+    then keep their fits; a file whose curve moved more is fitted with its new curve), and the
+    bundle's ``b1`` (what spectra without a file curve use; the onset and the per-sample values
+    are only reported) likewise. Editing a control's window, or another set of undeuterated
+    controls (a changed ``undeut_at``), moves the curves a little, which would otherwise change
+    every spectrum's noise and leave no fit to keep. Logged either way, with the moves."""
     from .io.bundle import BundleError, bundle_manifest
     from .noise import ControlsNoise
 
@@ -242,19 +252,44 @@ def kept_curve(path: str | Path | None, curve):
     old = ControlsNoise.from_dict(record)
     if old == curve:
         return curve
-    move = abs(curve.b1 - old.b1) / old.b1 if old.b1 else float("inf")
-    if (old.model_error != curve.model_error or old.model_error_at != curve.model_error_at
-            or not move <= CURVE_SHARE):
-        log.info("per-bin noise: b1 %.6g measured now, %.6g in the results (moved %.2g %%, more "
-                 "than %g %%): every spectrum is fitted with the new curve", curve.b1, old.b1,
-                 100 * move, 100 * CURVE_SHARE)
+    if old.model_error != curve.model_error or old.model_error_at != curve.model_error_at:
+        log.info("per-bin noise: the model-error term changed: every spectrum is fitted with "
+                 "the new curve")
         return curve
-    log.info("per-bin noise: b1 %.6g measured now, %.6g in the results (moved %.2g %%, within "
-             "%g %%): the earlier curve is kept, so the unchanged spectra keep their fits",
-             curve.b1, old.b1, 100 * move, 100 * CURVE_SHARE)
     import dataclasses
 
-    return dataclasses.replace(old, left_out=curve.left_out)  # what this run left out
+    theirs = old.file_curves()
+    files, kept_files, moved = [], 0, []
+    for f in curve.by_file:
+        o = theirs.get(f.file)
+        if o is not None and o.route == f.route and all(
+                _within(getattr(f, k), getattr(o, k)) for k in ("a2", "b1", "c2")):
+            files.append(o)
+            kept_files += 1
+        else:
+            files.append(f)
+            if o is not None:
+                moved.append(f.file)
+    out = dataclasses.replace(curve, by_file=tuple(files))
+    move = abs(curve.b1 - old.b1) / old.b1 if old.b1 else float("inf")
+    if move <= CURVE_SHARE:
+        out = dataclasses.replace(out, b1=old.b1, b1_se=old.b1_se, onset=old.onset,
+                                  n_controls=old.n_controls, n_series=old.n_series,
+                                  by_sample=old.by_sample)
+    if curve.by_file:
+        log.info("per-bin noise: %d of %d scan files' curves within %g %% of the results' "
+                 "(kept, so their unchanged spectra keep their fits)%s", kept_files,
+                 len(curve.by_file), 100 * CURVE_SHARE,
+                 f"; moved more: {', '.join(moved[:5])}{', ...' if len(moved) > 5 else ''}"
+                 if moved else "")
+    if curve.routes != "files":
+        log.info("per-bin noise: b1 %.6g measured now, %.6g in the results (moved %.2g %%, %s "
+                 "%g %%): %s", curve.b1, old.b1, 100 * move,
+                 "within" if move <= CURVE_SHARE else "more than", 100 * CURVE_SHARE,
+                 "the earlier value is kept, so the unchanged spectra keep their fits"
+                 if move <= CURVE_SHARE else "every spectrum without a file curve is fitted "
+                 "with the new one")
+    return out
 
 
 def reused_fits(path: str | Path | None, data, config, noise_curve,
@@ -299,8 +334,14 @@ def reused_fits(path: str | Path | None, data, config, noise_curve,
             fit = b.fit()
             if not why and not same_fit_settings(fit.config, config.fit):
                 why.append("[run.fit] changed")
+            same_noise = None  # per measurement, with per-file curves
             if not why and fit.noise_curve != noise_curve:
-                why.append("the per-bin noise measured from the undeuterated controls changed")
+                if fit.noise_curve is None or noise_curve is None:
+                    why.append("the per-bin noise changed")
+                else:
+                    same_noise = noise_curve.same_curve(fit.noise_curve, data.files())
+                    if not same_noise.any():
+                        why.append("the per-bin noise measured from the data changed")
             if why:
                 log.info("fitting every spectrum: the previous results in %s cannot be reused "
                          "(%s)", path, "; ".join(why))
@@ -321,6 +362,8 @@ def reused_fits(path: str | Path | None, data, config, noise_curve,
                                or not same_values(_without_ks(boot_settings),
                                                   _without_ks(config.bootstrap)))
             pos = same_inputs(data, b.measurements())
+            if same_noise is not None:  # a spectrum whose file's noise curve moved
+                pos[~same_noise] = -1
             fitted_k = config.fit.k_values if k_max is not None else fit.k_values
             if chosen:
                 for i, sid in enumerate(map(str, data.spectrum_id)):

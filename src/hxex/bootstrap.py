@@ -423,7 +423,8 @@ def bootstrap(
     scale, keys = fit.obs_scale, data.random_keys()
     noise = None  # per-bin noise in the scaled units, with estimate='controls'
     if fit.noise_curve is not None:
-        noise = bin_noise(data.observed, data.charges(), fit.noise_curve).scaled(scale)
+        noise = bin_noise(data.observed, data.charges(), fit.noise_curve,
+                          files=data.files()).scaled(scale)
     # the per-scan cut in the scaled units (None: no measurement has one)
     cut = None if data.scan_cut is None or not data.cut.any() else [
         None if c is None else ScanCut(c.weights, np.asarray(c.noise, float) / scale[i])

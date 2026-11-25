@@ -1327,6 +1327,11 @@ def _check_scan_files(project, index_rows: list | None = None) -> list[str]:
             _say("  " + _instrument_text(instrument))
         if profiles[-1] is not None:
             _say("  " + _profile_text(profiles[-1]))
+        if getattr(getattr(project.run, "fit", None), "noise", None) is not None \
+                and project.run.fit.noise.estimate == "controls":
+            _say("  noise: this file's own curve, from "
+                 + ("each scan against its neighbours" if run.time is None and not run.role
+                    else "the odd and even halves of each spectrum's scans"))
         for label in none[:10]:
             _say(f"  no scans: {label}")
         if len(none) > 10:
@@ -1893,6 +1898,13 @@ def _noise_curve_text(fit) -> str:
         n = len(curve.left_out)
         onset += f", {n} the review rejects left out"
     of = "the fit" if curve.model_error_at == "prediction" else "I"
+    if curve.by_file:
+        text = _file_curves_text(curve, of)
+        if curve.n_controls:
+            text += (f"; spectra not from a scan file: z x b1 x I with b1 = {curve.b1:.3g} +- "
+                     f"{curve.b1_se:.2g} (from {curve.n_controls} undeuterated controls of "
+                     f"{curve.n_series} series{onset})")
+        return text
     text = (f"per bin, z x b1 x I + ({100 * curve.model_error:g} % of {of})^2 with b1 = "
             f"{curve.b1:.3g} +- {curve.b1_se:.2g} (from {curve.n_controls} undeuterated "
             f"controls of {curve.n_series} series{onset})")
@@ -1902,6 +1914,39 @@ def _noise_curve_text(fit) -> str:
             (f"{s.sample} {s.b1:.3g} +- {s.b1_se:.2g}{' (differs)' if s.sample in odd else ''}"
              if np.isfinite(s.b1) else f"{s.sample} not measured ({s.n_series} series)")
             for s in curve.by_sample)
+    return text
+
+
+def _file_curves_text(curve, of: str) -> str:
+    """The per-file part of the noise line: the files' curves summarised (named when few)."""
+    files = curve.by_file
+    b = np.array([f.b1 for f in files])
+    a = np.sqrt(np.array([f.a2 for f in files]))
+    c = 100 * np.sqrt(np.array([f.c2 for f in files]))
+    routes = {"split": "the odd and even halves of each spectrum's scans",
+              "scans": "neighbouring scans"}
+    counts = Counter(f.route for f in files)
+    how = ", ".join(f"{n} from {routes[r]}" for r, n in sorted(counts.items()))
+    text = (f"per bin, a2 + z x b1 x I + c2 x I^2 + ({100 * curve.model_error:g} % of {of})^2, "
+            f"one curve per scan file ({len(files)} file{'s' if len(files) > 1 else ''}: {how}); "
+            f"b1 median {curve.b1:.3g} +- {curve.b1_se:.2g} ({b.min():.3g} to {b.max():.3g}), "
+            f"a median {np.median(a):.3g} ({a.min():.3g} to {a.max():.3g}"
+            + (f"; {sum(f.floor_recorded for f in files)} from the recorded scan noise"
+               if any(f.floor_recorded for f in files) else "")
+            + f"), c median {np.median(c):.2g} % ({c.min():.2g} to {c.max():.2g} %)")
+    odd = {f.file for f in curve.disagreeing_files()}
+    if len(files) <= 6:
+        text += "; by file: " + ", ".join(
+            f"{f.file} b1 {f.b1:.3g} +- {f.b1_se:.2g}{' (differs)' if f.file in odd else ''}"
+            for f in files)
+    elif odd:
+        text += f"; {len(odd)} differ: " + ", ".join(sorted(odd)[:5]) + (
+            ", ..." if len(odd) > 5 else "")
+    if curve.unmeasured:
+        text += (f"; {len(curve.unmeasured)} file{'s' if len(curve.unmeasured) > 1 else ''} "
+                 "without a curve (take the median): "
+                 + ", ".join(f"{name} ({why})" for name, why in curve.unmeasured[:3])
+                 + (", ..." if len(curve.unmeasured) > 3 else ""))
     return text
 
 

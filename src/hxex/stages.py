@@ -536,8 +536,8 @@ def _rejected_controls_cause(project, bundle: Path, causes) -> None:
     try:
         with open_bundle(bundle) as b:
             curve = b.fit().noise_curve
-            if curve is None or not b.has("binned"):
-                return
+            if curve is None or not b.has("binned") or not curve.n_controls:
+                return  # no curve, or every curve from the scan files (no controls counted)
             binned = b.binned()
             stored = b.review() if b.has("review") else None
             source = b.spectra_source()

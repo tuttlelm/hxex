@@ -135,9 +135,12 @@ def fit_preview(results, picked: Preview, *, threads: int | None = None, cancel=
     rows = np.flatnonzero(np.asarray(results.measurements.data_id) == data_id)
     if len(rows):
         shapes[data_id] = results.measurements.shapes[int(rows[0])]
+    from ..io.mzml import scan_file_names
+
     measurements = Measurements.from_binned(
         binned, n_max_factor=config.n_max_factor, nterm_subtract=config.picker.nterm_subtract,
-        amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes)
+        amide_rules=config.picker.amide_rules, registry=config.registry, shapes=shapes,
+        file=scan_file_names(getattr(picked.spectra, "source", None), binned.spectrum_id))
     # every K, on the CPU (one spectrum; the run may have used a GPU this computer lacks)
     fit_config = replace(config.fit, screen=False, backend=replace(config.fit.backend,
                                                                    device="cpu"))

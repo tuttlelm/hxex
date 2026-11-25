@@ -20,14 +20,18 @@ A reference is given per measurement as the indices of its reference spectra (re
 averaged), or None for the measurement's own spectrum.
 
 ``estimate='controls'`` (the default) gives every bin its own noise variance instead of one sd per
-spectrum: ``z b1 I + (m F)^2`` at a bin of intensity ``I`` and fitted intensity ``F`` in a
-spectrum of charge ``z`` (:class:`ControlsNoise`, :class:`BinNoise`: the model error follows the
-fit's prediction, HISTORY 291), at least (0.5 % of the spectrum's tallest bin)^2. ``b1`` (the
-counting noise of the instrument, which grows with the ion's charge) is measured once per bundle
-from the undeuterated controls
-(:func:`controls_noise`); ``m`` (``model_error``, percent) is a fixed allowance for how far real
-envelopes depart from the model's binomial mixtures, the same for every dataset. The scale above
-then only fixes the units. Measurements: docs/HISTORY.md items 187 to 191.
+spectrum: ``a2 + z b1 I + c2 I^2 + (m F)^2`` at a bin of intensity ``I`` and fitted intensity
+``F`` in a spectrum of charge ``z`` (:class:`ControlsNoise`, :class:`BinNoise`: the model error
+follows the fit's prediction, HISTORY 291), at least (0.5 % of the spectrum's tallest bin)^2.
+For spectra summed from scans (mzML, Thermo raw) the curve ``a2 + z b1 I + c2 I^2`` is measured
+per scan file from the two interleaved halves of every spectrum's scans, which differ only in
+their noise (:func:`file_noise`; kinetics runs, one scan per spectrum, from the second
+differences of neighbouring scans; PLAN Next steps 43, HISTORY 449). For pre-summed formats
+``b1`` alone (the counting noise of the instrument, which grows with the ion's charge) is
+measured once per bundle from the undeuterated controls' residuals (:func:`controls_noise`).
+``m`` (``model_error``, percent) is a fixed allowance for how far real envelopes depart from the
+model's binomial mixtures, the same for every dataset. The scale above then only fixes the
+units. Measurements: docs/HISTORY.md items 187 to 191, 449.
 """
 
 from __future__ import annotations
@@ -474,19 +478,87 @@ class SampleNoise:
     n_series: int
 
 
+FILE_ROUTES = ("split", "scans")  # the halves of each spectrum's scans; neighbouring scans
+
+
+def _num(x: float) -> float | None:
+    return None if x is None or np.isnan(x) else float(x)
+
+
+@dataclass(frozen=True)
+class FileNoise:
+    """One scan file's noise curve: variance ``a2 + z b1 I + c2 I^2`` of a bin of intensity
+    ``I`` (the file's spectra's units) in a spectrum of charge ``z``, measured by ``route``
+    (``'split'``: the odd and even halves of every spectrum's scans; ``'scans'``: a kinetics
+    run's neighbouring scans; :func:`file_noise`) from ``n_spectra`` spectra and ``n_bins``
+    bins, with the standard errors from resampling the spectra. ``floor_recorded``: ``a2`` is
+    the noise the file's scans recorded, summed in quadrature (a reduced-profile file, whose
+    per-scan cut hides the floor from the halves), not the fitted one."""
+
+    file: str
+    route: str
+    a2: float
+    b1: float
+    c2: float
+    n_spectra: int
+    n_bins: int
+    a2_se: float = float("nan")
+    b1_se: float = float("nan")
+    c2_se: float = float("nan")
+    floor_recorded: bool = False
+
+    def _key(self) -> tuple:
+        return (self.file, self.route, _num(self.a2), _num(self.b1), _num(self.c2),
+                self.n_spectra, self.n_bins, _num(self.a2_se), _num(self.b1_se),
+                _num(self.c2_se), self.floor_recorded)
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, FileNoise):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash(self._key())
+
+    def variance(self, intensity: np.ndarray, charge: float = 1.0) -> np.ndarray:
+        """The curve at ``intensity`` (without the model-error term)."""
+        i = np.clip(np.asarray(intensity, dtype=np.float64), 0.0, None)
+        return self.a2 + charge * self.b1 * i + self.c2 * i * i
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"file": self.file, "route": self.route, "a2": _num(self.a2), "b1": _num(self.b1),
+                "c2": _num(self.c2), "n_spectra": self.n_spectra, "n_bins": self.n_bins,
+                "a2_se": _num(self.a2_se), "b1_se": _num(self.b1_se), "c2_se": _num(self.c2_se),
+                "floor_recorded": self.floor_recorded}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> FileNoise:
+        def num(x) -> float:
+            return float("nan") if x is None else float(x)
+
+        return cls(str(data["file"]), str(data["route"]), num(data["a2"]), num(data["b1"]),
+                   num(data["c2"]), int(data["n_spectra"]), int(data["n_bins"]),
+                   num(data.get("a2_se")), num(data.get("b1_se")), num(data.get("c2_se")),
+                   bool(data.get("floor_recorded", False)))
+
+
 @dataclass(frozen=True)
 class ControlsNoise:
-    """A bundle's per-bin noise (``estimate='controls'``): variance ``z b1 I + (m I)^2`` at a
-    bin of intensity ``I`` (raw units) in a spectrum of charge ``z``, with ``m`` =
-    ``model_error`` (a share, 0.09 for 9 %), at least (0.5 % of the spectrum's tallest bin)^2
-    (:func:`bin_variances`). ``b1`` comes from ``n_controls`` undeuterated controls of
+    """A bundle's per-bin noise (``estimate='controls'``): variance ``a2 + z b1 I + c2 I^2 +
+    (m I)^2`` at a bin of intensity ``I`` (raw units) in a spectrum of charge ``z``, with ``m``
+    = ``model_error`` (a share, 0.09 for 9 %), at least (0.5 % of the spectrum's tallest
+    bin)^2 (:func:`bin_variances`). The curve is the spectrum's scan file's (``by_file``, one
+    :class:`FileNoise` per scan file measured from its own scans, :func:`file_noise`) where the
+    file has one; a spectrum of a pre-summed format, or of a file with too few bins for a
+    curve, takes ``z b1 I`` with the bundle's ``b1``: the median of the files' where files were
+    measured, else the counting scale from ``n_controls`` undeuterated controls of
     ``n_series`` series below ``onset`` (the tallest peak above which the run's controls depart
-    from their natural-abundance shape; ``inf``: none found); ``b1_se`` is its standard error
-    and ``by_sample`` the same measured per sample. No constant floor is fitted: the controls
-    put it at about 0 (docs/HISTORY.md item 187), and with few controls it trades off against
-    ``b1``. ``model_error_at`` says where the fit evaluates the model-error term:
-    ``'prediction'`` (the fit's curve, :class:`BinNoise`; HISTORY 291) or ``'observed'`` (the
-    spectrum, as fits made before it did: bundles that do not record it)."""
+    from their natural-abundance shape; ``inf``: none found; :func:`controls_noise`, which fits
+    no floor: the controls put it at about 0, docs/HISTORY.md item 187). ``b1_se`` is its
+    standard error and ``by_sample`` the controls' value measured per sample (only when the
+    controls route is used). ``model_error_at`` says where the fit evaluates the model-error
+    term: ``'prediction'`` (the fit's curve, :class:`BinNoise`; HISTORY 291) or ``'observed'``
+    (the spectrum, as fits made before it did: bundles that do not record it)."""
 
     b1: float
     model_error: float
@@ -500,6 +572,9 @@ class ControlsNoise:
     # not compared by ``==`` (the measured values are), recorded so that hxex check can tell a
     # later rejection
     left_out: tuple[str, ...] = ()
+    by_file: tuple[FileNoise, ...] = ()
+    # scan files without a curve of their own (name: why), which take the bundle's b1
+    unmeasured: tuple[tuple[str, str], ...] = ()
 
     def _key(self) -> tuple:
         """The values compared by ``==``: a NaN (not measured) equals a NaN."""
@@ -508,7 +583,8 @@ class ControlsNoise:
 
         return (num(self.b1), num(self.model_error), num(self.onset), self.n_controls,
                 self.n_series, num(self.b1_se), self.model_error_at,
-                tuple((s.sample, num(s.b1), num(s.b1_se), s.n_series) for s in self.by_sample))
+                tuple((s.sample, num(s.b1), num(s.b1_se), s.n_series) for s in self.by_sample),
+                tuple(f._key() for f in self.by_file))
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, ControlsNoise):
@@ -518,9 +594,65 @@ class ControlsNoise:
     def __hash__(self) -> int:
         return hash(self._key())
 
-    def variance(self, intensity: np.ndarray, charge: float = 1.0) -> np.ndarray:
+    def file_curves(self) -> dict[str, FileNoise]:
+        """The files' curves by file name."""
+        return {f.file: f for f in self.by_file}
+
+    def curve_of(self, file: str | None) -> FileNoise | None:
+        """The curve of the scan file ``file`` (None or unknown: none; the bundle's ``b1``)."""
+        if not file:
+            return None
+        return self.file_curves().get(str(file))
+
+    @property
+    def routes(self) -> str:
+        """``'files'`` (every curve from the scan files), ``'controls'`` (the undeuterated
+        controls' residuals) or ``'mixed'`` (both: a bundle with pre-summed and scan files)."""
+        if not self.by_file:
+            return "controls"
+        return "mixed" if self.n_controls else "files"
+
+    def variance(self, intensity: np.ndarray, charge: float = 1.0,
+                 file: str | None = None) -> np.ndarray:
+        """The variance at ``intensity`` for a spectrum of ``charge`` from the scan file
+        ``file`` (None, or a file without a curve: the bundle's ``z b1 I``)."""
         i = np.clip(np.asarray(intensity, dtype=np.float64), 0.0, None)
-        return charge * self.b1 * i + (self.model_error * i) ** 2
+        own = self.curve_of(file)
+        base = charge * self.b1 * i if own is None else own.variance(i, charge)
+        return base + (self.model_error * i) ** 2
+
+    def same_curve(self, other: ControlsNoise, files: Sequence[str]) -> np.ndarray:
+        """Whether spectra from the scan files ``files`` (``''``: none) get the same variance
+        from this curve as from ``other``: the model-error term the same, and their file's curve
+        (or, without one, the bundle's ``b1``) equal."""
+        files = np.asarray(files, dtype=str)
+        out = np.zeros(len(files), dtype=bool)
+        if self.model_error != other.model_error or self.model_error_at != other.model_error_at:
+            return out
+        mine, theirs = self.file_curves(), other.file_curves()
+        plain = _num(self.b1) == _num(other.b1)
+        for name in np.unique(files):
+            if name and (name in mine or name in theirs):
+                same = name in mine and name in theirs and mine[name] == theirs[name]
+            else:
+                same = plain
+            out[files == name] = same
+        return out
+
+    def disagreeing_files(self, z: float = 3.0, share: float = 0.1) -> list[FileNoise]:
+        """The scan files whose own ``b1`` differs from the bundle's (the median over the
+        files) by more than ``z`` combined standard errors and by more than ``share`` of it
+        (a file of a thousand spectra measures its ``b1`` to 2 %, and the files of one run
+        differ by 10 to 20 %: only a larger move is a sign that the bundle mixes instruments
+        or settings, or a file worth a look)."""
+        out = []
+        for f in self.by_file:
+            se = np.hypot(f.b1_se, self.b1_se if np.isfinite(self.b1_se) else 0.0)
+            move = abs(f.b1 - self.b1)
+            if (np.isfinite(f.b1) and np.isfinite(se) and se > 0 and move > z * se
+                    and move > share * abs(self.b1)):
+                out.append(f)
+        return out
 
     def disagreeing_samples(self, z: float = 3.0) -> list[SampleNoise]:
         """The samples whose own ``b1`` differs from the bundle's by more than ``z`` combined
@@ -541,7 +673,9 @@ class ControlsNoise:
                 "b1_se": num(self.b1_se),
                 "by_sample": [{"sample": s.sample, "b1": num(s.b1), "b1_se": num(s.b1_se),
                                "n_series": s.n_series} for s in self.by_sample],
-                "model_error_at": self.model_error_at, "left_out": list(self.left_out)}
+                "model_error_at": self.model_error_at, "left_out": list(self.left_out),
+                "files": [f.to_dict() for f in self.by_file],
+                "unmeasured": [list(u) for u in self.unmeasured]}
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ControlsNoise:
@@ -558,7 +692,10 @@ class ControlsNoise:
                    # recorded since HISTORY 291; fits made before put it at the observed intensity
                    model_error_at=str(data.get("model_error_at", "observed")),
                    # recorded since 2026-11-20; before, rejected controls were not left out
-                   left_out=tuple(str(x) for x in data.get("left_out", ())))
+                   left_out=tuple(str(x) for x in data.get("left_out", ())),
+                   # per-file curves since PLAN 43; before, the controls' b1 for every file
+                   by_file=tuple(FileNoise.from_dict(f) for f in data.get("files", ())),
+                   unmeasured=tuple((str(a), str(b)) for a, b in data.get("unmeasured", ())))
 
 
 def _natural_fit(bins, observed, shape) -> tuple[np.ndarray, np.ndarray] | None:
@@ -783,21 +920,299 @@ def controls_noise(
                          n_series=len(measured), b1_se=se, by_sample=tuple(by_sample))
 
 
+# --- per-file noise from a run's own scans (PLAN Next steps 43) -------------------------------
+
+FILE_SHARE = 0.05  # bins at this share of the spectrum's tallest or more make the curve
+_FILE_GROUPS = 14  # log-intensity groups of a file's bins, of at least this many bins each
+_FILE_GROUP_MIN = 20
+
+
+def _split_rows(full, odd, even, charge: float, share: float):
+    """One spectrum's rows for the split route: ``(I_h, d, design)`` per bin at ``share`` of
+    the tallest or more and above zero in both halves. With ``r`` scaling the even half to
+    the odd one over those bins, ``d = odd - r even`` and ``I_h = (odd + r even) / 2`` (the
+    half-sum intensity): under a per-half variance ``a2 + z b1 I + c2 I^2``, ``E[d^2] = a2 (1 +
+    r^2) + z b1 I_h (1 + r) + 2 c2 I_h^2``. The fitted ``r`` removes from each bin's difference
+    the share ``w`` of its own noise that the bin holds of the sum (the noise of the sums enters
+    ``r``), so ``d`` is inflated by ``1 / sqrt(1 - w)`` per bin (``n / (n - 1)`` for equal bins;
+    measured on synthetic spectra). None with fewer than three such bins."""
+    f = np.asarray(full, dtype=np.float64)
+    o = np.asarray(odd, dtype=np.float64)
+    e = np.asarray(even, dtype=np.float64)
+    ok = np.isfinite(f) & np.isfinite(o) & np.isfinite(e)
+    if not ok.any() or f[ok].max() <= 0:
+        return None
+    sel = ok & (f >= share * f[ok].max()) & (o > 0) & (e > 0)
+    if int(sel.sum()) < 3:
+        return None
+    o, e = o[sel], e[sel]
+    r = o.sum() / e.sum()
+    d = o - r * e
+    ih = (o + r * e) / 2.0
+    n = len(o)
+    w = ih / ih.sum()
+    return (ih, d / np.sqrt(np.clip(1.0 - w, 1.0 / n, None)),
+            np.column_stack([np.full(n, 1.0 + r * r), charge * ih * (1.0 + r), 2.0 * ih * ih]))
+
+
+def _on_bins(values, bins, grid: np.ndarray) -> np.ndarray:
+    """``values`` (at the bin numbers ``bins``) on the bin numbers ``grid`` (0 elsewhere)."""
+    out = np.zeros(len(grid))
+    at = np.searchsorted(grid, np.asarray(bins, dtype=np.int64))
+    out[at] = values
+    return out
+
+
+def _scan_rows(s, a, b, charge: float, share: float):
+    """One scan's rows for the neighbouring-scans route (a kinetics run: ``s`` the scan's bins,
+    ``a`` and ``b`` its neighbours', on the same bin numbers): ``d = s - (r1 a + r2 b) / 2``
+    with ``r1``, ``r2`` scaling
+    the neighbours to the scan's sum over the bins at ``share`` of its tallest or more and above
+    zero in all three (the second difference, which removes the exchange between scans), ``I``
+    the mean of the scan and its scaled neighbours; design ``[1 + (r1^2 + r2^2) / 4, z I (1 +
+    (r1 + r2) / 4), 1.5 I^2]`` on one scan's scale, ``d`` inflated per bin for the two fitted
+    scalings as :func:`_split_rows` inflates it. None with fewer than three such bins."""
+    s = np.asarray(s, dtype=np.float64)
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    top = s.max(initial=0.0)
+    if top <= 0:
+        return None
+    sel = (s >= share * top) & (a > 0) & (b > 0) & (s > 0)
+    if int(sel.sum()) < 3:
+        return None
+    s, a, b = s[sel], a[sel], b[sel]
+    r1, r2 = s.sum() / a.sum(), s.sum() / b.sum()
+    side = (r1 * a + r2 * b) / 2.0
+    d = s - side
+    ii = (s + side) / 2.0
+    n = len(s)
+    w = ii / ii.sum()
+    return (ii, d / np.sqrt(np.clip(1.0 - w, 1.0 / n, None)),
+            np.column_stack([np.full(n, 1.0 + (r1 * r1 + r2 * r2) / 4.0),
+                             charge * ii * (1.0 + (r1 + r2) / 4.0), 1.5 * ii * ii]))
+
+
+def _file_fit(blocks) -> tuple[float, float, float, int] | None:
+    """``(a2, b1, c2, n_groups)`` of a file from its spectra's row blocks: the bins grouped by
+    log intensity (up to :data:`_FILE_GROUPS` quantile groups of at least
+    :data:`_FILE_GROUP_MIN` bins), each group's robust variance (1.4826 x the median absolute
+    difference, squared) fitted by non-negative least squares on the group's mean design row
+    in relative terms (each group to within a share of itself, weighted by the root of its
+    size: the brightest groups do not decide it). None with fewer than three groups."""
+    from scipy.optimize import nnls
+    if not blocks:
+        return None
+    i = np.concatenate([b[0] for b in blocks])
+    d = np.concatenate([b[1] for b in blocks])
+    x = np.vstack([b[2] for b in blocks])
+    keep = i > 0
+    i, d, x = i[keep], d[keep], x[keep]
+    if len(i) < 3 * _FILE_GROUP_MIN:
+        return None
+    log_i = np.log(i)
+    n_groups = max(3, min(_FILE_GROUPS, len(i) // _FILE_GROUP_MIN))
+    edges = np.unique(np.quantile(log_i, np.linspace(0, 1, n_groups + 1)))
+    groups = []
+    for lo, hi in zip(edges[:-1], edges[1:], strict=True):
+        g = np.flatnonzero((log_i >= lo) & (log_i <= hi))
+        if len(g) >= _FILE_GROUP_MIN:
+            groups.append(g)
+    if len(groups) < 3:
+        return None
+    a = np.array([x[g].mean(axis=0) for g in groups])
+    w = np.array([np.sqrt(len(g)) for g in groups])
+    norm = np.array([1.0, np.median(i), np.median(i) ** 2])
+    coef = None
+    # the bins of a group differ in variance (their intensities and scalings differ), which
+    # makes a robust spread understate their mean: standardised by the current fit and fitted
+    # again, as the controls' residuals are (:func:`_curve_fit`)
+    for _ in range(6):
+        if coef is None:
+            y = np.array([(1.4826 * np.median(np.abs(d[g]))) ** 2 for g in groups])
+            scale = y
+        else:
+            v = np.maximum(x @ coef, 1e-300)
+            y = np.array([(1.4826 * np.median(np.abs(d[g] / np.sqrt(v[g])))) ** 2
+                          * float(np.mean(v[g])) for g in groups])
+            scale = a @ coef
+        if not (y > 0).all():
+            return None
+        scale = np.maximum(scale, 1e-300)
+        sol, _ = nnls(a / norm / scale[:, None] * w[:, None], y / scale * w)
+        coef = sol / norm
+    a2, b1, c2 = coef
+    return float(a2), float(b1), float(c2), len(groups)
+
+
+def file_noise(
+    observed: Sequence[np.ndarray],
+    odd: Sequence[np.ndarray | None],
+    even: Sequence[np.ndarray | None],
+    charge: Sequence[float],
+    file: Sequence[str],
+    *,
+    bins: Sequence[np.ndarray] | None = None,
+    kinetics: Sequence[bool] | None = None,
+    target: Sequence[str] | None = None,
+    time: Sequence[float] | None = None,
+    recorded_noise: Sequence[float] | None = None,
+    reduced: Sequence[str] | set[str] = (),
+    measurement: Sequence[int] | None = None,
+    share: float = FILE_SHARE,
+    n_resample: int = 20,
+    seed: int = 0,
+) -> tuple[list[FileNoise], dict[str, str]]:
+    """The noise curve ``a2 + z b1 I + c2 I^2`` of every scan file from its own scans
+    (:class:`FileNoise`; PLAN Next steps 43, docs/HISTORY.md item 449), and the files without
+    one with the reason.
+
+    Per spectrum (the picked bins): ``observed`` (the full sum), ``odd`` and ``even`` (the two
+    halves of its scans summed, read at the same positions; None without halves), ``charge``,
+    and ``file`` (the scan file's name; ``''``: not from a scan file, left out). The **split**
+    route takes every spectrum with halves (labelled, undeuterated and fully deuterated alike;
+    roles and review status do not matter: the halves differ by the noise alone, and the robust
+    groups absorb the odd spectrum): :func:`_split_rows`, fitted per file (:func:`_file_fit`)
+    and converted to the full sum (``a2 x 2``, ``b1`` as is, ``c2 / 2``: the halves add
+    independently). The **scans** route takes the spectra of kinetics runs (``kinetics``: one
+    scan each; ``target`` and ``time`` order the scans of one target in a file, ``bins`` (each
+    spectrum's bin numbers) align them): the second differences of consecutive scans
+    (:func:`_scan_rows`), on the scan's own scale. A reduced-
+    profile file (``reduced``: names) whose spectra carry the noise their scans recorded
+    (``recorded_noise``, in quadrature) takes the larger of its fitted floor and the median of
+    those as ``a2`` (the per-scan cut deletes the bins where the floor would show).
+    ``measurement`` (:func:`hxex.picking.same_measurement`): a spectrum read more than once
+    counts once. Standard errors from ``n_resample`` resamplings of the file's spectra."""
+    m = len(observed)
+    charge = np.asarray(charge, dtype=np.float64)
+    file = np.asarray(file, dtype=str)
+    kin = np.zeros(m, dtype=bool) if kinetics is None else np.asarray(kinetics, dtype=bool)
+    if not (len(odd) == len(even) == len(charge) == len(file) == len(kin) == m):
+        raise ValueError("every input needs one entry per spectrum")
+    noise = (np.full(m, np.nan) if recorded_noise is None
+             else np.asarray(recorded_noise, dtype=np.float64))
+    first = np.ones(m, dtype=bool)
+    if measurement is not None:
+        seen: set[int] = set()
+        for i, k in enumerate(np.asarray(measurement)):
+            first[i] = int(k) not in seen
+            seen.add(int(k))
+    blocks: dict[str, list] = {}
+    counted: dict[str, set[int]] = {}
+    route: dict[str, str] = {}
+    # the split route
+    for i in np.flatnonzero(first & ~kin):
+        name = str(file[i])
+        if not name or odd[i] is None or even[i] is None:
+            continue
+        rows = _split_rows(observed[i], odd[i], even[i], float(charge[i]), share)
+        if rows is None:
+            continue
+        blocks.setdefault(name, []).append(rows)
+        counted.setdefault(name, set()).add(int(i))
+        route[name] = "split"
+    # the neighbouring-scans route: consecutive scans of one target in a file
+    if kin.any():
+        if target is None or time is None or bins is None:
+            raise ValueError("kinetics spectra need bins, target and time")
+        target = np.asarray(target, dtype=str)
+        time = np.asarray(time, dtype=np.float64)
+        by_target: dict[tuple[str, str], list[int]] = {}
+        for i in np.flatnonzero(first & kin):
+            if str(file[i]):
+                by_target.setdefault((str(file[i]), str(target[i])), []).append(int(i))
+        for (name, _), members in by_target.items():
+            order = sorted(members, key=lambda i: (time[i], str(i)))
+            for k in range(1, len(order) - 1):
+                i = order[k]
+                three = order[k - 1:k + 2]
+                grid = np.unique(np.concatenate([np.asarray(bins[j], dtype=np.int64)
+                                                 for j in three]))
+                s, a, b = (_on_bins(observed[j], bins[j], grid) for j in (i, three[0], three[2]))
+                rows = _scan_rows(s, a, b, float(charge[i]), share)
+                if rows is None:
+                    continue
+                blocks.setdefault(name, []).append(rows)
+                counted.setdefault(name, set()).update(order[k - 1:k + 2])
+                route[name] = "scans"
+    reduced = set(reduced)
+    curves: list[FileNoise] = []
+    why: dict[str, str] = {}
+    for name in sorted(set(file[first]) - {""}):
+        got = _file_fit(blocks.get(name, []))
+        if got is None:
+            why[name] = ("no spectrum summed from two or more scans" if name not in blocks
+                         else "too few bins with signal in both halves")
+            continue
+        a2, b1, c2, _ = got
+        if not b1 > 0:
+            why[name] = "no counting term found"
+            continue
+        convert = (2.0, 1.0, 0.5) if route[name] == "split" else (1.0, 1.0, 1.0)
+        rng = np.random.default_rng(seed)
+        draws = []
+        own = blocks[name]
+        for _ in range(n_resample):
+            pick = rng.integers(0, len(own), len(own))
+            d = _file_fit([own[k] for k in pick])
+            if d is not None:
+                draws.append(d[:3])
+        se = (np.std(np.array(draws), axis=0, ddof=1) if len(draws) >= 2
+              else np.full(3, np.nan))
+        a2, b1, c2 = a2 * convert[0], b1 * convert[1], c2 * convert[2]
+        a2_se, b1_se, c2_se = se * np.array(convert)
+        floor_recorded = False
+        if name in reduced:
+            rec = noise[[i for i in counted[name]]]
+            rec = rec[np.isfinite(rec) & (rec > 0)]
+            if len(rec):
+                recorded = float(np.median(rec)) ** 2
+                if recorded > a2:
+                    a2, a2_se, floor_recorded = recorded, float("nan"), True
+        curves.append(FileNoise(name, route[name], a2, b1, c2, len(counted[name]),
+                                int(sum(len(b[0]) for b in own)), float(a2_se), float(b1_se),
+                                float(c2_se), floor_recorded))
+    return curves, why
+
+
+def median_b1(curves: Sequence[FileNoise]) -> tuple[float, float]:
+    """The median of the files' ``b1`` and its standard error (1.25 x the files' spread over
+    the root of their number; one file: its own error)."""
+    if not curves:
+        return float("nan"), float("nan")
+    b = np.array([c.b1 for c in curves], dtype=np.float64)
+    if len(b) == 1:
+        return float(b[0]), float(curves[0].b1_se)
+    return float(np.median(b)), float(1.2533 * np.std(b, ddof=1) / np.sqrt(len(b)))
+
+
+def _files_of(files, m: int) -> list[str | None]:
+    """One scan file name (or None) per measurement."""
+    if files is None:
+        return [None] * m
+    if len(files) != m:
+        raise ValueError("files must have one entry per measurement")
+    return [str(f) or None for f in files]
+
+
 def bin_variances(
-    observed: Sequence[np.ndarray], charge: Sequence[float], curve: ControlsNoise
+    observed: Sequence[np.ndarray], charge: Sequence[float], curve: ControlsNoise,
+    files: Sequence[str] | None = None,
 ) -> list[np.ndarray]:
-    """Each measurement's noise variance per bin (raw units) from ``curve``, both terms at its
-    observed intensity (the fit puts the model-error term at its prediction instead,
+    """Each measurement's noise variance per bin (raw units) from ``curve`` (its scan file's,
+    ``files``: one name per measurement, ``''`` or None for none), both terms at its observed
+    intensity (the fit puts the model-error term at its prediction instead,
     :class:`BinNoise`; this form describes the spectrum alone), smoothed over three bins (so a
     bin that reads high by chance does not raise its own variance alone; the first and last
     bins over the two there are), floored at (0.5 % of the spectrum's tallest bin)^2 so empty
     bins keep a finite weight."""
     out = []
-    for o, z in zip(observed, np.asarray(charge, dtype=np.float64), strict=True):
+    for o, z, f in zip(observed, np.asarray(charge, dtype=np.float64),
+                       _files_of(files, len(observed)), strict=True):
         y = np.clip(np.asarray(o, dtype=np.float64), 0.0, None)
         at = _smoothed(y)
         top = max(float(y.max(initial=0.0)), 1e-12)
-        out.append(np.maximum(curve.variance(at, float(z)), (_FLOOR_SHARE * top) ** 2))
+        out.append(np.maximum(curve.variance(at, float(z), f), (_FLOOR_SHARE * top) ** 2))
     return out
 
 
@@ -838,19 +1253,24 @@ class BinNoise:
 
 
 def bin_noise(observed: Sequence[np.ndarray], charge: Sequence[float],
-              curve: ControlsNoise) -> BinNoise:
-    """The per-bin noise of measurements from ``curve`` (:class:`BinNoise`; raw units). For a
-    curve whose fits put the model-error term at the observed intensity (``model_error_at =
-    'observed'``: bundles made before HISTORY 291) the whole variance is fixed at the observed
-    intensity, as those fits had it (its model error is then 0)."""
+              curve: ControlsNoise, files: Sequence[str] | None = None) -> BinNoise:
+    """The per-bin noise of measurements from ``curve`` (:class:`BinNoise`; raw units): each
+    measurement's scan file's curve (``files``: one name per measurement, ``''`` or None for
+    none) or, without one, the bundle's ``z b1 I``. For a curve whose fits put the model-error
+    term at the observed intensity (``model_error_at = 'observed'``: bundles made before
+    HISTORY 291) the whole variance is fixed at the observed intensity, as those fits had it
+    (its model error is then 0)."""
     observed_form = curve.model_error_at == "observed"
+    curves = curve.file_curves()
     base, floor = [], []
-    for o, z in zip(observed, np.asarray(charge, dtype=np.float64), strict=True):
+    for o, z, f in zip(observed, np.asarray(charge, dtype=np.float64),
+                       _files_of(files, len(observed)), strict=True):
         y = np.clip(np.asarray(o, dtype=np.float64), 0.0, None)
         top = max(float(y.max(initial=0.0)), 1e-12)
         at = _smoothed(y)
-        base.append(curve.variance(at, float(z)) if observed_form
-                    else float(z) * curve.b1 * at)
+        own = curves.get(f) if f else None
+        counting = float(z) * curve.b1 * at if own is None else own.variance(at, float(z))
+        base.append(counting + (curve.model_error * at) ** 2 if observed_form else counting)
         floor.append(np.full(len(y), (_FLOOR_SHARE * top) ** 2))
     return BinNoise(tuple(base), tuple(floor), 0.0 if observed_form else float(curve.model_error))
 

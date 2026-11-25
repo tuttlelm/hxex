@@ -29,7 +29,7 @@ from ..spectra import SpectrumSet, _objects
 from .binned import CLAIM_COLUMNS, BinnedSet
 from .claims import Claims, claims
 from .config import APEX_PICKS, DEFAULT_PICKER_CONFIG, PickerConfig
-from .measure import PeakMeasure, area_values, choose_measure
+from .measure import PeakMeasure, _profile, area_values, choose_measure
 from .mz_check import series_offsets
 from .screen import RAW_SCORES, STICK_POINTS, off_position_scores, raw_scores
 
@@ -74,6 +74,9 @@ class PickedSpectrum:
     fit_offset_ppm: float = float("nan")  # the profile fit's (NaN: the pick)
     purity: float = float("nan")  # the profile fit's quality (profile.fit_quality)
     stray_share: float = float("nan")
+    # the bin values of the two halves of the spectrum's scans summed, read at the positions
+    # this pick found (odd, even; None: no halves; hxex.spectra.Spectrum)
+    halves: tuple[np.ndarray, np.ndarray] | None = None
 
 
 def predicted_mz(undeut_mz: float, charge: int, n_bins: int) -> np.ndarray:
@@ -351,6 +354,54 @@ def envelope_shape(mz: np.ndarray, values: np.ndarray, charge: int, env_threshol
     return charge * (right - left), (2.0 - (ymax - left_int) / ymax if ymax else float("nan"))
 
 
+def clean_halves(mz, halves) -> tuple[np.ndarray, np.ndarray] | None:
+    """The two halves of a spectrum's scans summed (:meth:`~hxex.spectra.SpectrumSet.halves`)
+    cleaned as :func:`clean_profile` cleans the spectrum's ``mz``, so they stay parallel to
+    its result; None for None."""
+    if halves is None:
+        return None
+    mz = np.asarray(mz, dtype=np.float64)
+    odd, even = (np.asarray(h, dtype=np.float64) for h in halves)
+    if not np.isfinite(mz).all():
+        keep = np.isfinite(mz)
+        mz, odd, even = mz[keep], odd[keep], even[keep]
+    odd = np.where(np.isfinite(odd), odd, 0.0)
+    even = np.where(np.isfinite(even), even, 0.0)
+    if len(mz) > 1 and np.any(np.diff(mz) < 0):
+        order = np.argsort(mz, kind="stable")
+        odd, even = odd[order], even[order]
+    return odd, even
+
+
+def half_values(mz: np.ndarray, halves, picked: PickedSpectrum, charge: int,
+                measure: PeakMeasure | None) -> tuple[np.ndarray, np.ndarray] | None:
+    """The bin values of ``halves`` (the odd and even scans' sums, cleaned with
+    :func:`clean_halves`, parallel to the cleaned ``mz``) read where the pick found each bin's
+    peak (``picked.peak_mz``: its value at that point of the grid, or the area about it with an
+    area ``measure``, as the pick's own value was read); 0 for an empty bin. None without
+    halves. The two see the same peptide at the same positions and differ only in their noise,
+    which the noise stage measures from them (:func:`hxex.noise.file_noise`)."""
+    if halves is None:
+        return None
+    where = np.asarray(picked.peak_mz, dtype=np.float64)
+    at = np.full(len(where), -1, dtype=np.int64)
+    found = np.isfinite(where)
+    if found.any() and len(mz):
+        j = np.clip(np.searchsorted(mz, where[found]), 1, max(len(mz) - 1, 1))
+        left = np.abs(mz[j - 1] - where[found]) <= np.abs(mz[np.minimum(j, len(mz) - 1)]
+                                                            - where[found])
+        at[found] = np.where(left, j - 1, np.minimum(j, len(mz) - 1))
+    out = []
+    areas = measure is not None and measure.measure == "area" and _profile(mz, charge)[0]
+    for h in halves:
+        values = np.zeros(len(where))
+        values[at >= 0] = h[at[at >= 0]]
+        if areas:  # every bin the pick found, whatever the half holds at the apex itself
+            values = area_values(mz, h, where, np.where(found, 1.0, 0.0), charge, measure)
+        out.append(values)
+    return out[0], out[1]
+
+
 def mz_offset_ppm(peak_mz: np.ndarray, pred_mz: np.ndarray, intensity: np.ndarray,
                   threshold: float) -> float:
     """How far the picked peaks are from their predicted m/z: the intensity-weighted median of
@@ -534,13 +585,16 @@ def pick_spectra(
                 clusters=None if own is None else clusters[own],
             )
         mz, y = spectra.spectrum(i)
-        picked.append(
-            pick_spectrum(
-                mz, y, key[0], key[1], modification=key[2], config=config, registry=registry,
-                plan=plans[key], resolving_power=float(spectra.resolving_power[i]),
-                resolving_power_mz=float(spectra.resolving_power_mz[i]), measure=seed,
-            )
+        p = pick_spectrum(
+            mz, y, key[0], key[1], modification=key[2], config=config, registry=registry,
+            plan=plans[key], resolving_power=float(spectra.resolving_power[i]),
+            resolving_power_mz=float(spectra.resolving_power_mz[i]), measure=seed,
         )
+        halves = clean_halves(mz, spectra.halves(i))
+        if halves is not None:
+            p = dataclasses.replace(p, halves=half_values(
+                clean_profile(mz, y)[0], halves, p, key[1], seed))
+        picked.append(p)
         if not (fitted or purity_only):
             report(progress, i + 1, len(spectra))
         elif i % 200 == 0:
@@ -648,7 +702,9 @@ def _profile_fit(spectra: SpectrumSet, picked: list[PickedSpectrum], plans: dict
     for j, (i, key) in enumerate(rows):
         mz, y = clean_profile(*spectra.spectrum(i))
         jobs.append((i, mz, y, picked[i].intensity, plans[key], moments[key],
-                     float(search.centre[j])))
+                     float(search.centre[j]),
+                     None if purity_only else clean_halves(spectra.spectrum(i)[0],
+                                                           spectra.halves(i))))
     span = None if progress is None else _Tail(progress, len(spectra), parts)
     fits = fit_all(jobs, measure, shape, search, coarse=coarse, workers=workers,
                    progress=span, cancel=cancel)
@@ -667,7 +723,7 @@ def _profile_fit(spectra: SpectrumSet, picked: list[PickedSpectrum], plans: dict
             mz_offset_ppm=mz_offset_ppm(fit.where, p.mz, fit.values, p.threshold),
             env_width=width, env_symm=symm, empty=bool(fit.values.sum() == 0),
             fit_offset_ppm=fit.offset_ppm, purity=fit.purity,
-            stray_share=fit.stray_share)
+            stray_share=fit.stray_share, halves=fit.halves)
     return out
 
 
@@ -689,9 +745,18 @@ def _assemble(spectra: SpectrumSet, picked: list[PickedSpectrum]) -> BinnedSet:
         [getattr(p, name) for p in picked], dtype=dt
     )
     empty = np.empty(0)
+
+    def half(k: int) -> np.ndarray:
+        return np.concatenate([np.full(len(p.mz), np.nan) if p.halves is None
+                               else np.asarray(p.halves[k], dtype=np.float64)[:len(p.mz)]
+                               for p in picked]) if picked else empty
+
     return BinnedSet(
         mz=np.concatenate([p.mz for p in picked]) if picked else empty,
         intensity=np.concatenate([p.intensity for p in picked]) if picked else empty,
+        intensity_odd=half(0), intensity_even=half(1),
+        n_scans=np.asarray(spectra.n_scans, dtype=np.int64),
+        recorded_noise=np.asarray(spectra.recorded_noise, dtype=np.float64),
         n_deut=np.concatenate([p.n_deut for p in picked]) if picked else empty.astype(np.int64),
         peak_mz=np.concatenate([p.peak_mz for p in picked]) if picked else empty,
         mz_offset_ppm=cat("mz_offset_ppm", np.float64),

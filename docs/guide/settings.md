@@ -279,7 +279,7 @@ Noise model and level of the fit (guide: noise-model.md). The level sets the los
 | `sd` | number or list | unset | gaussian: the sd in intensity units (false: percent instead) |
 | `percent` | number | `3.0` | sd (or poisson scale) as percent of the tallest peak of the series' undeuterated reference spectrum |
 | `n_eff` | number | unset | poisson: effective counts in the tallest peak (false: percent) |
-| `estimate` | text | `"controls"` | "controls" (the default): every bin its own noise, measured from the undeuterated controls, plus model_error (guide: The noise model); "replicates": estimate each series' noise from its replicate spectra; false: one sd per spectrum, the level above (needed with model = "poisson") |
+| `estimate` | text | `"controls"` | "controls" (the default): every bin its own noise, measured from each scan file's own scans (pre-summed formats: from the undeuterated controls), plus model_error (guide: The noise model); "replicates": estimate each series' noise from its replicate spectra; false: one sd per spectrum, the level above (needed with model = "poisson") |
 | `min_replicated` | integer | `3` | estimate: fewest time points with two or more replicates |
 | `min_share` | number | `0.005` | estimate: smallest share of a spectrum's intensity a bin needs |
 | `outlier_score` | number | `4.0` | estimate: a replicate scoring above this is left out and flagged noise_outlier |

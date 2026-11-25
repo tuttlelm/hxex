@@ -2564,6 +2564,23 @@ Planned, not built:
        m/z check's calibration, the peak claims, and that spectrum's own fit (PLAN 39 (a),
        settled for scan formats; pre-summed formats keep the controls route and its dependence
        on the controls). Next: the build, in its own worktree.
+     - **Built** (2026-11-24, branch `scan-split-build`; HISTORY 451). As designed, with
+       these choices made in the build: the halves are kept per profile point of the stored
+       spectrum (`spectra.parquet` `intensity_odd`, `intensity_even`, float32 on the full sum's
+       m/z grid), not per bin, because the bin values depend on the run's peak measure
+       (heights or areas, decided from every file's undeuterated controls after the files are
+       read) and the picking stage must be able to pick stored spectra again; the picking
+       stage reads the halves at the pick's positions (the apex's point, the area about it,
+       or one profile fit with the spectrum's own design) into `binned.parquet`. Each spectrum
+       also records its scan count and, in a reduced-profile file, the noise its scans
+       recorded at its window in quadrature (`recorded_noise`): the file's floor is the larger of
+       the fitted one and that. The fit standardises the groups and refits (as the controls'
+       residual fit does) and inflates each bin's difference by `1 / sqrt(1 - w)` for the
+       fitted scaling (`w` the bin's share of the sum; the scratch's `n / (n - 1)` read `b1`
+       about 8 % low on narrow envelopes, within the errors on wide ones). A spectrum's
+       measurement carries its scan file (`Measurements.file`), the kept-curve rule and the
+       fit reuse are per file, and `hxex check` names each file's route. Built check: see
+       HISTORY.
 
 ## Risks and open decisions
 

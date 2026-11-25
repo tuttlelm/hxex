@@ -94,7 +94,7 @@ _INDEX = ("spectrum_id", "sample", "peptide", "peptide_range", "file", "label", 
 _INDEX_INT = ("start_seq", "end_seq", "charge", "rep", "data_id")
 # float columns a reader may leave unknown (NaN); absent in files written before them
 _OPTIONAL = ("rt", "resolving_power", "resolving_power_mz", "rt_start", "rt_end", "drift_start",
-             "drift_end", "mz_calibration_ppm")
+             "drift_end", "mz_calibration_ppm", "recorded_noise")
 # the role column ("undeut", "fulldeut" or ""): absent in files written before the roles, where
 # the controls were known by their times (the reader derives it, see hxex.io.bundle)
 ROLE = "role"
@@ -115,6 +115,9 @@ def _index_table(obj, optional: Sequence[str] = _OPTIONAL) -> dict[str, pa.Array
                                          else np.full(len(obj.time), np.nan), dtype=np.float64))
     role = getattr(obj, ROLE, None)
     cols[ROLE] = _str(role if role is not None else [""] * len(obj.time))
+    n_scans = getattr(obj, "n_scans", None)  # the scans summed into each spectrum (0: none)
+    if n_scans is not None:
+        cols["n_scans"] = pa.array(np.asarray(n_scans, dtype=np.int64))
     return cols
 
 
@@ -129,6 +132,45 @@ def _index_arrays(t: pa.Table, optional: Sequence[str] = _OPTIONAL) -> dict[str,
         out[name] = (np.asarray(_col(t, name), dtype=np.float64) if name in t.column_names
                      else np.full(t.num_rows, np.nan))
     out[ROLE] = _strs(t, ROLE) if ROLE in t.column_names else np.full(t.num_rows, "", dtype="<U8")
+    out["n_scans"] = (np.asarray(_col(t, "n_scans"), dtype=np.int64) if "n_scans" in t.column_names
+                      else np.zeros(t.num_rows, dtype=np.int64))
+    return out
+
+
+# the two halves of each spectrum's scans summed (hxex.spectra.Spectrum): list columns parallel
+# to the intensity, null rows where a spectrum has none; float32 (the noise they measure is
+# percent-sized, and they double a scan file's spectra otherwise)
+HALVES = ("intensity_odd", "intensity_even")
+
+
+def _halves_columns(obj) -> dict[str, pa.Array]:
+    """The :data:`HALVES` columns of a spectrum-like ``obj`` (flat arrays parallel to its
+    ``intensity``, NaN where a spectrum has none); none when no spectrum has them."""
+    out = {}
+    offsets = np.asarray(obj.offsets, dtype=np.int64)
+    for name in HALVES:
+        flat = np.asarray(getattr(obj, name), dtype=np.float64)
+        rows = [flat[offsets[i]:offsets[i + 1]] for i in range(len(offsets) - 1)]
+        rows = [None if not len(r) or not np.isfinite(r).all() else r.astype(np.float32)
+                for r in rows]
+        if any(r is not None for r in rows):
+            out[name] = _ragged(rows, pa.float32())
+    return out
+
+
+def _halves_arrays(t: pa.Table, offsets: np.ndarray) -> dict[str, np.ndarray]:
+    """The :data:`HALVES` of every row of ``t`` as flat arrays parallel to its intensity (NaN
+    where a row has none); nothing when the table has no such columns."""
+    out = {}
+    for name in HALVES:
+        if name not in t.column_names:
+            continue
+        flat, own = _ragged_read(t, name)
+        full = np.full(int(offsets[-1]) if len(offsets) else 0, np.nan)
+        for i in range(len(offsets) - 1):
+            if own[i + 1] > own[i]:
+                full[offsets[i]:offsets[i + 1]] = flat[own[i]:own[i + 1]]
+        out[name] = full
     return out
 
 
@@ -136,6 +178,7 @@ def _spectra_table(s: SpectrumSet) -> pa.Table:
     cols = _index_table(s)
     cols["mz"] = _flat_ragged(s.mz, s.offsets, pa.float64())
     cols["intensity"] = _flat_ragged(s.intensity, s.offsets, pa.float64())
+    cols.update(_halves_columns(s))
     if any(r is not None for r in s.scans):  # the scans' record (scan_cut): absent otherwise
         cols.update(_record_columns(s.scans))
     return pa.table(cols)
@@ -195,5 +238,5 @@ def _spectra_from_table(t: pa.Table) -> SpectrumSet:
     intensity, _ = _ragged_read(t, "intensity")
     return SpectrumSet(
         mz=np.asarray(mz, dtype=np.float64), intensity=np.asarray(intensity, dtype=np.float64),
-        offsets=offsets, **_index_arrays(t), scans=_records(t),
+        offsets=offsets, **_index_arrays(t), scans=_records(t), **_halves_arrays(t, offsets),
     )

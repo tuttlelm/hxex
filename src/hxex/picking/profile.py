@@ -376,6 +376,9 @@ class ProfileFit:
     bins_curve: np.ndarray | None = None
     stray_curve: np.ndarray | None = None
     strays: np.ndarray | None = None
+    # the values of the two halves of the spectrum's scans summed, from one fit each with the
+    # spectrum's own design (its offset, peaks and strays; None: no halves)
+    halves: tuple[np.ndarray, np.ndarray] | None = None
 
 
 def _nnls(m: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -406,25 +409,38 @@ class _Pass:
                                np.full(len(self.apex), STRAY_CLASS))
         self.cache: dict = {}
 
+    def design(self, off: float):
+        """The bins' peak curves at the offset ``off`` (ppm), which of them are seen, the
+        strays' curves and which stray candidates are far from every bin."""
+        x = self.x
+        c = self.pos * (1.0 + off * 1e-6)
+        peaks = self.shape((x[:, None] - c[None, :]) / (FWHM_SD * self.sig[None, :]),
+                           self.share)
+        seen = peaks.max(axis=0) >= SEEN
+        far = (np.abs(self.apex[:, None] - c[None, :]).min(axis=1) > STRAY_WIDTHS * self.fw_apex
+               if len(self.apex) else np.zeros(0, dtype=bool))
+        return peaks, seen, self.stray_all[:, far], far
+
+    def amplitudes(self, y: np.ndarray, off: float):
+        """The bins' amplitudes and the strays' curve fitted to the profile ``y`` (on this
+        pass's region) with this pass's design at ``off``: for the spectrum itself, or for a
+        half of its scans with the spectrum's own design."""
+        peaks, seen, strays, _ = self.design(off)
+        amp = np.zeros(len(self.pos))
+        stray = np.zeros(len(self.x))
+        if seen.any():
+            sol = _nnls(np.hstack([peaks[:, seen], strays]), y)
+            amp[seen] = sol[:seen.sum()]
+            stray = strays @ sol[seen.sum():]
+        return amp, stray
+
     def solve(self, off: float):
         """(residual norm, offset, amplitudes, bin peaks, strays' curve, strays' apexes)."""
         key = round(float(off), 9)
         if key in self.cache:
             return self.cache[key]
-        x, n = self.x, len(self.pos)
-        c = self.pos * (1.0 + off * 1e-6)
-        peaks = self.shape((x[:, None] - c[None, :]) / (FWHM_SD * self.sig[None, :]),
-                           self.share)
-        seen = peaks.max(axis=0) >= SEEN
-        amp = np.zeros(n)
-        far = (np.abs(self.apex[:, None] - c[None, :]).min(axis=1) > STRAY_WIDTHS * self.fw_apex
-               if len(self.apex) else np.zeros(0, dtype=bool))
-        strays = self.stray_all[:, far]
-        stray = np.zeros(len(x))
-        if seen.any():
-            sol = _nnls(np.hstack([peaks[:, seen], strays]), self.y)
-            amp[seen] = sol[:seen.sum()]
-            stray = strays @ sol[seen.sum():]
+        peaks, _, _, far = self.design(off)
+        amp, stray = self.amplitudes(self.y, off)
         resid = float(np.linalg.norm(self.y - peaks @ amp - stray))
         self.cache[key] = (resid, float(off), amp, peaks, stray, self.apex[far])
         return self.cache[key]
@@ -432,13 +448,15 @@ class _Pass:
 
 def fit_spectrum(mz: np.ndarray, y: np.ndarray, sticks: np.ndarray, plan, moments,
                  fwhm_mz, shape: PeakShape, *, centre: float, limit: float, step: float,
-                 coarse: bool, model: bool = False) -> ProfileFit | None:
+                 coarse: bool, model: bool = False, halves=None) -> ProfileFit | None:
     """The profile fit of one spectrum (``mz`` sorted, ``y`` its intensities) whose pick gave
     ``sticks`` (one value per bin of ``plan``, a :class:`~hxex.picking.pick.BinPlan` with its
     natural clusters); ``moments`` from :func:`ion_moments`, ``fwhm_mz`` the run's peak width
     at an m/z. The offset is searched over ``centre -/+ limit`` ppm in steps of ``step``
-    (``coarse``: see the module docstring). None when there is nothing to fit (no signal, or
-    fewer than three profile points in the region)."""
+    (``coarse``: see the module docstring). ``halves`` (the odd and even scans' sums, parallel
+    to ``y``): each is fitted once with the spectrum's own design (offset, peaks, strays) and
+    gives its values (:attr:`ProfileFit.halves`). None when there is nothing to fit (no
+    signal, or fewer than three profile points in the region)."""
     n = len(sticks)
     z = int(plan.charge)
     sticks = np.asarray(sticks, dtype=np.float64)
@@ -471,12 +489,18 @@ def fit_spectrum(mz: np.ndarray, y: np.ndarray, sticks: np.ndarray, plan, moment
     _, off, amp, peaks, stray, stray_at = best
     pos, sig = one.pos, one.sig
     share = amp / amp.max() if amp.max() > 0 else np.zeros(n)
-    values = amp * (FWHM_SD * sig) * shape.integral(share) / (fwhm_mz(pos) * GAUSS_AREA)
+    to_values = (FWHM_SD * sig) * shape.integral(share) / (fwhm_mz(pos) * GAUSS_AREA)
+    values = amp * to_values
     where = np.where(values > 0, pos * (1.0 + off * 1e-6), np.nan)
     purity, stray_share = fit_quality(x, yy, peaks * amp[None, :], stray, where, fwhm_mz)
+    fitted_halves = None
+    if halves is not None:  # the same design, each half's own amplitudes
+        fitted_halves = tuple(one.amplitudes(np.asarray(h, dtype=np.float64)[a:b], off)[0]
+                              * to_values for h in halves)
     if not model:
-        return ProfileFit(values, where, off, purity, stray_share)
-    return ProfileFit(values, where, off, purity, stray_share, x, yy, peaks @ amp, stray, stray_at)
+        return ProfileFit(values, where, off, purity, stray_share, halves=fitted_halves)
+    return ProfileFit(values, where, off, purity, stray_share, x, yy, peaks @ amp, stray, stray_at,
+                      halves=fitted_halves)
 
 
 def fit_quality(x: np.ndarray, y: np.ndarray, bin_peaks: np.ndarray, stray: np.ndarray,
@@ -567,9 +591,10 @@ def _fit_chunk(args) -> list[tuple[int, ProfileFit | None]]:
     from .measure import PeakMeasure
 
     law = PeakMeasure("area", "auto", fwhm[0], fwhm[1])
-    return [(i, fit_spectrum(mz, y, sticks, plan, moments, law.fwhm_mz, shape, centre=centre,
-                             limit=limit, step=step, coarse=coarse))
-            for i, mz, y, sticks, plan, moments, centre in jobs]
+    return [(job[0], fit_spectrum(*job[1:6], law.fwhm_mz, shape, centre=job[6], limit=limit,
+                                  step=step, coarse=coarse,
+                                  halves=job[7] if len(job) > 7 else None))
+            for job in jobs]
 
 
 @contextmanager
@@ -592,7 +617,8 @@ def _single_threaded_children():
 def fit_all(jobs: list, measure, shape: PeakShape, search: OffsetSearch, *,
             coarse: bool, workers: int | None = None, progress=None, cancel=None,
             ) -> dict[int, ProfileFit | None]:
-    """:func:`fit_spectrum` for every job ``(i, mz, y, sticks, plan, moments, centre)``, in a
+    """:func:`fit_spectrum` for every job ``(i, mz, y, sticks, plan, moments, centre)`` (with
+    the halves of the spectrum's scans as an eighth element, or None), in a
     process pool when there are ``PARALLEL_FROM`` or more (``workers``: None for up to
     ``MAX_WORKERS``, the CPUs this process may use; 1 for this process)."""
     from ..hooks import check_cancel, report

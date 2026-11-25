@@ -2006,8 +2006,9 @@ _COMMENTS: dict[str, str] = {
                              "series' undeuterated reference spectrum",
     "run.fit.noise.n_eff": "poisson: effective counts in the tallest peak (false: percent)",
     "run.fit.noise.estimate": '"controls" (the default): every bin its own noise, measured '
-                              "from the undeuterated controls, plus model_error (guide: The "
-                              'noise model); "replicates": estimate each series\' noise from '
+                              "from each scan file's own scans (pre-summed formats: from the "
+                              "undeuterated controls), plus model_error (guide: The noise "
+                              'model); "replicates": estimate each series\' noise from '
                               "its replicate spectra; false: one sd per spectrum, the level "
                               'above (needed with model = "poisson")',
     "run.fit.noise.min_replicated": "estimate: fewest time points with two or more replicates",

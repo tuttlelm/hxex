@@ -31,7 +31,9 @@ class Measurements:
     measurement's charge (the per-bin noise grows with it, :func:`hxex.noise.bin_variances`);
     None when not known (from plain arrays: then every measurement counts as charge 1).
     ``scan_cut`` (per measurement a :class:`ScanCut` or None; None for all: no cut) fits those
-    measurements through the instrument's per-scan cut, at K = 1 only.
+    measurements through the instrument's per-scan cut, at K = 1 only. ``file`` is each
+    measurement's scan file (its name; ``''``: not summed from a scan file), whose own noise
+    curve the per-bin noise takes (:func:`hxex.noise.bin_noise`); None when not known.
     """
 
     bins: tuple[np.ndarray, ...]
@@ -46,9 +48,12 @@ class Measurements:
     random_id: np.ndarray | None = None
     charge: np.ndarray | None = None
     scan_cut: tuple[ScanCut | None, ...] | None = None
+    file: np.ndarray | None = None
 
     def __post_init__(self):
         m = len(self.bins)
+        if self.file is not None:
+            object.__setattr__(self, "file", np.asarray(self.file, dtype=str))
         if self.role is None:  # built without roles: time points only
             object.__setattr__(self, "role", np.full(m, "", dtype="<U8"))
         else:
@@ -59,7 +64,8 @@ class Measurements:
             object.__setattr__(self, "charge", np.asarray(self.charge, dtype=np.float64))
         sizes = (len(self.observed), len(self.shapes), len(self.n_max), len(self.references),
                  len(self.spectrum_id), len(self.data_id), len(self.time), len(self.role),
-                 len(self.random_id), m if self.charge is None else len(self.charge))
+                 len(self.random_id), m if self.charge is None else len(self.charge),
+                 m if self.file is None else len(self.file))
         if self.scan_cut is not None:
             object.__setattr__(self, "scan_cut", tuple(self.scan_cut))
             sizes = (*sizes, len(self.scan_cut))
@@ -86,6 +92,10 @@ class Measurements:
     def charges(self) -> np.ndarray:
         """Each measurement's charge, 1 where it is not known."""
         return np.ones(len(self)) if self.charge is None else self.charge
+
+    def files(self) -> np.ndarray:
+        """Each measurement's scan file name, ``''`` where there is none or it is not known."""
+        return np.full(len(self), "", dtype=str) if self.file is None else self.file
 
     def random_keys(self) -> np.ndarray:
         """One stable integer per measurement, from its ``random_id``: with the stage's seed it
@@ -117,6 +127,7 @@ class Measurements:
             random_id=self.random_id[index],
             charge=None if self.charge is None else self.charge[index],
             scan_cut=None if self.scan_cut is None else tuple(self.scan_cut[i] for i in index),
+            file=None if self.file is None else self.file[index],
         )
 
     @property
@@ -140,6 +151,7 @@ class Measurements:
         role: Sequence[str] | None = None,
         random_id: Sequence[str] | None = None,
         charge: Sequence[float] | None = None,
+        file: Sequence[str] | None = None,
     ) -> Measurements:
         """Measurements from plain arrays (for tests and for data that did not come from the
         picker). Missing identifiers become ``m0, m1, ...``, series 0, time 0 and no role."""
@@ -160,6 +172,7 @@ class Measurements:
             role=None if role is None else np.asarray(role, dtype=str),
             random_id=None if random_id is None else np.asarray(random_id, dtype=str),
             charge=None if charge is None else np.asarray(charge, dtype=np.float64),
+            file=None if file is None else np.asarray(file, dtype=str),
         )
 
     @classmethod
@@ -173,6 +186,7 @@ class Measurements:
         registry: chem.ModificationRegistry = chem.DEFAULT_MODIFICATIONS,
         shapes: Mapping[int, np.ndarray] | None = None,
         kinetics: Sequence[bool] | None = None,
+        file: Sequence[str] | None = None,
     ) -> Measurements:
         """Measurements from a picked set. Drop flagged spectra first (``BinnedSet.select``).
         ``shapes`` replaces the envelope of some series (``data_id``), for example an ion-type
@@ -184,7 +198,8 @@ class Measurements:
         for fragment ions without any); the shape is
         the natural-abundance envelope of the peptide and ion type (``chem.natural_abundance``);
         the references are the undeuterated controls of the same series (``data_id``, role
-        ``'undeut'``; :func:`hxex.noise.control_references`).
+        ``'undeut'``; :func:`hxex.noise.control_references`). ``file``: each spectrum's scan
+        file (:func:`hxex.io.mzml.scan_file_names`), for the per-file noise.
         ``nterm_subtract`` and ``amide_rules`` should be those used for picking. Spectra picked
         with their scans' record (``BinnedSet.scan_cut``) are fitted through the per-scan cut.
         """
@@ -232,6 +247,7 @@ class Measurements:
             charge=np.asarray(binned.charge, dtype=np.float64),
             scan_cut=(tuple(binned.scan_cut) if any(c is not None for c in binned.scan_cut)
                       else None),
+            file=None if file is None else np.asarray(file, dtype=str),
         )
 
 
