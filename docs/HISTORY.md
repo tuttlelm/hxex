@@ -12012,3 +12012,64 @@ CSVs or mzML if wanted.
     not built: a floor with an absolute and a relative part measured per run from those tails;
     for the Orbitrap a counting term measured within one run (owner: undeuterated replicate
     injections are expensive and often missing; scans within a run may serve, pairs as a check).
+
+449. **The noise of a run measured from its own scans** (2026-11-24; owner: the Orbitrap's
+    noise must come from one run, replicate undeuterated injections being expensive and often
+    absent; scratch only, no code change; design draft in PLAN Next steps 43; the private record:
+    analysis_examples/noise_model/scan_split, with its `kinetics/` and `proto/` folders). Every
+    spectrum of three bundles made with 5939748 was summed again from its scan file in its odd
+    and its even scans (the run's own summing, m/z calibration, windows, and picker; the full
+    re-sum reproduces the bundles' sticks bin for bin): the halves share the peptide, the
+    co-eluters, and the elution, and differ in the noise alone. Per scan file, from the halves'
+    differences (bins at 5 % of the top or more, robust variance per intensity group, NNLS in
+    relative terms), the curve `a2 + z b1 I + c2 I^2`. The counting scale per unit charge: the
+    intact-peptide benchmark from its ion-mobility mzML 7.5 per file (3.5-10) against 6.67 from
+    the controls' residuals and the replicate pairs of item 187; the private pooled dataset's
+    raw 9.0 (8.2-10) against 10.4; the Orbitrap digest 783 (447-1,100) against 12,862 from the
+    residuals, which item 294 had found inflated (the pairs there: about 950 at 2+). The
+    Orbitrap's floor from the split (about 2.9e4) equals the instrument's recorded noise summed
+    over the scans in quadrature (2.4-4.5e4 per file); the benchmark's proportional term (2.0-
+    2.5 %) equals the pairs' 1.9 %: scan-to-scan noise, not a reproducible misfit. Labelled,
+    undeuterated, and fully deuterated files of one dataset agree within the spread between
+    files. Mean square over robust variance 1.5-4.7 everywhere (strays and co-eluters in one
+    half only): the robust fit is the right one. Kinetics runs (one scan per spectrum) on four
+    infusion projects of the private fragment dataset (peptides of 11, 12, 14, and 24 residues):
+    the second difference of neighbouring scans of one target (the scan minus the mean of its two
+    neighbours, each scaled to its sum, which removes the exchange between scans) gives the same
+    b1 as a first difference within about 10 % from `usable_from` on and the same by time band
+    (20-60 s, 60-200 s, later), agrees with the control files' halves where those are determined
+    (13.5 against 13.8 for the 24-residue peptide's 5+ control file), shows no proportional term
+    on MS2 scans (0-1 %, one condition 2.6 %), and must be per file: the control files sit on
+    another intensity scale (tops up to 100 times dimmer, recorded noise 30 against 2,750), and
+    the bundles' residual-route b1 (105 ± 190, 428 ± 1,739, 7,715 ± 4,056, 344 ± 37) is wrong by
+    0.5 to 250 times against the scans' 195, 23, 31, and 11. With bins required above zero in
+    every scan the fitted floor is 0 or below the recorded noise: the reduced profile's per-scan
+    cut deletes the bins where the floor would show, so a cut file's floor comes from the
+    recorded noise. The Orbitrap digest refitted with per-file split curves (a prototype patch
+    on 5939748, nothing else changed): the error bars become right (replicate calibration 0.68
+    -> 1.14) and the values barely move (labelled replicate sd q90 0.636 -> 0.607 D; K = 1 fits
+    missing the tallest reachable peak 1,485 -> 1,088), but with the noise no longer inflated
+    the fit reads the controls' misfit as populations (fully deuterated K > 1 18.7 -> 34.6 %, at
+    every brightness). That misfit is the per-scan cut: the undeuterated controls' heavy-side
+    bins read low by the bin's own summed intensity whatever the top (observed over natural
+    0.17 below 2e5 with 40 % empty, 0.64 at 2-4e5, 0.86 at 4-8e5, 0.97-0.99 above 1.6e6), item
+    294's deficit; beyond the cut the reproducible residual is about 1 %. A second prototype
+    read every MS1 peptide of the reduced files through the cut (`[input.scans] scan_cut`, item
+    308, which fragments alone had): at K = 1 the best arm on every K-independent yardstick
+    (replicate sd q90 0.376 D, undeuterated centroid q90 1.42 -> 0.29, calibration 1.19; the
+    fragments' `below_noise` then set on 697 spectra); through the cut at every K worse (q90
+    0.742; undeuterated K > 1 34 %): the minor components of undeuterated controls sit 7-8 D
+    above the major one in 85-95 % of them, a second species on the grid that the inflated
+    noise had hidden, and a free heavy side under the cut makes a second component cheap. So the
+    cut belongs in the K = 1 reading of MS1 peptides, and the K question on this data is one of
+    identity (PLAN 34) and of a null drawn through the same cut and noise. Side check of item
+    448's open item (the digest's sticks moved by item 306's calibration): the per-file offset
+    (+0.66 to +1.58 ppm) centres the peptides' own peaks (signed offset of 2+ and 3+ +1.19 ->
+    0.00 ppm) and never re-picks a bright peak; every changed stick is a weak bin flipping at
+    the window's edge, so the replicate yardsticks split evenly, and item 448's "groups with
+    changed sticks got worse" came from 27 series the old run had recentred by up to 39 ppm
+    (now flagged off_mz) and from bin counts; the one defect is 4+ ions over-corrected by about
+    1.1 ppm (the offset is set by 2+ and 3+; item 440's charge term is in the m/z check, not the
+    pick). Nothing built: PLAN 43 holds the design (per-file curves from the halves kept at
+    read time; second differences for `group = "each"`; the floor from the recorded noise on
+    cut files; the controls route for pre-summed formats; the MS1 cut at K = 1 a separate item).

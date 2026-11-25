@@ -961,7 +961,8 @@ Planned, not built:
    (2026-10-31), after the per-bin refits of the tutorial data and the benchmark and a split-half
    null check (HISTORY 213): the default for every run. Not yet done: the
    lost-signal zone (bins below 1-2 % of the tallest peak) and outliers in one replicate
-   (steps 2-3 of the noise plan).
+   (steps 2-3 of the noise plan). The counting scale from a run's own scans, one curve per
+   scan file, which the Orbitrap needs (its residual-route b1 is 15 times too large): item 43.
 14. **Audit of 2026-10-28** (seven reviewers; no Critical finding, nine High, 21 Medium, about
    40 Low, 27 questions). Findings, the owner's decisions of 2026-10-29 and the agreed order
    (Sessions A to D) are in `docs/AUDIT_2026-10-28.md`. Done: Session A (HISTORY 192), B
@@ -1170,7 +1171,9 @@ Planned, not built:
    hard cut below; variance unchanged). DEFAULT 2026-11-07 (owner; HISTORY 314): `"auto"`
    for the reduced files that record their noise; flag `below_noise` (< 4 x noise). The mixture
    weights below were settled 2026-11-07 with nothing to build (HISTORY 316, 318). Next: MS1
-   peptides.
+   peptides (measured 2026-11-24 on the Orbitrap digest, item 43: the cut-aware reading at
+   K = 1 is the best arm on every K-independent yardstick; through the cut at every K it is
+   worse, so K > 1 waits for a population-test null drawn through the cut).
    - *The data.* Reduced profile scans (HISTORY 299-300): in each scan a peak whose top is
      below about 2-3 x the recorded noise is deleted (softened by the noise: deleted in 50 % of
      scans at 2-3 x, 21 % at 3-5 x, 1-2 % above 10 x), the survivors near the cut read high
@@ -2430,6 +2433,127 @@ Planned, not built:
    group of samples of different proteins compared over a shared domain) or stands on its
    own; regions and sites given in the common numbering. Related: item 38 (groups), and
    `peptide_match` above.
+
+43. **The noise of a run from its own scans: one curve per scan file** (owner, 2026-11-24:
+   the Orbitrap's noise must come from one run, not from replicate undeuterated injections,
+   which are expensive and often absent; scans within a run may serve, replicate pairs at most
+   a check. Measured 2026-11-24, HISTORY 449; design draft below for the owner to review,
+   nothing built).
+   - *What was measured* (the private record: `analysis_examples/noise_model/scan_split`).
+     Every spectrum of three bundles was summed again from its scan file in two interleaved
+     halves (the odd and the even scans of its retention window, with the run's own summing,
+     m/z calibration, windows, and picker: the full re-sum reproduces the bundle's sticks bin
+     for bin). The two halves see the same peptide, the same co-eluting species, and the same
+     elution to first order; only the noise differs. Their difference gives each scan file its
+     own curve `a2 + z b1 I + c2 I^2` (variance of a bin of intensity I in a spectrum of charge
+     z, full-sum scale; robust variance per intensity group, non-negative least squares in
+     relative terms).
+     - On the two Q-TOF datasets the split gives the counting scale the controls' residuals
+       give today (the intact-peptide benchmark from its ion-mobility mzML: 7.5 per file
+       against 6.67; the private pooled dataset's raw: 9.0 against 10.4) and the replicate
+       pairs gave (HISTORY 187), and the same proportional term as the pairs (benchmark 2-2.5 %
+       against 1.9 %): that term is scan-to-scan noise, not a reproducible misfit. On the
+       Orbitrap digest the residual route is 15 times too large (12,862 against 783 per unit
+       charge; the pairs of HISTORY 294 gave about 950 at 2+), and the split's floor (about
+       2.9e4) is the instrument's recorded noise summed over the scans in quadrature (2.4-4.5e4
+       per file): the same number from an independent source. Labelled, undeuterated, and fully
+       deuterated files of one dataset agree within the spread between files.
+     - Kinetics runs (one scan per spectrum, `[input.scans] group = "each"`): the second
+       difference of neighbouring scans of one target (the scan minus the mean of its two
+       neighbours scaled to its sum, which removes the exchange between scans) gives the same
+       curve as a first difference within about 10 % from `usable_from` on, stable by time
+       band, on four infusion projects of the private fragment dataset, and agrees with the
+       odd/even halves of their control files where those are determined. The curve must be per
+       file: the control files sit on another intensity scale (tops up to 100 times dimmer),
+       and the bundles' residual-route values are wrong by 0.5 to 250 times and barely
+       determined (b1 105 ± 190, 428 ± 1,739, 7,715 ± 4,056, 344 ± 37 against 195, 23, 31, 11
+       from the scans). No proportional term on MS2 scans. The reduced profile's per-scan cut
+       deletes the bins where the floor would show, so for cut files the floor comes from the
+       recorded scan noise.
+     - The Orbitrap digest refitted with per-file split curves (prototype patch; the private
+       record's "Refit 1"): the error bars become right (replicate calibration 0.68 -> 1.14;
+       HISTORY 294's 1.5x gone), the values barely move (labelled replicate sd q90 0.636 ->
+       0.607 D, K = 1 fits missing the tallest reachable peak 1,485 -> 1,088), but with the
+       noise no longer inflated the fit reads the controls' misfit as populations (fully
+       deuterated K > 1 18.7 -> 34.6 %). That misfit is the per-scan cut (the heavy-side bins
+       read low by the bin's own intensity whatever the top, HISTORY 294's deficit; beyond the
+       cut the reproducible residual is about 1 %): with the cut-aware reading of item 24 on
+       MS1 peptides at K = 1 ("Refit 2") the digest is best on every K-independent yardstick
+       (replicate sd q90 0.376 D, undeuterated centroid q90 1.42 -> 0.29). Through the cut at
+       every K it is worse (q90 0.742; undeuterated K > 1 34 %): the minor components of
+       undeuterated controls sit 7-8 D above the major one in 85-95 % of them, a second species
+       on the grid that the inflated noise had covered, and a free heavy side under the cut
+       makes a second component cheap. So the cut belongs in the K = 1 reading of MS1 peptides,
+       and the K question on this data is one of identity (item 34) and of a population-test
+       null drawn through the same cut and noise: a separate item, not this one.
+   - *Design (draft, 2026-11-24, for the owner to review; nothing built).*
+     - **Scope.** Formats whose spectra *hxex* sums from scans (mzML, Thermo raw; every MS
+       level). Pre-summed formats (SpecExport, HX-Express, pooled folders) keep the controls
+       route of item 13. One bundle may hold both: each file takes the route its format
+       allows.
+     - **Read stage: the halves kept with the spectrum.** Where `_run_spectra` sums a group
+       of scans, it also sums the group's odd and even scans (two more sums of the vectorised
+       kind of HISTORY 444) and reads their bin values at the positions the full spectrum's
+       pick found (the same apexes or, with `pick = "profile_fit"`, one fit at the full
+       spectrum's offset: no search). Two nullable columns per bin in the stored spectra
+       (`intensity_odd`, `intensity_even`) and the scan count; a rerun from stored spectra
+       needs no scan file. The scratch picked each half on its own; the built check compares
+       both. A spectrum of one scan has no halves (null). Cost: a few milliseconds per spectrum
+       and two floats per bin.
+     - **Noise stage: a curve per scan file.** `hxex.noise.file_noise` fits `a2 + z b1 I +
+       c2 I^2` per file from the halves of every spectrum of the file (not only the controls:
+       labelled files agree, and a labelled file has no controls of its own), bins at 5 % of
+       the spectrum's top or more and above zero in both halves, robust variance per
+       log-intensity group, NNLS in relative terms, standard errors from resampling the file's
+       spectra. Kinetics runs: the second differences of each target's consecutive scans from
+       `usable_from` on, with the design the scratch used. Floor: the fitted `a2` for files
+       without a cut (about 0 on the Q-TOF data); for reduced-profile files the recorded scan
+       noise summed in quadrature over the spectrum's scans (per spectrum where the scan record
+       of item 24 exists, else the file's median), which the cut-aware reading needs recorded
+       for every target of such a file anyway (item 24, MS1). The relative floor of 0.5 % of
+       the top stays beside it (HISTORY 448: the noisy set's tail). `model_error` (9 % of the
+       prediction) stays as it is; whether to recalibrate it once the Orbitrap's counting term
+       is right is a later question (the Orbitrap refit's calibration 1.14 is slightly on the
+       small side).
+     - **The record.** `ControlsNoise` becomes the bundle's noise record with a table of file
+       curves (`by_file`: file, route `split` / `scans` / `controls`, a2, b1, c2, their standard
+       errors, the number of spectra and bins); `b1` stays as the median over the files, so
+       old readers and the kept-curve rule of HISTORY 433 (b1 moved by less than 1 % of its
+       se, now per file) keep working; `variance(intensity, charge, file)`. The manifest's
+       `noise_curve` gains `files`; bundles without it read as today. The by-sample table and
+       its warning become per file: a file whose b1 differs from the bundle's median by more
+       than 3 combined standard errors is named (a mixed bundle, or a file worth a look).
+     - **Fallbacks, in order.** A file with too few bins for a fit (fewer than three intensity
+       groups of 20 bins, or no counting term found) takes the bundle's median curve and is
+       listed; a pre-summed file takes the controls route's b1 (item 13) with the bundle's
+       floor and no proportional term; a bundle with no file fitted either way falls back to
+       one sd per spectrum, as today. `noise.kinetics_references` (one scale per series from
+       its median-brightness scan) stays only for `estimate = false`.
+     - **Downstream.** `bin_noise` gives each measurement its file's curve in place of
+       `z b1 I`: the fit, the polish, the screen's loss floor, the bootstrap, and the
+       population test's null all go through `BinNoise` as today, so none of them changes.
+       `hxex info`'s noise line shows the route and the files' spread (b1 median and range, a,
+       c; the files named only when few, else counted); `hxex check` says which route each file
+       will take. The guide's noise-model page gains the per-file route and loses the Orbitrap
+       warning. The reader fingerprint changes (new stored columns), so every bundle reads its
+       files once more; a bundle made before takes the controls route until it is read again.
+     - **Built check** (the scratch results within run-to-run variation): the per-file curves
+       of the three bundles (`out/curves_*.json`); the four kinetics projects' b1 by the second
+       difference; Refit 1's table on the Orbitrap digest; the two Q-TOF datasets and the
+       tutorial data unchanged on the K-independent yardsticks and on the replicate calibration
+       of HISTORY 293 (1.0 ± 0.1); the controls route untouched on SpecExport; the known-answer
+       set (pre-summed) unchanged.
+     - **Not in this build:** the per-scan cut on MS1 peptides at K = 1 (item 24's next step,
+       now measured as above; a null through the cut before any K > 1); a per-charge term in
+       the picking calibration (the digest's 4+ ions over-corrected by about 1.1 ppm, the side
+       check of HISTORY 448's open item); the noisy set's tail (HISTORY 448: an absolute part
+       the split now measures as `a2` where the format allows, which the noisy set's SpecExport
+       does not).
+     - **Open for the owner:** every spectrum of a file in its curve (recommended) or the
+       controls only; `c2` kept in the fit on the Q-TOF data (2-2.5 %, inside the 9 % model
+       error but noise, not misfit); the per-file table replacing the per-sample one; whether
+       the halves' values are read at the full spectrum's positions (proposed) or picked on
+       their own (the scratch).
 
 ## Risks and open decisions
 
