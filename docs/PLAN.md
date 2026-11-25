@@ -2554,7 +2554,16 @@ Planned, not built:
        benchmark's 2-2.5 % is scan-to-scan noise; files that measure 0 lose nothing); the
        per-file table replaces the per-sample one (its warning becomes per file); the halves'
        values are read at the full spectrum's positions (the built check compares with the
-       scratch's own-pick curves). Next: the build, in its own worktree.
+       scratch's own-pick curves). Also decided (owner, 2026-11-24): the file curve ignores
+       roles and review status (a rejected or excluded spectrum's halves still differ by its
+       noise alone, and the robust fit absorbs the odd ones; the distortion onset is no longer
+       needed for the curve), and the kept-curve rule of HISTORY 433 is per file. So a review
+       decision or an exclusion never recomputes the noise and never refits beyond the spectra
+       it names, and an elution-window edit touches one file's curve, by one spectrum among its
+       hundreds; what still follows a changed undeuterated control is the correction stage, the
+       m/z check's calibration, the peak claims, and that spectrum's own fit (PLAN 39 (a),
+       settled for scan formats; pre-summed formats keep the controls route and its dependence
+       on the controls). Next: the build, in its own worktree.
 
 ## Risks and open decisions
 
