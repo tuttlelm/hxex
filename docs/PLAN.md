@@ -1173,7 +1173,8 @@ Planned, not built:
    weights below were settled 2026-11-07 with nothing to build (HISTORY 316, 318). Next: MS1
    peptides (measured 2026-11-24 on the Orbitrap digest, item 43: the cut-aware reading at
    K = 1 is the best arm on every K-independent yardstick; through the cut at every K it is
-   worse, so K > 1 waits for a population-test null drawn through the cut).
+   worse, so K > 1 waits for a population-test null drawn through the cut). DESIGN DRAFT for
+   that step below (*MS1 peptides*, 2026-11-25; owner to read before anything is built).
    - *The data.* Reduced profile scans (HISTORY 299-300): in each scan a peak whose top is
      below about 2-3 x the recorded noise is deleted (softened by the noise: deleted in 50 % of
      scans at 2-3 x, 21 % at 3-5 x, 1-2 % above 10 x), the survivors near the cut read high
@@ -1240,9 +1241,92 @@ Planned, not built:
      their zero bins (envelope share >= 2 %; c-1 and z-dot, MS2 and MS3), 73-89 % hold nothing
      near, the rest another species' apex >= 10 ppm away with an empty window. So fragments
      need no picker change first; on the Orbitrap digest's MS1 about half the zeroed heavy peaks
-     were merged (HISTORY 299), so before peptides the picker must mark such bins unknown (left
-     out of the fit) rather than 0. Deuterated fragment spectra not yet measured: the forward
-     model's unpredicted zeros would show merges there.
+     were merged (HISTORY 299), and the plan was to mark such bins unknown before peptides.
+     Superseded 2026-11-25: the cut model takes a zero for a deletion only where it predicts a
+     dim peak in every scan (near the noise); a merged bin that the model expects bright costs
+     the fit as a zero does today, so the merge misleads only where the cut already explains
+     the zero; and the MS1 prototype of item 449 fitted through the cut with the zeros as they
+     are and gave the best yardsticks (the bins the pick leaves empty were looked at again
+     2026-11-23 with no change warranted). The build check below watches the brightest
+     controls, where nothing is cut, for any movement.
+   - *MS1 peptides: design draft (2026-11-25; from the measurements of HISTORY 449 and the
+     prototype patch of the private scan-split study).* Two steps, the second only after the
+     first's check is read.
+     - **Step 1, the K = 1 reading through the cut.** On a reduced-profile scan file that
+       records its scans' noise (`[input.scans] scan_cut = "auto"`, today's rule), every
+       target read from it gets the scans' record, MS1 peptides included: the file's `scan_cut`
+       entry then covers all its spectra, not its fragments alone. `records_noise` looks at
+       scans of any MS level (the prototype's first snag: an MS1-only file read as "no noise").
+       The record of an MS1 target is its own channel: the weights w_s from the trace of its own
+       predicted bins over its planned scans (the one-member case of the ladder trace; each
+       charge state its own target and trace, since their windows may differ), scans without
+       signal left out as today; the noise at five m/z across its window as today. Cost on the
+       Orbitrap digest (25,335 spectra of 14-33 scans): `spectra.parquet` +34 MB, the read a
+       few seconds, the fit at K = 1 to 3 2m 51s on the GPU in the prototype. The K = 1 fit,
+       its polish, its bootstrap (resamples around the cut reading) and the drawn curves go
+       through the cut as the fragments' do (`cut_reading`, HISTORY 308; nothing new in the
+       engine); the controls, the back-exchange correction and every K = 1 value follow. The
+       K = 1 only rule of HISTORY 308 stays for every spectrum with a record: no K > 1 fit,
+       so no criterion and no population test (self) for them; the set test holds them out
+       ("the run's population test did not test"), a set of them alone reads `set_test_K` 0
+       (not tested) and the residue tiers say untested; spectra of the same project read from
+       files without the cut (not reduced, or no recorded noise) keep their K choice. On the
+       digest this is the measured arm: labelled replicate sd median / q90 0.116 / 0.636 ->
+       0.096 / 0.376 D, undeuterated centroid q90 1.42 -> 0.29, K = 1 fits missing the tallest
+       reachable peak 1,485 -> 1,082, replicate calibration 1.19 (the errors about 16 % small:
+       the `model_error` question follows this item, not precedes it). A review K above 1 on
+       such a spectrum cannot be fitted: the review table read warns and ignores it (naming the
+       cut), and the window's review panel offers K = 1 alone there, saying why (else the
+       unfitted-review-K refusal of HISTORY 328 would point at `hxex run` for ever). The
+       elution editor's preview follows the reader's rule (it makes the record where the
+       reader would). Texts: the reduced-profile warning's "peptide (MS1) spectra are fitted
+       without allowing for it" becomes "hxex fits the spectra of N of the M reduced files
+       through this cut" (fragments no longer named apart); the `[input.scans] scan_cut`
+       comment, the "acts on fragment ions only" warning (dropped), `hxex check`'s cut lines
+       (the `fragments and` condition), the guide's "Fitting fragment ions through the cut"
+       (renamed, peptides added), BUNDLE.md, `flags.md`. Reuse: the records are part of what a
+       kept fit must share, so every MS1 spectrum of a reduced file is fitted again once.
+     - **Step 1, the brightness flag.** `below_noise` fires on any spectrum with a record
+       (697 of the digest's MS1 spectra at the fragments' 4 x). For peptides its level is not
+       measured: in the build check, the K = 1 replicate deviation and the undeuterated
+       centroid of the digest's MS1 spectra by `signal_to_noise` band (as HISTORY 314 did the
+       fragments' closure by brightness) say where the cut-aware reading stops recovering the
+       value. One setting `[run.quality] min_signal_to_noise` if the bands put peptides at the
+       fragments' 4 x, else a second key for peptides; either way the flag's action differs by
+       kind: fragments are left out of the fragment analysis (today's default list), peptides
+       are flagged only (the per-spectrum filters of `[analysis.filters]` stay as they are;
+       whether a `below_noise` peptide spectrum should be left out by default is a question for
+       the numbers).
+     - **Step 1, the check** (a scratch copy of the code, never the worktree): the digest
+       reproduces the arm above within run-to-run variation; the brightest undeuterated
+       controls (tops above 1e7, nothing cut there) keep their centroids to the hundredth; the
+       intact-peptide benchmark's mzML (not reduced), the tutorial data and the pooled raw
+       project are bit-identical; the private targeted dataset's MS1 parents, read through the
+       cut now, move the closure against its parents (HISTORY 307's reference) and the
+       `precursor_off` flags: dim parents expected to rise toward their fragments, bright ones
+       unchanged; the known-answer set is untouched (workbooks). Then the HDX-NMR comparison of
+       the targeted dataset once more, if the owner wants it (the parents enter the ladder
+       differences).
+     - **Step 2, K > 1 through the cut, with the null through the cut.** Measured 2026-11-24
+       with the criterion alone (no population test in that project): every K through the cut
+       was worse than K = 1 alone (labelled q90 0.742, undeuterated K > 1 34 %), because a free
+       heavy side under the cut makes a second component cheap, and the undeuterated controls'
+       minor components sit 7-8 D above the major one in 85-95 % (another species on the grid,
+       item 34's business, which no fit model removes). The null of the population test (self)
+       today draws from the K-population fit's plain prediction and refits the draws without a
+       record: with the cut, the draw must pass the predicted curve through the spectrum's
+       own cut (`cut_reading` on the prediction, the per-bin noise at the cut reading as the
+       fit uses it) and the refit must carry the record (`Measurements.scan_cut` on the null
+       measurements), so that the statistic is distributed as the real fits' is. With that
+       null, the K = 1 only rule is lifted for spectra with a record only where the test is on
+       with simulated nulls (the criterion alone cannot be trusted here: measured); the
+       `decide_up_to` and chi-square paths keep K = 1 for them (a chi-square null does not know
+       the cut). Yardsticks before it is kept: the fully deuterated controls' K > 1 against the
+       K = 1-only arm and against the Q-TOF datasets' 4-9 % (the undeuterated rate is identity,
+       not this), the labelled replicate sd q90 against 0.376 D, the width and `undeuterated_two`
+       flags, and the known-answer set unchanged (no cut there). If the fully deuterated rate
+       does not come down, K > 1 through the cut stays off and item 34's identity work is the
+       next lever. A session each; step 2 after the owner has read step 1's check.
 25. **Fragment windows per run, and a flag for an elution cut by the acquisition** (owner,
    2026-11-06: both agreed; build after the drift-gate work in `io/mzml.py` is merged). Today
    one peptide table drives every file: fragments always sum their parent's `rt_start`/`rt_end`
