@@ -223,4 +223,54 @@ def test_a_closed_window_lets_its_results_and_figures_go(qtbot, tmp_path, projec
             assert pool.waitForDone(120000)
     QApplication.processEvents()
     gc.collect()
-    assert [ref() for ref in held] == [None] * len(held)
+    alive = [ref() for ref in held if ref() is not None]
+    if alive:  # once on macOS and once on Ubuntu CI (2026-11-23/24), never here: say who holds
+        report = "\n".join(f"{type(obj).__name__} still held by:\n{_holders(obj)}"
+                            for obj in alive)
+        del alive
+        for _ in range(3):  # a delivery that posted another event: released by more rounds?
+            QApplication.processEvents()
+        gc.collect()
+        later = [type(ref()).__name__ for ref in held if ref() is not None]
+        pytest.fail(f"{report}\nafter three more rounds of events still held: {later or 'none'}")
+
+
+def _holders(obj, depth: int = 6) -> str:
+    """Who refers to ``obj``, a few levels up: types, dict keys and their owners, closures
+    with their functions, frames with their place (test frames left out)."""
+    import types
+
+    lines, seen = [], set()
+
+    def walk(target, level):
+        if level == depth:
+            return
+        for r in gc.get_referrers(target):
+            if id(r) in seen or isinstance(r, types.FrameType) and r.f_code.co_name in (
+                    "walk", "_holders", "test_a_closed_window_lets_its_results_and_figures_go"):
+                continue
+            seen.add(id(r))
+            text = type(r).__name__
+            if isinstance(r, dict):
+                owners = [o for o in gc.get_referrers(r) if getattr(o, "__dict__", None) is r]
+                text += f" {[k for k, v in r.items() if v is target]!r}" + (
+                    f" of {type(owners[0]).__name__}" if owners else "")
+            elif isinstance(r, types.CellType):
+                text += " of " + ", ".join(
+                    f"{f.__qualname__} ({f.__code__.co_filename}:{f.__code__.co_firstlineno})"
+                    for f in gc.get_referrers(r) if isinstance(f, types.FunctionType))
+            elif isinstance(r, types.FrameType):
+                text += f" {r.f_code.co_name} ({r.f_code.co_filename}:{r.f_lineno})"
+            elif isinstance(r, types.FunctionType):
+                text += f" {r.__qualname__}"
+            elif isinstance(r, types.MethodType):
+                text += f" {r.__func__.__qualname__} of {type(r.__self__).__name__}"
+            elif isinstance(r, (list, tuple)):
+                text += f" of {len(r)}"
+            lines.append("  " * level + "<- " + text)
+            walk(r, level + 1)
+            if len(lines) > 60:
+                return
+
+    walk(obj, 0)
+    return "\n".join(lines[:60])

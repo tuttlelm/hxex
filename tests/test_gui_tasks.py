@@ -45,3 +45,24 @@ def test_a_request_replaced_or_dropped_before_it_started_never_runs(qtbot):
     assert pool.waitForDone(10000)
     QApplication.processEvents()  # what the jobs sent back delivered (not a fixed wait: Q-29)
     assert ran == [1, 3, 1] and done == [3] and not latest.running
+
+
+def test_a_job_runs_only_once_its_start_has_returned(qtbot, monkeypatch):
+    """PySide makes the pool the job's parent after the pool's own ``start`` has handed the job
+    to a thread; a job deleted before then is left as the pool's child for good, with its work
+    and what it captured (a loaded CI runner, 2026-11-23/24). So a job waits for the start that
+    queued it (hxex.gui.tasks._STARTING)."""
+    from hxex.gui import tasks
+
+    # re-entrant here, so that this thread can hold the lock across submit as the start would
+    monkeypatch.setattr(tasks, "_STARTING", threading.RLock())
+    pool = QThreadPool()
+    pool.setMaxThreadCount(2)
+    latest = Latest(pool=pool)
+    ran, done = threading.Event(), []
+    with tasks._STARTING:  # as during pool.start: the job is queued but must not run yet
+        latest.submit(lambda: (ran.set(), 1)[1], done.append, done.append)
+        assert not ran.wait(0.3)
+    assert ran.wait(10)
+    qtbot.waitUntil(lambda: done == [1], timeout=10000)
+    assert pool.waitForDone(10000)

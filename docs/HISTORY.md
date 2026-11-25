@@ -12073,3 +12073,26 @@ CSVs or mzML if wanted.
     pick). Nothing built: PLAN 43 holds the design (per-file curves from the halves kept at
     read time; second differences for `group = "each"`; the floor from the recorded noise on
     cut files; the controls route for pre-summed formats; the MS1 cut at K = 1 a separate item).
+
+450. **A closed window kept its results once in ten runs on a loaded machine: a job deleted
+    before its start had returned** (2026-11-24). The closed-window test of
+    tests/test_gui_state.py failed on macOS (2026-11-23) and then on Ubuntu CI (2026-11-24): the
+    figure gone, the results still held. Reproduced here only under load (the test pinned to
+    four cores beside four busy processes: 3 failures in 40 runs). The holder, each time: the
+    Python wrapper of Qt's global thread pool, still listing as its child a `hxex.gui.tasks._Job`
+    whose C++ side was already deleted and whose work (the List's rows) had captured the
+    results. The cause is in PySide's binding of `QThreadPool.start`: it makes the pool the
+    job's parent (a reference) after the pool's own `start`, with the interpreter lock released
+    during that call. The pool had already handed the job to a waiting thread; the job ran
+    (2 ms after it was made, with the ticket it wanted), finished, and was deleted by the pool
+    (auto-delete) before the window's thread, slow to take the lock back on the loaded machine,
+    had returned from `start`. shiboken's `destroy` unlinks only a parent that exists at that
+    moment (its `_destroyParentInfo` runs only with a parent set), so nothing was unlinked, and
+    the link added afterwards stayed for good, holding the dead job and its work. A test script
+    starting thousands of short jobs never reproduced it: the race needs the window's thread
+    off the lock for the job's whole life. Fix: a lock held across `pool.start` that every job
+    takes before its work (`tasks._STARTING`): a job runs only once the start that queued it
+    has returned; 40 loaded runs clean since. Also: a request's callbacks are let go once
+    delivered (`Latest._deliver`), so a done closure no longer keeps what it captured until the
+    next request; the results page lets go of its fragment table at release; and the test names
+    who still holds the results when it fails (`_holders`), as this diagnosis needed.

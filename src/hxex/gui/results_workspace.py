@@ -852,6 +852,7 @@ class ResultsWorkspace(QWidget):
         self.show_results(None, None)
         self._overview_of, self._overview_figures = None, {}
         self._spectra_job, self._pending_draws = None, {}
+        self._fragments_of = None  # the fragment table made in the drawing thread
         self.left, self.sets, self.analysis_config = None, None, None
         self.table_view.clear()
         self.list.set_rows([], [])

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import threading
 import traceback
 from collections.abc import Callable
 from typing import Any
@@ -89,6 +90,17 @@ def collection() -> _Collection:
     return _COLLECTION
 
 
+# Held while a job is handed to its pool (``QThreadPool.start``): PySide makes the pool the
+# job's parent, keeping a reference to the job, as part of that call, after the pool's own
+# code, which has already handed the job to a waiting thread. A job quick enough to run and be
+# deleted (auto-delete) before ``start`` returned, while the window's thread was slow to take
+# the interpreter lock back on a loaded machine, was destroyed with no parent to be removed
+# from, and then made the pool's child: the pool kept the dead job, and the job's work kept
+# what it had captured, such as the results a list was built from (CI, 2026-11-23/24; the
+# closed-window test of tests/test_gui_state.py). So a job runs only once its start is over.
+_STARTING = threading.Lock()
+
+
 class _Job(QRunnable):
     def __init__(self, ticket: int, work: Callable[[], Any], signals: _Signals,
                  current: Callable[[], int] | None = None):
@@ -97,6 +109,8 @@ class _Job(QRunnable):
         self.current = current  # the ticket wanted now (None: always this one)
 
     def run(self):
+        with _STARTING:  # the start that queued this job has returned (see _STARTING)
+            pass
         if self.current is not None and self.current() != self.ticket:
             return  # replaced or dropped before it started: nobody wants it (audit C-12)
         try:
@@ -150,7 +164,9 @@ class Latest(QObject):
         self._ticket += 1
         self._callbacks = (done, failed)
         self.running = True
-        self.pool.start(_Job(self._ticket, work, self._signals, current=lambda: self._ticket))
+        job = _Job(self._ticket, work, self._signals, current=lambda: self._ticket)
+        with _STARTING:
+            self.pool.start(job)
 
     def drop(self) -> None:
         """Forget the request still running: neither of its callbacks is called (its work runs
@@ -160,11 +176,21 @@ class Latest(QObject):
         self.running = False
 
     def _done(self, ticket: int, result) -> None:
-        if ticket == self._ticket and self._callbacks is not None:
-            self.running = False
-            self._callbacks[0](result)
+        self._deliver(ticket, 0, result)
 
     def _failed(self, ticket: int, message: str) -> None:
-        if ticket == self._ticket and self._callbacks is not None:
-            self.running = False
-            self._callbacks[1](message)
+        self._deliver(ticket, 1, message)
+
+    def _deliver(self, ticket: int, which: int, value) -> None:
+        """Call the request's done (0) or failed (1) callback with ``value``, once, and let the
+        callbacks go: their closures (the results a list was built from, say) would otherwise
+        stay held until the next request or :meth:`drop`."""
+        callbacks = self._callbacks
+        if ticket != self._ticket or callbacks is None:
+            return
+        self.running = False
+        try:
+            callbacks[which](value)
+        finally:
+            if self._callbacks is callbacks:  # the callback made no new request
+                self._callbacks = None
